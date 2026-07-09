@@ -1,5 +1,5 @@
-from phase01.config import RISK_SCORES
-from phase01.schemas import Finding, FindingType, SecurityReport, RiskAssessment, RiskLevel, PipelineAction
+from config import RISK_SCORES
+from schemas import Finding, FindingType, SecurityReport, RiskAssessment, RiskLevel, PipelineAction
 
 
 class RiskScorer:

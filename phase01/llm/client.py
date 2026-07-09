@@ -1,6 +1,7 @@
-from phase01.config import settings
+from config import settings
 
-import openai
+# import openai
+from langfuse.openai import openai
 
 
 class LLMClient:
@@ -18,7 +19,6 @@ class LLMClient:
                 temperature=self.temperature,
                 max_output_tokens=self.max_output_tokens
             )
-            print(response.output_text)
 
             return response.output_text
         except Exception as e:

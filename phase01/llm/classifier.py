@@ -1,8 +1,8 @@
 
-from phase01.llm.prompts import build_classification_messages
-from phase01.schemas import ClassificationResult, PipelineAction
-from phase01.llm.client import LLMClient
-from phase01.llm.strange import build_logic_messages
+from llm.prompts import build_classification_messages
+from schemas import ClassificationResult, PipelineAction
+from llm.client import LLMClient
+from llm.strange import build_logic_messages
 import json
 
 

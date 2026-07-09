@@ -1,6 +1,6 @@
 import re
 
-from phase01.schemas import ClassificationResult
+from schemas import ClassificationResult
 
 
 class OutputValidator:

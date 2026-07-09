@@ -1,10 +1,10 @@
 import re
 
-from phase01.schemas import Finding, FindingType, SecurityReport
-from phase01.config import PROMPT_INJECTION_PATTERNS, MAX_WORD_COUNT
+from schemas import Finding, FindingType, SecurityReport
+from config import PROMPT_INJECTION_PATTERNS, MAX_WORD_COUNT
 
-from phase01.security.fuzzy_match import contains_scrambled_keyword
-from phase01.security.unicode_utils import clean_text
+from security.fuzzy_match import contains_scrambled_keyword
+from security.unicode_utils import clean_text
 
 
 class InputFilter:
@@ -12,7 +12,7 @@ class InputFilter:
         self.patterns = self._compile_patterns()
 
     def scan(self, text: str) -> SecurityReport:
-        cleaned_text = clean_text(text)
+        cleaned_text = self.sanitize(text)
         length_finding = self._check_length(cleaned_text)
         regex_findings = self._detect_regex_patterns(cleaned_text)
         typoglycemia_finding = self._detect_typoglycemia(cleaned_text)
@@ -38,8 +38,7 @@ class InputFilter:
         return None
 
     def sanitize(self, text: str) -> str:
-        # Placeholder for sanitization logic
-        return text
+        return clean_text(text)
 
     def _detect_regex_patterns(self, text: str) -> list[Finding]:
         findings: list[Finding] = []

@@ -20,7 +20,7 @@ Make sure you have the following installed:
 Open a terminal in the project root folder and change to the project directory:
 
 ```powershell
-cd path\to\your\project
+cd path\to\your\project\phase01
 ```
 
 Create a virtual environment:
@@ -52,7 +52,7 @@ source .venv/bin/activate
 Install the required Python packages:
 
 ```powershell
-pip install -r phase01\requirements.txt
+pip install -r requirements.txt
 ```
 
 Copy the sample environment file and update it with your own values:
@@ -84,7 +84,7 @@ $env:OPENAI_TEMPERATURE="0.0"
 From the project root, run:
 
 ```powershell
-python -m phase01.command.classifier
+python -m command.classifier
 ```
 
 You will see a prompt like this:
@@ -106,7 +106,7 @@ quit
 From the project root, run:
 
 ```powershell
-python -m phase01.command.strange
+python -m command.strange
 ```
 
 You will again be prompted with:

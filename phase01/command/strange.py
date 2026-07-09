@@ -1,8 +1,8 @@
-from phase01.config import settings
-from phase01.llm.client import LLMClient
-from phase01.llm.classifier import SecureClassifier, StrangeSequence
-from phase01.security.input_filter import InputFilter
-from phase01.security.pipeline import SimpleSecurityPipeline
+from config import settings
+from llm.client import LLMClient
+from llm.classifier import SecureClassifier, StrangeSequence
+from security.input_filter import InputFilter
+from security.pipeline import SimpleSecurityPipeline
 
 llm_client = LLMClient()
 classifier = SecureClassifier(llm_client)
@@ -19,3 +19,4 @@ while True:
         break
 
     result = pipeline.process(text)
+    print(result)

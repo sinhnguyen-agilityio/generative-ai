@@ -1,8 +1,8 @@
-from phase01.schemas import ClassificationResult, PipelineAction, RiskLevel
-from phase01.security.input_filter import InputFilter
-from phase01.security.risk_score import RiskScorer
-from phase01.llm.classifier import SecureClassifier, StrangeSequence
-from phase01.security.output_validation import OutputValidator
+from schemas import ClassificationResult, PipelineAction, RiskLevel
+from security.input_filter import InputFilter
+from security.risk_score import RiskScorer
+from llm.classifier import SecureClassifier, StrangeSequence
+from security.output_validation import OutputValidator
 import sys
 
 
