@@ -1,7 +1,6 @@
 import json
 
 from langfuse.openai import OpenAI
-from config import MODEL
 from config import settings
 
 
@@ -11,7 +10,7 @@ class LLM:
 
     def generate(self, prompt: str) -> str:
         response = self.client.responses.create(
-            model=MODEL,
+            model=settings.model,
             input=prompt,
         )
 
