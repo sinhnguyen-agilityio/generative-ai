@@ -38,6 +38,8 @@ class Executor:
             ]
         )
         self.handler = get_langfuse_handler()
+
+        # LangChain Expression Language (LCEL)
         self.chain = (
             self.prompt
             | self.llm
@@ -48,19 +50,6 @@ class Executor:
         self,
         prompt: str,
     ) -> str:
-        """
-        Execute a refined prompt.
-
-        Parameters
-        ----------
-        prompt : str
-
-        Returns
-        -------
-        str
-            Final answer.
-        """
-
         return self.chain.invoke(
             {
                 "prompt": prompt,

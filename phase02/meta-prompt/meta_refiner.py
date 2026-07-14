@@ -28,6 +28,7 @@ class MetaRefiner:
             ],
         )
 
+        # LangChain Expression Language (LCEL)
         self.chain = (
             self.prompt
             | self.llm
@@ -35,20 +36,6 @@ class MetaRefiner:
         )
 
     def refine(self, query: str) -> str:
-        """
-        Convert an underspecified query into
-        a high-quality executable prompt.
-
-        Parameters
-        ----------
-        query : str
-
-        Returns
-        -------
-        str
-            Refined prompt.
-        """
-
         return self.chain.invoke(
             {
                 "query": query,
