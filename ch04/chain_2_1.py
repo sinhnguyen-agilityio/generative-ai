@@ -1,0 +1,27 @@
+from typing import Any
+
+from llm_models import get_llm
+from utilities import to_obj
+from prompts import (
+    WEB_SEARCH_PROMPT_TEMPLATE
+)
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableLambda
+NUM_SEARCH_QUERIES = 2
+
+
+def build_web_search_input(x: dict[str, Any]) -> dict[str, Any]:
+    return {
+        'assistant_instructions': x['assistant_instructions'],
+        'num_search_queries': NUM_SEARCH_QUERIES,
+        'user_question': x['user_question']
+    }
+
+
+web_searches_chain = (
+    RunnableLambda[dict[str, Any], dict[str, Any]](
+        build_web_search_input
+    )
+    | WEB_SEARCH_PROMPT_TEMPLATE
+    | get_llm() | StrOutputParser() | to_obj
+)
