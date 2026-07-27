@@ -1,0 +1,4 @@
+datasets==5.0.0
+langfuse==4.13.0
+openai==2.44.0
+dotenv==0.9.9
