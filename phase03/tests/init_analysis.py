@@ -1,4 +1,4 @@
-from chains.initial_analysis import InitialAnalysis
+from pipeline.initial_analysis import InitialAnalysis
 from models.ticket import SecureTicket
 
 
@@ -23,7 +23,7 @@ Please help.
 """,
 )
 
-pipeline = InitialAnalysis().build()
+pipeline = InitialAnalysis()
 
 report = pipeline.invoke(ticket)
 

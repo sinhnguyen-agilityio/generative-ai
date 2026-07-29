@@ -5,6 +5,19 @@ from pydantic import BaseModel
 
 from llms.openai_provider import OpenAIProvider
 from llms.gemini_provider import GenAIProvider
+from openai import (
+    APITimeoutError,
+    APIConnectionError,
+    RateLimitError,
+    InternalServerError,
+)
+
+LLM_FALLBACK_EXCEPTIONS = (
+    APITimeoutError,
+    APIConnectionError,
+    RateLimitError,
+    InternalServerError,
+)
 
 
 class LLMFactory:
@@ -49,5 +62,6 @@ class LLMFactory:
         fallback_llm = cls.create(fallback).with_structured_output(schema)
 
         return primary_llm.with_fallbacks(
-            [fallback_llm]
+            [fallback_llm],
+            exceptions_to_handle=LLM_FALLBACK_EXCEPTIONS,
         )

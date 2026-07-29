@@ -9,5 +9,6 @@ class OpenAIProvider(LLMProvider):
         return ChatOpenAI(
             api_key=settings.openai_api_key,
             model=settings.openai_model,
-            max_retries=2
+
+            # timeout=0.001 Set the timeout to test .with_fallbacks
         )

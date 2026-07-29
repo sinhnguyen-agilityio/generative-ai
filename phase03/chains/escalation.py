@@ -9,7 +9,7 @@ langfuse = get_client()
 
 
 def build():
-    chain = (
+    return (
         RunnableLambda(
             lambda report: {
                 "report": report.model_dump_json(indent=2)
@@ -18,17 +18,3 @@ def build():
         | ESCALATION_PROMPT
         | LLMFactory.structured(Escalation)
     )
-
-    def run(input):
-            with langfuse.start_as_current_observation(
-                as_type="span",
-                name="escalation"
-            ):
-                return chain.invoke(
-                    input,
-                    config={
-                        "callbacks": [langfuse_handler]
-                    },
-                )
-
-    return RunnableLambda(run)

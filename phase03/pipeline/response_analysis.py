@@ -29,23 +29,29 @@ class ResponseAnalysis:
             RunnableLambda(self._merge)
         )
 
-    def build(self):
+    def invoke(self, report):
+        with langfuse.start_as_current_observation(
+            name="response_analysis",
+            as_type="span"
+        ):
+            return self._workflow.invoke(
+                report,
+                config={
+                    "callbacks": [langfuse_handler]
+                }
+            )
 
-        chain = self._workflow
-
-        def invoke(report):
-            with langfuse.start_as_current_observation(
-                name="response_analysis",
-                as_type="span"
-            ):
-                return chain.invoke(
-                    report,
-                    config={
-                        "callbacks": [langfuse_handler]
-                    }
-                )
-
-        return RunnableLambda(invoke)
+    def batch(self, tickets: list,) -> list[AnalysisReport]:
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="response_analysis_batch",
+        ):
+            return self._workflow.batch(
+                tickets,
+                config={
+                    "callbacks": [langfuse_handler]
+                }
+            )
 
     @staticmethod
     def _merge(result: dict) -> AnalysisReport:

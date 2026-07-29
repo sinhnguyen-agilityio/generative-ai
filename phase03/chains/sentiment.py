@@ -7,23 +7,10 @@ from tracing.client import langfuse_handler
 
 langfuse = get_client()
 
+
 def build() -> Runnable:
-    chain = (
+    return (
         RunnableLambda(lambda ticket: ticket.sanitized_text)
         | SENTIMENT_PROMPT
         | LLMFactory.structured(Sentiment)
     )
-
-    def run(input):
-        with langfuse.start_as_current_observation(
-            as_type="span",
-            name="summary"
-        ):
-            return chain.invoke(
-                input,
-                config={
-                    "callbacks": [langfuse_handler]
-                },
-            )
-
-    return RunnableLambda(run)

@@ -33,19 +33,26 @@ class InitialAnalysis:
             entities=result["entities"],
         )
 
-    def build(self):
-        chain = self._workflow
+    def invoke(self, ticket):
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="initial_analysis"
+        ):
+            return self._workflow.invoke(
+                ticket,
+                config={
+                    "callbacks": [langfuse_handler]
+                }
+            )
 
-        def invoke(ticket):
-            with langfuse.start_as_current_observation(
-                as_type="span",
-                name="initial_analysis"
-            ):
-                return chain.invoke(
-                    ticket,
-                    config={
-                        "callbacks": [langfuse_handler]
-                    }
-                )
-
-        return RunnableLambda(invoke)
+    def batch(self, tickets: list,) -> list[AnalysisReport]:
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="initial_analysis_batch",
+        ):
+            return self._workflow.batch(
+                tickets,
+                config={
+                    "callbacks": [langfuse_handler]
+                }
+            )
