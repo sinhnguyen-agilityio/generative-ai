@@ -35,8 +35,9 @@ style_prompt = ChatPromptTemplate.from_messages(
         (
             "system",
             """
-            You maintain the communication style preference for a user.
+            You maintain and summarize the communication style preference for a user.
             Update the style summary using ONLY information explicitly shown in the conversation.
+            Reduce the conflict between the current style and the conversation.
             Do not invent preferences.
             Return the updated style summary.
             """
@@ -70,10 +71,12 @@ def load_history(inputs):
 
 
 def load_user_style(inputs):
-    return db.get_style(
+
+    style = db.get_all_styles(
         user_id=inputs["user_id"],
-        thread_id=inputs["thread_id"],
     )
+
+    return style if style else ""
 
 
 class UserStyle(BaseModel):
@@ -109,6 +112,7 @@ def chat(
             "question": question,
         }
     )
+
     history.add_ai_message(answer)
     style = style_chain.invoke(
         {

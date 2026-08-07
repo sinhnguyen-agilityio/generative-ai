@@ -22,7 +22,6 @@ class StyleMemoryDB:
     def get_style(
         self,
         user_id: str,
-        thread_id: str,
     ) -> str:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
@@ -30,13 +29,13 @@ class StyleMemoryDB:
                 SELECT style_summary
                 FROM user_style_preferences
                 WHERE user_id = ?
-                AND thread_id = ?
+                ORDER BY updated_at DESC
+                LIMIT 1
                 """,
-                (user_id, thread_id),
+                (user_id,),
             )
 
-            row = cursor.fetchone()
-            return row[0] if row else ""
+            return cursor.fetchone()
 
     def save_style(
         self,
@@ -71,7 +70,7 @@ class StyleMemoryDB:
     def get_all_styles(
         self,
         user_id: str,
-    ) -> str:
+    ):
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 """
@@ -83,13 +82,13 @@ class StyleMemoryDB:
                 (user_id,),
             )
 
-            rows = cursor.fetchall()
+            return cursor.fetchall()
 
-            return "\n".join(
-                row[0]
-                for row in rows
-                if row[0]
-            )
+            # return "\n".join(
+            #     row[1]
+            #     for row in rows
+            #     if row[1]
+            # )
 
     def close(self):
         self.conn.close()
