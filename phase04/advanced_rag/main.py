@@ -1,7 +1,13 @@
+from langchain_openai import OpenAIEmbeddings
+from langchain_chroma import Chroma
+from langchain_classic.storage import InMemoryStore
 import asyncio
+from datetime import datetime
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+from ragas import Dataset, experiment
+from ragas.backends.inmemory import InMemoryBackend
 from ragas.llms import llm_factory
 from ragas.metrics.collections import Faithfulness
 
@@ -10,6 +16,7 @@ from generation.rag_chatbot import RAGChatbot
 from ingestion.chunker import Chunker
 from ingestion.loader import Loader
 from ingestion.vector_store import VectorStore
+from pathlib import Path
 
 
 load_dotenv()
@@ -24,27 +31,64 @@ EVALUATION_CONCURRENCY = 5
 # Faithfulness scorer
 # ----------------------------------------
 client = AsyncOpenAI()
-llm = llm_factory(
-    "gpt-5-nano",
-    client=client,
-)
+llm = llm_factory("gpt-4o-mini", client=client)
+
 scorer = Faithfulness(llm=llm)
 evaluation_semaphore = asyncio.Semaphore(
     EVALUATION_CONCURRENCY
 )
 
 
-async def score_sample(index, sample):
-    async with evaluation_semaphore:
-        contexts = sample.retrieved_contexts[:3]
+def _get_question_from_row(row):
+    if isinstance(row, dict):
+        return row.get("user_input") or row.get("question") or row.get("input")
 
-        result = await scorer.ascore(
-            user_input=sample.user_input,
-            response=sample.response,
-            retrieved_contexts=contexts,
+    for field in ("user_input", "question", "input"):
+        value = getattr(row, field, None)
+        if value is not None:
+            return value
+
+    return None
+
+
+def create_baseline_experiment(chatbot: RAGChatbot):
+    @experiment()
+    async def baseline_experiment(row):
+        question = _get_question_from_row(row)
+        if not question:
+            raise ValueError(f"Missing question in row: {row}")
+
+        result = await chatbot.ainvoke(question)
+        answer = result["answer"]
+        response = answer.content if hasattr(
+            answer, "content") else str(answer)
+
+        documents = result.get("documents", [])
+        retrieved_contexts = [
+            doc.page_content if hasattr(doc, "page_content") else str(doc)
+            for doc in documents
+        ]
+
+        faithfulness = await scorer.ascore(
+            user_input=question,
+            response=response,
+            retrieved_contexts=retrieved_contexts
         )
 
-        return index, result.value
+        base_row = row.model_dump(exclude_none=True) if hasattr(
+            row, "model_dump") else dict(row)
+
+        return {
+            **base_row,
+            "response": response,
+            "faithfulness": faithfulness.value,
+            "retrieved_contexts": retrieved_contexts,
+            "experiment_name": "baseline_v1",
+            "model_version": "gpt-4o-mini",
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    return baseline_experiment
 
 
 # ----------------------------------------
@@ -65,23 +109,41 @@ async def main():
     # ----------------------------------------
     # Chunk documents
     # ----------------------------------------
-    chunker = Chunker()
-    chunks = chunker.chunk_documents(
-        docs
+    from langchain_classic.retrievers import ParentDocumentRetriever
+
+    parent_splitter = Chunker(chunk_size=3000).text_splitter
+    child_splitter = Chunker(chunk_size=500).text_splitter
+
+    child_chunks_collection = Chroma(
+        collection_name="tourist_child_chunks",
+        embedding_function=OpenAIEmbeddings(),
     )
-    print(
-        f"Created chunks: {len(chunks)}"
+
+    child_chunks_collection.reset_collection()
+    doc_store = InMemoryStore()
+
+    parent_doc_retriever = ParentDocumentRetriever(
+        vectorstore=child_chunks_collection,
+        docstore=doc_store,
+        child_splitter=child_splitter,
+        parent_splitter=parent_splitter,
+        search_kwargs={
+            "k": 4,
+        },
+
     )
+
+    parent_doc_retriever.add_documents(docs)
 
     # ----------------------------------------
     # Vector store
     # ----------------------------------------
-    vector_store = VectorStore()
+    # vector_store = VectorStore()
 
-    retriever = vector_store.store_docs(
-        "tourist_collection",
-        chunks,
-    ).as_retriever(search_kwargs={"k": 4})
+    # retriever = vector_store.store_docs(
+    #     "tourist_collection",
+    #     chunks,
+    # ).as_retriever(search_kwargs={"k": 4})
 
     # ----------------------------------------
     # Load evaluation dataset
@@ -98,93 +160,35 @@ async def main():
     # Create chatbot
     # ----------------------------------------
     chatbot = RAGChatbot(
-        retriever=retriever
+        retriever=parent_doc_retriever
     )
 
     # ----------------------------------------
-    # Run RAG
+    # Run a Ragas experiment against the dataset rows
     # ----------------------------------------
-    questions = [
-        sample.user_input
-        for sample in testset.samples
-        if isinstance(sample.user_input, str)
-    ]
-
-    rag_results = await chatbot.abatch(
-        questions,
-        max_concurrency=RAG_CONCURRENCY,
+    experiment_dataset = Dataset(
+        "baseline_eval",
+        backend=InMemoryBackend(),
+        data=[
+            {"user_input": sample.user_input, "reference": sample.reference}
+            for sample in testset.samples
+            if isinstance(sample.user_input, str)
+        ],
     )
 
-    # ----------------------------------------
-    # Build Ragas evaluation dataset
-    # ---------------------------------------
-    evaluation_samples = []
-
-    for sample, result in zip(
-        testset.samples,
-        rag_results,
-    ):
-        evaluation_samples.append(
-            {
-                "user_input": result["question"],
-                "retrieved_contexts": [
-                    doc.page_content
-                    for doc in result["documents"]
-                ],
-                "response": result["answer"].content,
-                "reference": sample.reference,
-            }
-        )
-
-    evaluation_dataset = evaluator.create_evaluation_dataset(
-        evaluation_samples
+    baseline_experiment = create_baseline_experiment(chatbot)
+    experiment_results = await baseline_experiment.arun(
+        experiment_dataset,
+        name="baseline_v1",
     )
+    print(f"Experiment rows: {len(experiment_results)}")
+    df = experiment_results.to_pandas()
+    Path("reports").mkdir(parents=True, exist_ok=True)
 
-    # ----------------------------------------
-    # Evaluate Faithfulness
-    # ----------------------------------------
-    results = await asyncio.gather(
-        *[
-            score_sample(index, sample)
-            for index, sample in enumerate(
-                evaluation_dataset.samples
-            )
-        ]
+    df.to_csv(
+        "reports/ragas_experiment_report.csv",
+        index=False,
     )
-
-    # ----------------------------------------
-    # Print results
-    # ----------------------------------------
-    scores = []
-
-    for index, score in results:
-        scores.append(score)
-        sample = evaluation_dataset.samples[index]
-        print(
-            f"\n[{index + 1}] "
-            f"Faithfulness: {score:.4f}"
-        )
-        print(
-            f"Question: {sample.user_input}"
-        )
-        print(
-            f"Response: {sample.response}"
-        )
-
-    # ----------------------------------------
-    # Average
-    # ----------------------------------------
-    average = (
-        sum(scores) / len(scores)
-        if scores
-        else 0.0
-    )
-    print("\n" + "=" * 50)
-    print(
-        f"Average Faithfulness: {average:.4f}"
-    )
-    print("=" * 50)
-
 
 if __name__ == "__main__":
     asyncio.run(main())

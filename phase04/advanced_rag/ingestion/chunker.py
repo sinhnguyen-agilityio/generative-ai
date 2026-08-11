@@ -3,9 +3,9 @@ from langchain_core.documents import Document
 
 
 class Chunker:
-    def __init__(self, chunk_size=1000, chunk_overlap=200):
+    def __init__(self, chunk_size=1000):
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+            chunk_size=chunk_size)
 
     def chunk_documents(self, documents: list[Document]) -> list[Document]:
         chunked_results: list[Document] = []

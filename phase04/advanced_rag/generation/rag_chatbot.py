@@ -75,8 +75,6 @@ the answer as concise as possible.
     ):
         """
         Execute multiple questions concurrently.
-
-        Similar to Promise.all() in Node.js.
         """
         semaphore = asyncio.Semaphore(max_concurrency)
 
