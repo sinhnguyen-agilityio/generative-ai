@@ -1,0 +1,4 @@
+metric,naive_rag,agent_rag
+Faithfulness,0.775,0.5
+Context Recall,0.36666666666666664,0.5
+Avg Retrieval Calls,1.0,6.2

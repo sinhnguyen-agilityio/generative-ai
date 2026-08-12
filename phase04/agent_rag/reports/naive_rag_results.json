@@ -1,0 +1,152 @@
+[
+  {
+    "id": "5abe65e25542993f32c2a101",
+    "question": "Which university did one of the key figures in the American documentary film, released in 2015, directed by Malcolm Ingram, pay for, before being drafted 18th overall pick for the New Jersey Nets?",
+    "ground_truth": "One of the key figures in the American documentary film, released in 2015, directed by Malcolm Ingram, played college basketball for Stanford University before being drafted 18th overall pick for the New Jersey Nets.",
+    "answer": "I don’t have enough information in the provided context to determine which university was paid for by one of the key figures in the 2015 Malcolm Ingram documentary related to the Nets’ 18th overall pick.",
+    "contexts": [
+      "Bucks won the coin flip and were awarded the first overall pick, while the Kansas City Kings, who obtained the New York Nets first-round pick in a trade, were awarded the second pick. The remaining first-round picks and the subsequent rounds were assigned to teams in reverse order of their win–loss record in the previous season. A player who had finished his four-year college eligibility was eligible for selection. If a player left college early, he would not be eligible for selection until his",
+      "when both leagues merged, the Denver Nuggets, the Indiana Pacers, the New York Nets and the San Antonio Spurs, took part in the NBA Draft for the first time. Prior to the start of the season, the Nets relocated to New Jersey and became the New Jersey Nets. The draft consisted of 8 rounds comprising the selection of 170 players.",
+      "the team owner, moved the team to Long Island and renamed it the New York Nets. The team won ABA championships in 1974 and 1976. When the ABA merged with the NBA in 1976, the Nets were one of four ABA teams admitted into the NBA. The team was moved to the Rutgers Athletic Center in New Jersey; after the 1976–77 NBA season, the team was renamed the New Jersey Nets. Since they joined the NBA, the Nets have won 4 divisional championships, 2 conference championships and appeared in the playoffs",
+      "The 1977 NBA draft was the 31st annual draft of the National Basketball Association (NBA). The draft was held on June 10, 1977, before the 1977–78 season. In this draft, 22 NBA teams took turns selecting amateur U.S. college basketball players and other eligible players, including international players. The first two picks in the draft belonged to the teams that finished last in each conference, with the order determined by a coin flip. The Milwaukee Bucks won the coin flip and were awarded the"
+    ],
+    "retrieval_calls": 1,
+    "status": "success",
+    "error": null
+  },
+  {
+    "id": "5a83093c55429966c78a6b01",
+    "question": "Were both Léopold Eyharts and Ulrich Walter a General in the French Air Force? ",
+    "ground_truth": "No, only Léopold Eyharts was a General in the French Air Force. Ulrich Walter was a German physicist/engineer and a former DFVLR astronaut, not a General in the French Air Force.",
+    "answer": "No. The context states that Léopold Eyharts is a Brigadier General in the French Air Force, while Ulrich Walter is a German physicist/engineer and a former DFVLR astronaut, with no indication of him being a general in the French Air Force.",
+    "contexts": [
+      "Léopold Eyharts (born April 28, 1957) is a Brigadier General in the French Air Force, an engineer and ESA astronaut.",
+      "Prof. Dr. Ulrich Hans Walter (born February 9, 1954) is a German physicist/engineer and a former DFVLR astronaut.",
+      "The French Air Force (French: \"Armée de l'air\" ] , literally \"air army\") is the air force of the French Armed Forces. It was formed in 1909 as the \"Service Aéronautique\", a service arm of the French Army, then was made an independent military arm in 1934. The number of aircraft in service with the French Air Force varies depending on source, however sources from the French Ministry of Defence give a figure of 658 aircraft in 2014. The French Air Force has 241 combat aircraft in service, with the",
+      "The Armée de l'Air (literally, \"army of the air\") is the name used for the French Air Force in its native language since it was made independent of the Army in 1933. This article deals exclusively with the history of the French air force from its earliest beginnings until its destruction after the occupation of France. French naval aviation, the \"Aéronautique Navale\" is covered elsewhere."
+    ],
+    "retrieval_calls": 1,
+    "status": "success",
+    "error": null
+  },
+  {
+    "id": "5ae151985542990adbacf74d",
+    "question": "Which music group has the most members, DC Talk, or Manchester Orchestra?",
+    "ground_truth": "DC Talk has three members, while Manchester Orchestra has four members, so Manchester Orchestra has the most members.",
+    "answer": "Manchester Orchestra. (Manchester Orchestra has four members, while DC Talk is a trio of three.)",
+    "contexts": [
+      "DC Talk (stylized as dc Talk) is a Christian rap and rock trio. The group was formed at Liberty University in Lynchburg, Virginia in 1987 by Toby McKeehan, Michael Tait, and Kevin Max Smith. They released five major studio albums together: \"DC Talk\" (1989), \"Nu Thang\" (1990), \"Free at Last\" (1992), \"Jesus Freak\" (1995), and \"Supernatural\" (1998). In 2002, the \"Encyclopedia of Contemporary Christian Music\" called DC Talk \"the most popular overtly Christian act of all time.\"",
+      "Manchester Orchestra is an American indie rock band from Atlanta, Georgia, formed in 2004. The group is composed of rhythm guitarist-singer-songwriter Andy Hull, lead guitarist Robert McDowell, bassist Andy Prince and drummer Tim Very. Former drummer Jeremiah Edmond parted ways with the band in January 2010 to focus on his family and on running the band's record label, Favorite Gentlemen. The band's original bassist, Jonathan Corley, parted ways with the band in 2013. Keyboardist/percussionist",
+      "reviewers and critics noting a similarity to the sound of Nirvana. \"Jesus Freak\" earned DC Talk three GMA Dove Awards.",
+      "DC Talk (though the group has been on hiatus since 2000). Tait also has had success in his solo career, founding a band called Tait in 1997. He toured as a solo act until 2007. He became lead singer of the Christian pop rock band Newsboys in 2009, and though Peter Furler was the lead vocalist on the album \"In the Hands of God\", Tait provided supporting vocals on the project. Aside from singing, Tait is also a self-taught guitar player. Tait also has a sister Lynda Randle, who is a Southern"
+    ],
+    "retrieval_calls": 1,
+    "status": "success",
+    "error": null
+  },
+  {
+    "id": "5add813e5542992200553b46",
+    "question": "Eddie Jemison had a role in the television series \"IZombie\", which premiered on what date?",
+    "ground_truth": "March 17, 2015",
+    "answer": "March 17, 2015.",
+    "contexts": [
+      "\"iZombie\" (stylized as \"iZOMBiE\") is an American television series developed by Rob Thomas and Diane Ruggiero-Wright for The CW. It is a loose adaptation of the comic book series of the same name created by Chris Roberson and Michael Allred, and published by DC Comics under their Vertigo imprint. The series premiered on March 17, 2015.",
+      "iZombie (stylized as iZOMBiE) is an American television series developed by Rob Thomas and Diane Ruggiero-Wright for The CW. It is a loose adaptation of the comic book series of the same name created by Chris Roberson and Michael Allred, and published by DC Comics under their Vertigo imprint. The series premiered on March 17, 2015.",
+      "Edward Francis \"Eddie\" Jemison, Jr. (born 1963) is an American film and television actor. He is known for his roles in the \"Ocean's Eleven\" trilogy and the television series \"Hung\" and IZombie.",
+      "Dream School is an American reality television series on SundanceTV that premiered on October 7, 2013. The series follows fifteen high school dropouts as they are taught by a series of celebrity \"teachers\", including actor David Arquette, conservationist Jeff Corwin, civil rights activist Jesse Jackson, astronaut Mae Jemison, television journalist Soledad O'Brien, financial expert Suze Orman, filmmaker Oliver Stone, and musician Swizz Beatz. The series is an adaptation of British television show"
+    ],
+    "retrieval_calls": 1,
+    "status": "success",
+    "error": null
+  },
+  {
+    "id": "5a7af8fa55429927d897bf25",
+    "question": "Consider the band formed in 2015 by JYP Entertainment through the reality show \"Sixteen\". How many tracks are on the reissue of their third album?",
+    "ground_truth": "The band formed in 2015 by JYP Entertainment through the reality show \"Sixteen\" is Twice. The reissue of their third album, \"Twicecoaster: Lane 2\", contains 13 tracks.",
+    "answer": "13 tracks.",
+    "contexts": [
+      "Twice (; Japanese: トゥワイス) is a South Korean girl group formed by JYP Entertainment through the 2015 reality show \"Sixteen\". The group is composed of nine members: Nayeon, Jeongyeon, Momo, Sana, Jihyo, Mina, Dahyun, Chaeyoung, and Tzuyu. The group debuted on October 20, 2015 with the extended play (EP) \"The Story Begins\".",
+      "Sunrise is the first studio album by South Korean rock band Day6. It was released by JYP Entertainment on June 7, 2017. This album features 14 tracks which consists of all 10 tracks that were previously released from January to May 2017 through \"Every Day6\", tracks from \"Every Day6 June\", rebooted version of \"Letting Go\", and final version of \"Congratulations\".",
+      "Twicecoaster: Lane 2 (stylized as TWICEcoaster : LANE 2) is the reissue of South Korean girl group Twice's third extended play (EP) \"\". It was released digitally and physically on February 20, 2017 by JYP Entertainment. It contains 13 tracks, including the lead single, \"Knock Knock\".",
+      "Wonder Girls () was a South Korean girl group and band formed by producer Park Jin-young under JYP Entertainment in 2006, which debuted in 2007. The group's final line-up consisted of Yubin, Yeeun, Sunmi and Hyerim. Members Sunye and Sohee officially left the group in 2015, while Hyuna left in late 2007. They were co-managed in the United States by Creative Artists Agency."
+    ],
+    "retrieval_calls": 1,
+    "status": "success",
+    "error": null
+  },
+  {
+    "id": "5ae28b76554299495565daa8",
+    "question": "What three categories does income get levied under the Parliament of Australia's tax code?",
+    "ground_truth": "Income tax in Australia is levied upon three sources of income for individual taxpayers: \"personal earnings\" (such as salary and wages), \"business income\" and \"capital gains\".",
+    "answer": "I’m sorry, but the provided context does not include any information about the Parliament of Australia’s tax code or the three categories in which income is levied. I don’t have enough information to answer.",
+    "contexts": [
+      "he would not be eligible for selection until his college class graduated. Before the draft, six college underclassmen were declared eligible for selection under the \"hardship\" rule. These players had applied and gave evidence of financial hardship to the league, which granted them the right to start earning their living by starting their professional careers earlier. Four former American Basketball Association (ABA) franchises who joined the NBA when both leagues merged, the Denver Nuggets, the",
+      "The Armée de l'Air (literally, \"army of the air\") is the name used for the French Air Force in its native language since it was made independent of the Army in 1933. This article deals exclusively with the history of the French air force from its earliest beginnings until its destruction after the occupation of France. French naval aviation, the \"Aéronautique Navale\" is covered elsewhere.",
+      "DC Talk (though the group has been on hiatus since 2000). Tait also has had success in his solo career, founding a band called Tait in 1997. He toured as a solo act until 2007. He became lead singer of the Christian pop rock band Newsboys in 2009, and though Peter Furler was the lead vocalist on the album \"In the Hands of God\", Tait provided supporting vocals on the project. Aside from singing, Tait is also a self-taught guitar player. Tait also has a sister Lynda Randle, who is a Southern",
+      "The French Air Force (French: \"Armée de l'air\" ] , literally \"air army\") is the air force of the French Armed Forces. It was formed in 1909 as the \"Service Aéronautique\", a service arm of the French Army, then was made an independent military arm in 1934. The number of aircraft in service with the French Air Force varies depending on source, however sources from the French Ministry of Defence give a figure of 658 aircraft in 2014. The French Air Force has 241 combat aircraft in service, with the"
+    ],
+    "retrieval_calls": 1,
+    "status": "success",
+    "error": null
+  },
+  {
+    "id": "5a8a484f5542996c9b8d5e94",
+    "question": "What city did the author of \"Portraits and Prayers\" choose to live in after moving to France?",
+    "ground_truth": "The author of \"Portraits and Prayers,\" Gertrude Stein, chose to live in Paris after moving to France.",
+    "answer": "I do not have enough information in the provided context to determine the city. The context mentions Léopold Eyharts and the French Air Force but does not reference \"Portraits and Prayers\" or its author.",
+    "contexts": [
+      "Léopold Eyharts (born April 28, 1957) is a Brigadier General in the French Air Force, an engineer and ESA astronaut.",
+      "The French Air Force (French: \"Armée de l'air\" ] , literally \"air army\") is the air force of the French Armed Forces. It was formed in 1909 as the \"Service Aéronautique\", a service arm of the French Army, then was made an independent military arm in 1934. The number of aircraft in service with the French Air Force varies depending on source, however sources from the French Ministry of Defence give a figure of 658 aircraft in 2014. The French Air Force has 241 combat aircraft in service, with the",
+      "The Armée de l'Air (literally, \"army of the air\") is the name used for the French Air Force in its native language since it was made independent of the Army in 1933. This article deals exclusively with the history of the French air force from its earliest beginnings until its destruction after the occupation of France. French naval aviation, the \"Aéronautique Navale\" is covered elsewhere.",
+      "has 241 combat aircraft in service, with the majority being 133 Dassault Mirage 2000 and 108 Dassault Rafale. As of early 2017, the French Air Force employs a total of 41,160 regular personnel. The reserve element of the air force consisted of 5,187 personnel of the Operational Reserve."
+    ],
+    "retrieval_calls": 1,
+    "status": "success",
+    "error": null
+  },
+  {
+    "id": "5ae3281a5542991a06ce9939",
+    "question": "Are both Frank Lloyd and Olivier Assayas American film directors?",
+    "ground_truth": "No, Frank Lloyd is an American film director, while Olivier Assayas is a French film director.",
+    "answer": "I don’t have enough information. The provided context does not mention Frank Lloyd or Olivier Assayas.",
+    "contexts": [
+      "Léopold Eyharts (born April 28, 1957) is a Brigadier General in the French Air Force, an engineer and ESA astronaut.",
+      "is an adaptation of British television show \"Jamie's Dream School\", created by celebrity chef Jamie Oliver, and is produced by Oliver and rapper Curtis \"50 Cent\" Jackson.",
+      "Out to Win is an American documentary film, released in 2015. Directed by Malcolm Ingram, the film chronicles the history of LGBT participation in professional sports, concentrating in particular on key figures such as John Amaechi, Billy Bean, Jason Collins, Wade Davis, Brittney Griner, Billie Jean King, David Kopay, Conner Mertens, Martina Navratilova, and Michael Sam..",
+      "The Armée de l'Air (literally, \"army of the air\") is the name used for the French Air Force in its native language since it was made independent of the Army in 1933. This article deals exclusively with the history of the French air force from its earliest beginnings until its destruction after the occupation of France. French naval aviation, the \"Aéronautique Navale\" is covered elsewhere."
+    ],
+    "retrieval_calls": 1,
+    "status": "success",
+    "error": null
+  },
+  {
+    "id": "5ae76c625542997ec272763e",
+    "question": "Which founder of Alcatraz East was born on March 31, 1956?",
+    "ground_truth": "John Morgan is the founder of Alcatraz East and was born on March 31, 1956.",
+    "answer": "I do not have enough information in the provided context to identify the founder of Alcatraz East born on March 31, 1956.",
+    "contexts": [
+      "Léopold Eyharts (born April 28, 1957) is a Brigadier General in the French Air Force, an engineer and ESA astronaut.",
+      "Prof. Dr. Ulrich Hans Walter (born February 9, 1954) is a German physicist/engineer and a former DFVLR astronaut.",
+      "Edward Francis \"Eddie\" Jemison, Jr. (born 1963) is an American film and television actor. He is known for his roles in the \"Ocean's Eleven\" trilogy and the television series \"Hung\" and IZombie.",
+      "Michael DeWayne Tait (born May 18, 1966) is a contemporary Christian music artist. Michael Tait met Toby McKeehan in 1984 when he was in high school. Both Toby and Michael met Kevin Max while attending Liberty University in the late 1980s, and together they formed four-time Grammy winning band DC Talk, with whom Michael Tait has released five acclaimed studio albums. Tait is the current lead singer of Newsboys, and one third of Christian rock group DC Talk (though the group has been on hiatus"
+    ],
+    "retrieval_calls": 1,
+    "status": "success",
+    "error": null
+  },
+  {
+    "id": "5a793ea55542994bb9456fce",
+    "question": "Which magazine was first published earlier, The Chronicle of Philanthropy or Skeptic?",
+    "ground_truth": "Skeptic magazine was first published earlier in the spring of 1992, while The Chronicle of Philanthropy was founded in 1988. Therefore, The Chronicle of Philanthropy was published earlier.",
+    "answer": "I don’t have enough information in the provided context to determine which magazine was published first (The Chronicle of Philanthropy or Skeptic). If you can share their publication dates, I can help compare.",
+    "contexts": [
+      "DC Talk (stylized as dc Talk) is a Christian rap and rock trio. The group was formed at Liberty University in Lynchburg, Virginia in 1987 by Toby McKeehan, Michael Tait, and Kevin Max Smith. They released five major studio albums together: \"DC Talk\" (1989), \"Nu Thang\" (1990), \"Free at Last\" (1992), \"Jesus Freak\" (1995), and \"Supernatural\" (1998). In 2002, the \"Encyclopedia of Contemporary Christian Music\" called DC Talk \"the most popular overtly Christian act of all time.\"",
+      "\"Jesus Freak\" is a song by the American contemporary Christian music group DC Talk. Released on August 1, 1995, it was the lead radio single from (and lends its name to) the group's fourth album. The song was written and produced by Toby McKeehan and Mark Heimermann. Lyrically, the song is about standing up for the belief in Jesus Christ in the midst of persecution. Musically, the song has been described as alternative rock and grunge, with many reviewers and critics noting a similarity to the",
+      "DC Talk (though the group has been on hiatus since 2000). Tait also has had success in his solo career, founding a band called Tait in 1997. He toured as a solo act until 2007. He became lead singer of the Christian pop rock band Newsboys in 2009, and though Peter Furler was the lead vocalist on the album \"In the Hands of God\", Tait provided supporting vocals on the project. Aside from singing, Tait is also a self-taught guitar player. Tait also has a sister Lynda Randle, who is a Southern",
+      "reviewers and critics noting a similarity to the sound of Nirvana. \"Jesus Freak\" earned DC Talk three GMA Dove Awards."
+    ],
+    "retrieval_calls": 1,
+    "status": "success",
+    "error": null
+  }
+]
