@@ -1,46 +1,28 @@
 import asyncio
-
-from rag.agent_rag import AgentRAG
-from rag.dataset import (
-    build_evaluation_dataset,
-    load_ragbench,
-)
-
-
-async def main():
-    dataset = load_ragbench()
-    evaluation_dataset = build_evaluation_dataset(
-        dataset,
-        limit=5,
-    )
-
-    rag = AgentRAG()
-
-    for index, sample in enumerate(evaluation_dataset):
-
-        print("\n" + "=" * 80)
-        print(f"QUESTION {index + 1}")
-        print("=" * 80)
-
-        print(sample["question"])
-
-        result = await rag.ainvoke(
-            sample["question"]
-        )
-
-        print("\nANSWER:")
-        print(result["answer"])
-
-        print("\nMESSAGES:")
-
-        for message in result["messages"]:
-            print(
-                f"\n[{message.type}]"
-            )
-            print(
-                str(message.content)[:500]
-            )
-
+from experiment import run_experiment
+import pandas as pd
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    naive_rs = asyncio.run(run_experiment(mode="naive", model="gpt-5-nano"))
+    agentic_rs = asyncio.run(run_experiment(
+        mode="agentic", model="gpt-5-nano"))
+
+    naive_df = pd.DataFrame(naive_rs)
+    agentic_df = pd.DataFrame(agentic_rs)
+
+    comparison = pd.DataFrame({
+        "question": naive_df["question"],
+        "expected_answer": naive_df["expected_answer"],
+
+        "naive_response": naive_df["model_response"],
+        "naive_score": naive_df["correctness_score"],
+
+        "agentic_response": agentic_df["model_response"],
+        "agentic_score": agentic_df["correctness_score"],
+    })
+
+    comparison.to_csv(
+        "data/compare.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
