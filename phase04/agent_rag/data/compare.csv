@@ -1,0 +1,209 @@
+﻿question,expected_answer,naive_response,naive_score,agentic_response,agentic_score
+"What is the default checkpoint used by the sentiment analysis pipeline in the Transformers library?
+",distilbert base uncased finetuned sst2 english,distilbert base uncased finetuned sst2 english,pass,Beautiful Soup (bs4).,pass
+"What is the dimension of the feature vector for the base BERT model?
+",768,768,pass,./run.sh --stage 15 --skip_upload_hf false --hf_repo username/model_repo,pass
+"What is the goal of the Named Entity Recognition task in token classification?
+","The goal of the Named Entity Recognition task is to find the entities in a piece of text, such as person, location, or organization.","To find named entities in text (such as person, location, or organization) by labeling each token with the appropriate entity class, plus a ""no entity"" class for non-entity tokens.",pass,It shows how to use DeepSpeed to pre-train and fine-tune a 1.6B-parameter GPT-2 XL model for causal language modeling on Habana Gaudi.,pass
+"What is the name of the large multimodal model that can solve image-text tasks and is based on Flamingo?
+",IDEFICS,IDEFICS,pass,SOC 2 Type 2 certified.,pass
+"What is the purpose of the /healthcheck endpoint in the Datasets server API?
+",Ensure the app is running,To verify the Datasets server is running and responsive (a liveness/health check).,pass,"A dynamic code test that reproduces the bug and fails before the fix and passes after the fix (i.e., a regression-style test). It could also be a linting rule or another type if appropriate.",pass
+"How can a user claim authorship of a paper on the Hugging Face Hub?
+","By clicking their name on the corresponding Paper page and clicking ""claim authorship"", then confirming the request in paper settings for admin team validation.","The provided documents do not describe any method to claim authorship of a paper on the Hugging Face Hub. They cover sharing datasets/models, DOIs for datasets, organizations, gated access, and getting help, but nothing about authorship claims.",fail,Skops,pass
+"What is the resolution of images used by the CLIPSeg model?
+",352 x 352 pixels,224x224 pixels.,fail,ByT5: Towards a token-free future with pre-trained byte-to-byte models,pass
+"What is the purpose of Weights and Biases (W&B) for data scientists and machine learning scientists?
+","To track their machine learning experiments at every stage, from training to production.","To track ML experiments across their lifecycle—from training to production—by aggregating metrics across samples and displaying them in customizable, searchable dashboards.",pass,"In the Hugging Face Endpoints UI, open your Endpoint and go to the Logs tab. There you can view:
+- Build Logs (for image artifact builds)
+- Container Logs (during inference; available only when the Endpoint is Running)
+
+If the Endpoint is in a Failed state, check the Build Logs to see the reason.",pass
+"What is the purpose of Diffusers library?
+",To serve as a modular toolbox for both inference and training of state-of-the-art pretrained diffusion models across multiple modalities.,"To provide tooling for training diffusion models and to offer simple, educational example scripts that illustrate known training schemes (not aim for state-of-the-art models).",fail,`pip install -r requirements.txt`,pass
+"What is the purpose of the `gradio.Blocks` API?
+","The `gradio.Blocks` API allows you to have full control over the data flows and layout of your application, enabling the building of complex, multi-step applications.",Not specified in the provided documents.,fail,"Inference Endpoints. 
+
+(Hugging Face is sunsetting the Paid tier of the Inference API and directing users to Inference Endpoints for enterprise-grade needs.)",pass
+"What is the purpose of Fully Sharded Data Parallel (FSDP) in distributed training?
+","FSDP is developed for distributed training of large pretrained models up to 1T parameters by sharding the model parameters, gradients, and optimizer states across data parallel processes.","FSDP is used to enable scalable, memory-efficient distributed training of very large models by fully sharding the model parameters (and related states) across multiple GPUs, allowing training/fine-tuning of billions-parameter models that wouldn’t fit on a single device.",pass,Group convolutions.,pass
+"What is the file size limit for syncing to HF Spaces without using Git-LFS?
+",10MB,"10 MB (10,485,760 bytes).",pass,"The pretraining objective is a contrastive task: the model must predict the true quantized speech representation of the masked prediction from a set of negative (false) examples, encouraging it to identify the most similar context vector and the target quantized speech unit.",pass
+"What is the purpose of Textual Inversion?
+",Textual Inversion is a training method for personalizing models by learning new text embeddings from a few example images.,To personalize a Stable Diffusion model by teaching it a new concept from your own images (3–5 samples) and then share that concept with the community.,pass,"- Factorized embedding parameterization: factor the input embedding matrix (V × H) into V × E and E × H, with E ≪ H, to reduce embedding parameters.
+
+- Cross-layer parameter sharing: reuse the same transformer layer parameters across all layers, drastically cutting the total parameter count.",pass
+"What is the purpose of the Safety Checker in the Diffusers library?
+",The Safety Checker checks and compares the class probability of a set of hard-coded harmful concepts in the embedding space against an image after it has been generated to mitigate the risk of generating harmful content.,"It is part of the Diffusers’ safety features/mechanisms, intended to mitigate ethical and social risks of diffusion technology by checking and handling potentially unsafe outputs (with input from the community guiding its implementation).",fail,10 GB. Checkpoints larger than 10 GB are automatically sharded; you can adjust the threshold with the max_shard_size parameter.,pass
+"What is the purpose of the two-stage model proposed in the paper ""Hierarchical Text-Conditional Image Generation with CLIP Latents""?
+",The purpose of the two-stage model is to generate a CLIP image embedding given a text caption and then generate an image conditioned on the image embedding.,"To map text to image representations by predicting CLIP image embeddings from CLIP text embeddings (a Prior stage), so the diffusion model can generate images conditioned on text via CLIP latents.",pass,"It decomposes text-to-image generation into two steps: a Prior Transformer that predicts CLIP image embeddings from CLIP text embeddings, followed by a diffusion model that decodes those embeddings into an image. In short, text → CLIP image embedding → image via diffusion.",pass
+"What is the latest task added to Hugging Face AutoTrain for Computer Vision?
+",Image Classification,Image Classification.,pass,"- 🤗 Diffusers is the go-to library for state-of-the-art pretrained diffusion models for generating images, audio, and even 3D structures of molecules.
+- It’s a modular toolbox that supports both simple inference and training your own diffusion models.
+- The library emphasizes usability over performance, simplicity over easy, and customizability over abstractions.
+- It has three core components.",pass
+"What is the purpose of the BLIP-Diffusion model?
+",The BLIP-Diffusion model is designed for controllable text-to-image generation and editing.,Not specified in the provided documents.,fail,"Safetensors format (.safetensors). It’s a non-executable, safe-to-load format used for PyTorch/transformers weights, considered more secure than .bin/.pt files.",pass
+ase," d""","The provided documents do not mention or define ""ase.""",fail,"from_pretrained
+
+Example: AutoPipelineForText2Image.from_pretrained(...)",pass
+"What method does the EulerAncestralDiscreteScheduler use for sampling?
+",Ancestral sampling with Euler method steps.,Ancestral sampling (with Euler method steps).,pass,Up to 800% higher throughput.,pass
+"Where can the full code for the Stable Diffusion demo be found?
+",https://hf.co/spaces/stabilityai/stable-diffusion/tree/main,https://hf.co/spaces/stabilityai/stable-diffusion/tree/main,pass,3-5 images (3 to 5 samples).,pass
+"What is the maximum improvement in throughput achieved by Hugging Face Infinity compared to vanilla transformers?
+",800%,800% higher throughput.,pass,"The ""##"" prefix (two hash symbols) indicates continuing subwords in WordPiece.",pass
+"What type of security certification does Hugging Face have?
+",SOC2 Type 2 certified,SOC 2 Type 2 certification.,pass,pip install --upgrade-strategy eager optimum[openvino],pass
+"What command line module does PyTorch provide to run a script on multiple GPUs?
+",torchrun,torchrun,pass,"- FSDP shards a model’s parameters, gradients, and optimizer states across GPUs, instead of replicating the full model on each device.
+- This reduces per-GPU memory usage, improving memory efficiency and enabling training of much larger models on fewer GPUs. It’s integrated with Accelerate and usable from Trainer.",pass
+"What file format is used to save and store PyTorch model weights more securely than `.bin` files?
+",`.safetensors`,safetensors format (.safetensors).,pass,Ancestral sampling with Euler method steps.,pass
+"What task does the `roberta-large-mnli` checkpoint perform?
+",Text classification,Natural language inference (NLI) — determining entailment/contradiction/neutral between sentence pairs.,fail,Optimum,pass
+"What architecture is the `tokenizers-linux-x64-musl` binary designed for?
+",x86_64-unknown-linux-musl,x86_64-unknown-linux-musl,pass,352 × 352 pixels.,pass
+"What parameter is used to ensure that elements in a row have the same height in Gradio?
+",equal_height,Not mentioned in the provided documents.,fail,HfApi class.,pass
+"What are the three main steps for fine-tuning a model with the 🤗 Datasets library?
+",1. Load a dataset from the Hugging Face Hub. 2. Preprocess the data with `Dataset.map()`. 3. Load and compute metrics.,"- Load a dataset from the Hugging Face Hub.
+- Preprocess the data with Dataset.map().
+- Load and compute metrics.",pass,Multiples of 64.,fail
+"What can you use Gradio for?
+","Create a demo for your machine learning model, share your machine learning model with others, and debug your model.",The provided documents do not specify what you can use Gradio to do.,fail,"Weights & Biases (W&B) helps data scientists and ML scientists track their machine learning experiments from training to production. It aggregates metrics across samples and presents them in customizable, searchable dashboards to monitor, compare, and reproduce experiments.",pass
+"What is the command to install the latest version of Optimum with OpenVINO support?
+","pip install --upgrade-strategy eager optimum[""openvino""]",pip install optimum[openvino],fail,The Safety Checker is used to check generated outputs against known hardcoded NSFW content (to filter/flag unsafe content). It can be disabled by passing safety_checker=None when creating the pipeline.,pass
+"What Python class allows you to retrieve Discussions and Pull Requests from a given repository on the Hugging Face Hub?
+",HfApi,HfApi.,pass,On Hugging Face Spaces: https://hf.co/spaces/stabilityai/stable-diffusion/tree/main,pass
+"What is the most popular vision transformer model on the Hugging Face Model Hub for image classification?
+",google/vit-base-patch16-224,google/vit-base-patch16-224,pass,"Textual Inversion lets you personalize a Stable Diffusion model on your own images with just 3–5 samples, by training the model on a concept and then sharing that learned concept (as a token) for use in prompts.",pass
+"What are the two parameter-reduction techniques proposed in the ALBERT model to lower memory consumption and increase training speed?
+",Splitting the embedding matrix into two smaller matrices and using repeating layers split among groups.,"- Factorized embedding parameterization: splitting the embedding matrix into two smaller matrices.
+- Cross-layer parameter sharing (repeating layers): reusing the same layers across the model (layers split among groups).",pass,google/vit-base-patch16-224,pass
+"What is the purpose of tokenizers in the NLP pipeline?
+",To translate text into data that can be processed by the model.,To train a tokenizer on a text corpus so it can be used to pretrain a language model.,fail,"The Gradio Blocks API is a higher-level way to build complex, multi-component apps. It provides a Blocks container (often used with a context manager) to compose components, arrange them with layouts (Rows, Columns, Tabs, etc.), and wire interactivity and state between components—enabling richer, multi-input apps beyond a single-function Interface. You can also reuse Interface-style shortcuts inside Blocks.",pass
+"What service is replacing the Paid tier of the Inference API at Hugging Face?
+",Inference Endpoints,Inference Endpoints.,pass,"The module is torch.distributed.run. Use it as:
+python -m torch.distributed.run --nproc_per_node <num_gpus> --nnodes 1 your_script.py",fail
+"What is the default repository type created by the `create_repo` function on Hugging Face Hub?
+",model,Not specified in the provided documents.,fail,"The goal is to locate and classify named entities in text by labeling each token with the appropriate entity type (e.g., person, location, organization) or with a non-entity label for tokens that are not part of any entity.",pass
+"What is the command to upload an ESPnet model to a Hugging Face repository?
+",./run.sh --stage 15 --skip_upload_hf false --hf_repo username/model_repo,./run.sh --stage 15 --skip_upload_hf false --hf_repo username/model_repo,pass,IDEFICS.,pass
+"What is the name of the open-source library created by Hugging Face to simplify Transformer acceleration?
+",Optimum,Optimum,pass,Image Classification.,pass
+"What is the maximum size of a model checkpoint before it is automatically sharded in Transformers version 4.18.0?
+",10GB,10 GB.,pass,A Fourier transform (unparameterized) that returns only the real parts of the transform.,pass
+"What is the command to upload a spaCy pipeline to the Hugging Face Hub?
+",python -m spacy huggingface-hub push en_ner_fashion-0.0.0-py3-none-any.whl,"The documents say there is a single command to upload a spaCy pipeline, but they do not specify the exact command.",fail,"- Tokenizers are the first preprocessing step in the NLP pipeline.
+- Their main purpose is to convert raw text into numerical inputs that the model can process.
+- They split text into tokens, map tokens to IDs in the model’s vocabulary, and may apply normalization (e.g., lowercasing), subword segmentation, and insertion of special tokens.
+- They also handle padding/truncation and produce inputs (like input IDs and attention masks) needed for model inference.",pass
+"What command is used to install the requirements for a research project using 🤗 Transformers?
+",pip install -r requirements.txt,pip install -r requirements.txt,pass,"- Load a dataset from the Hugging Face Hub.
+- Preprocess the data with Dataset.map().
+- Load and compute metrics.",pass
+"What file should be added to a model repository to install custom Python dependencies for Inference Endpoints?
+",requirements.txt,requirements.txt,pass,"RAG models combine a retrieval component (dense retriever, e.g., DPR) with a generation component (a seq2seq model). They retrieve relevant documents, feed them to the generator (often by prepending to the input), and generate outputs while marginalizing over the retrieved documents. They are typically fine-tuned jointly.",pass
+"What architectural feature does SqueezeBERT use instead of fully-connected layers for the Q, K, V, and FFN layers?
+",Grouped convolutions,Grouped convolutions.,pass,"Six splits — train, validation, and test for each of the two configurations: ParaphraseRC and SelfRC.",pass
+"What is the pretraining objective of the Wav2Vec2 context network?
+",The pretraining objective of the Wav2Vec2 context network is a contrastive task where the model has to predict the true quantized speech representation of the masked prediction from a set of false ones.,A contrastive objective: the model must identify the true quantized speech representation of the masked prediction from a set of false options.,pass,It serves as a health check to ensure the Datasets server application is running.,pass
+"What is the default setting for the `allow_flagging` parameter in Gradio's `Interface`?
+","""manual""",Not specified in the provided documents.,fail,"Gradio lets you:
+
+- Build interactive ML demos quickly using the Interface class.
+- Create chat UIs with gr.ChatInterface for chatbots.
+- Run demos locally but share them publicly via a URL so anyone can try them in their browser.",fail
+"What method is used to load a checkpoint for a task using `AutoPipeline`?
+",from_pretrained(),"Use the from_pretrained method of the appropriate pipeline class (e.g., StableDiffusionPipeline.from_pretrained or TFAutoModelForSequenceClassification.from_pretrained).",pass,"- To provide simple, educational training examples showing how to use Diffusers for training (not to create state-of-the-art diffusion models).
+- Each example should have all code in a single Python file and be runnable from the command line with python <your-example>.py --args.
+- They aim to reproduce known training schemes with minimal custom logic and serve as good educational materials.",fail
+"How many images are needed to teach new concepts to Stable Diffusion using Textual Inversion?
+",3-5 images,3-5 images.,pass,"O(n) time and O(n) memory (linear in the sequence length; for a fixed number of Nyström landmarks m, it’s effectively O(n) with respect to n).",pass
+"What is the recommended multiple of batch size for fp16 data type on an A100 GPU?
+",,A multiple of 64.,fail,"Could you clarify what you mean by ""ase""? I searched Hugging Face docs and found unrelated results (e.g., Gradio json_component, tokenizer examples, hub pushes). Please specify what you’re looking for (topic, acronym, model, command, etc.).",fail
+"What is the default context window size for Local Attention in the LongT5 model?
+",127 tokens,Total context window = local_chunk_length × (1 + local_num_chunks_before + local_num_chunks_after).,fail,"BLIP-Diffusion provides a pre-trained subject representation to enable controllable text-to-image generation and editing. Its purpose is zero-shot subject-driven generation and editing control, and it can be combined with methods like ControlNet and prompt-to-prompt; it also supports efficient fine-tuning for customized subjects (faster than previous methods).",pass
+"What is the title of the paper introducing the ByT5 model?
+",ByT5: Towards a token-free future with pre-trained byte-to-byte models,Not available in the provided documents.,fail,"Authorship is claimed automatically. The Hub will attempt to automatically match a paper to users based on their email. To view/verify, go to the Paper page (accessible via the arXiv tag on the repository’s Paper link).",fail
+"What type of license is the HuggingFace Team's software distributed under?
+","Apache License, Version 2.0",The documents do not specify the license type for HuggingFace Team's software.,fail,64-bit Linux (x86_64) using musl libc.,pass
+"What do RAG models combine to generate outputs?
+",Pretrained dense retrieval (DPR) and sequence-to-sequence models.,Pretrained dense retrieval (DPR) and sequence-to-sequence (Seq2Seq) models—retrieving documents and feeding them to the generator to produce outputs.,pass,"Use the spaCy CLI to push the wheel to Hub:
+
+- Command: python -m spacy huggingface-hub push [whl_path] [--org] [--msg] [--local-repo] [--verbose]
+
+Example:
+- cd ./output/en_ner_fashion-0.0.0/dist
+- python -m spacy huggingface-hub push en_ner_fashion-0.0.0-py3-none-any.whl",pass
+"What is the name of the new library introduced by Hugging Face for hosting scikit-learn models?
+",Skops,Not specified in the provided documents.,fail,Add a requirements.txt file to the model repository. It will list the Python dependencies to install during endpoint creation.,pass
+"How many splits does the ""duorc"" dataset have?
+",Six,"Three splits: train, validation, and test.",fail,"equal_height
+
+Example: with gr.Row(equal_height=True): ... 
+(also can use row.style(equal_height=True) on the row)",pass
+"How do you run a Gradio Blocks app in reload mode using a Python IDE?
+",Run `gradio run.py` in the terminal.,"- In your IDE’s integrated terminal, run the file with Gradio instead of Python: gradio app.py
+- This starts hot reload mode; the app will auto-reload on changes and open at http://localhost:7860.",fail,"A model repository (repo_type=""model"" by default).",pass
+"Where can you access the logs of your Endpoints in Hugging Face Endpoints?
+","In the ""Logs"" tab of your Endpoint through the UI.","- In the UI, open the Logs tab of your Endpoint.
+- Build Logs: for the image artifact builds (also when creation fails, to diagnose).
+- Container Logs: available during inference, only when the Endpoint is in the Running state.",pass,"Here are the documented ways to install the Hugging Face Unity API.
+
+Option A — General Unity project installation
+- Open your Unity project
+- Window -> Package Manager
+- Click + and select Add Package from git URL
+- Enter https://github.com/huggingface/unity-api.git
+- Once installed, the Unity API wizard should pop up. If not, Window -> Hugging Face API Wizard
+
+Option B — Unity integration sample (may require a specific Unity version)
+- Unity version 2021.3.2f1
+- Install Unity 2021.3.2f1 using the Unity Hub if you don’t have it
+- From the Unity Hub, open the project at ./integrations/Unity/simulate-unity
+- Open the Sample Scene or create a new scene with an empty GameObject with a Client.cs component attached
+
+Note (Apple Silicon): installation of this specific version on Apple Silicon Macs has been tricky — to do so, first install Unity Hub, then download the source from https://unity3d.com/get-unity/download/archive, then install the package. It is easiest to do this from a fresh Unity install; detecting the second from-source Unity editor version is more challenging.",pass
+"What library does MarkupLMFeatureExtractor use to extract data from HTML and XML files?
+",Beautiful Soup,Beautiful Soup (bs4).,pass,"Apache License, Version 2.0 (Apache-2.0).",pass
+"What is the purpose of the notebook ""How to use DeepSpeed to train models with billions of parameters on Habana Gaudi""?
+",To show how to use DeepSpeed to pre-train/fine-tune the 1.6B-parameter GPT2-XL for causal language modeling on Habana Gaudi.,The notebook demonstrates how to use DeepSpeed to pre-train and fine-tune a 1.6B-parameter GPT-2 XL for causal language modeling on Habana Gaudi.,pass,"127 tokens on each side (default r=127), i.e., a 255-token local window.",pass
+"How can you install the Hugging Face Unity API in your Unity project?
+","To install the Hugging Face Unity API in your Unity project, go to `Window` -> `Package Manager`, click `+` and select `Add Package from git URL`, then enter `https://github.com/huggingface/unity-api.git`.","- Recommended: use Unity 2021.3.2f1.
+- In your Unity project, go to Window > Package Manager.
+- Click the + and choose Add Package from git URL.
+- Enter https://github.com/huggingface/unity-api.git and install.
+- After installation, the Unity API wizard should pop up; if not, go to Window > Hugging Face API Wizard.",pass,"Use Gradio’s CLI in reload mode from your IDE’s terminal.
+
+Steps:
+- Define your Blocks app in a script, e.g. with gr.Blocks() as my_demo: ...
+- In the IDE, run:
+  gradio run.py my_demo
+  (If your demo uses a different name, replace my_demo with that name.)
+
+This starts the dev server and reloads on code changes.",fail
+"What TensorFlow API function is used to load a saved tensor file?
+",safetensors.tensorflow.load_file,The documents do not specify any TensorFlow API function for loading a saved tensor file.,fail,"Natural language inference (NLI) — i.e., a model fine-tuned on MNLI for entailment/contradiction/neutral, usable for zero-shot text classification (e.g., with the hypothesis template ""This text is about {}."").",pass
+"What special identifier does the WordPiece Model use for continuing subwords?
+",##,The special identifier is ##.,pass,"768 (the base BERT model has a hidden size of 768, so the feature vector is 768-dimensional).",pass
+"What type of test should typically accompany a bug fix in Gradio's testing strategy?
+",Dynamic code test,A test that failed before the fix and passes after; typically a dynamic code test (could be a linting rule if appropriate).,pass,False,fail
+"What transformation does the FNet model use to replace the self-attention layer in a BERT model?
+",Fourier transform,An unparameterized Fourier transform (returning only the real part) replaces the self-attention layer.,pass,"Error: Error code: 429 - {'error': {'message': 'Rate limit reached for gpt-5-nano in organization org-d9K8uTZD01Bjewf39pCGPatW on tokens per min (TPM): Limit 200000, Used 197548, Requested 4704. Please try again in 675ms. Visit https://platform.openai.com/account/rate-limits to learn more.', 'type': 'tokens', 'param': None, 'code': 'rate_limit_exceeded'}}",fail
+"What is the purpose of the 🧨 Diffusers tutorials?
+",To provide a gentle introduction to diffusion models and help understand the library fundamentals.,"To demonstrate and guide practical use of the 🧨 Diffusers library for new applications/usages (e.g., tutorials like Stable Diffusion with 🧨 Diffusers using a Colab notebook).",fail,"Error: Error code: 429 - {'error': {'message': 'Rate limit reached for gpt-5-nano in organization org-d9K8uTZD01Bjewf39pCGPatW on tokens per min (TPM): Limit 200000, Used 193515, Requested 7258. Please try again in 231ms. Visit https://platform.openai.com/account/rate-limits to learn more.', 'type': 'tokens', 'param': None, 'code': 'rate_limit_exceeded'}}",fail
+"What is the time and memory complexity of the Nyströmformer's approximation of self-attention?
+",O(n),"- Time complexity: O(n m) (linear in sequence length n, with m Nyström landmarks; plus O(m^3) for the pseudo-inverse A^+).
+- Memory complexity: O(n m) (to store the intermediate F̃ and B̃, plus O(m^2) for Ã).",fail,"tf.io.parse_tensor (usually after reading the file with tf.io.read_file).
+
+Example:
+tensor = tf.io.parse_tensor(tf.io.read_file(""path/to/tensor.bin""), out_type=tf.float32)",fail
+"How can you force mixed precision training when initializing the Accelerator in 🤗 Accelerate?
+",By passing `fp16=True` to the Accelerator init.,"Initialize the Accelerator with the mixed_precision option, e.g.:
+
+- accelerator = Accelerator(mixed_precision='fp16')  # for FP16
+- accelerator = Accelerator(mixed_precision='bf16')  # for BF16
+
+(Also possible: use the --fp16 flag when launching scripts.)",fail,distilbert-base-uncased-finetuned-sst-2-english,pass
