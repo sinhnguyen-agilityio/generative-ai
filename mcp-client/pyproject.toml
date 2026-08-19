@@ -1,0 +1,22 @@
+[project]
+name = "mcp-client"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Sinh Nguyen", email = "sinh.nguyen@asnet.com.vn" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "anthropic>=0.122.0",
+    "mcp>=2.0.0",
+    "openai>=3.3.0",
+    "python-dotenv>=1.2.3",
+]
+
+[project.scripts]
+mcp-client = "mcp_client:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
