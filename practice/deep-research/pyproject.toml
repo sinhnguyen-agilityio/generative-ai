@@ -5,12 +5,15 @@ requires-python = ">=3.11"
 dependencies = ["pydantic>=2", "streamlit>=1.35", "langgraph>=0.2", "langchain-core>=0.3", "mcp>=1", "langfuse>=2", "ragas>=0.2"]
 
 [project.optional-dependencies]
-test = ["pytest>=8", "pytest-cov>=5"]
+test = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
 
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E401", "E501", "E701", "E702", "F401"]
+
 [tool.ruff]
 line-length = 100
-
