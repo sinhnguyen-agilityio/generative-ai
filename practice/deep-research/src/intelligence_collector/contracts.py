@@ -45,6 +45,7 @@ class IssueType(str, Enum):
 
 class Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    schema_version: int = 1
 
 
 class ScopedRequest(Model):
