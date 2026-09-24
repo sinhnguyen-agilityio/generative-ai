@@ -1,0 +1,303 @@
+# Feature Specification: Verified Research Report
+
+**Feature Branch**: `001-verified-research-report`
+
+**Created**: 2026-09-24
+
+**Status**: Draft
+
+**Input**: User description: "Build a local deep research application that produces a verified,
+evidence-backed technical report from a user's research request."
+
+## User Scenarios & Testing *(mandatory)*
+
+### User Story 1 - Complete a Verified Research Run (Priority: P1)
+
+A user submits a sufficiently clear technical research request and observes the run progress from
+scope through planning, research, synthesis, and verification. The user then reviews a final report
+whose factual claims can be traced to stored evidence.
+
+**Why this priority**: Producing a trustworthy report is the feature's primary user value and the
+minimum complete outcome.
+
+**Independent Test**: Submit a clear request with available sources and confirm that the run creates
+tasks before retrieval, completes research, verifies the draft, and presents a report with evidence
+links without asking for approval of the research brief.
+
+**Acceptance Scenarios**:
+
+1. **Given** a valid request with a clear objective, constraints, success criteria, and deliverable
+   format, **When** the user submits it, **Then** the run advances from Scoping to Planning without a
+   research-brief approval prompt.
+2. **Given** a scoped run in Planning, **When** planning completes, **Then** structured research tasks
+   exist before the first external source is retrieved.
+3. **Given** planned research tasks, **When** research executes, **Then** each task has a visible
+   status and its notes, excerpts, and evidence bundles are stored outside the chat transcript.
+4. **Given** the supervisor has explicitly marked research ready for synthesis, **When** synthesis
+   completes, **Then** verification checks scope coverage and factual-claim support against stored
+   sources.
+5. **Given** verification passes, **When** the user opens the result, **Then** the UI identifies the
+   artifact as verified and shows the final report with navigable evidence references.
+
+---
+
+### User Story 2 - Clarify an Ambiguous Request (Priority: P1)
+
+A user begins with an underspecified request and answers focused follow-up questions until the
+research objective is actionable.
+
+**Why this priority**: Research begun from an ambiguous scope wastes effort and cannot be reliably
+verified against user intent.
+
+**Independent Test**: Submit a request missing its objective and output expectations, answer the
+follow-up questions over multiple chat turns, and confirm that no planning or retrieval begins until
+the required scope fields are clear.
+
+**Acceptance Scenarios**:
+
+1. **Given** a request with an unclear objective, constraint, success criterion, or deliverable
+   format, **When** the request is evaluated, **Then** the Scope Agent asks a relevant follow-up
+   question and the run remains in Scoping.
+2. **Given** an ambiguous request, **When** the user answers only part of the missing information,
+   **Then** the Scope Agent retains prior answers and asks only for information still needed.
+3. **Given** all required scope information has become clear, **When** the latest answer is accepted,
+   **Then** the scope is recorded and the run automatically advances to Planning.
+4. **Given** malformed, empty, or unsafe input, **When** it is submitted, **Then** the input is
+   rejected with an actionable error and no durable run state or external research is initiated.
+
+---
+
+### User Story 3 - Recover from Failed Verification (Priority: P1)
+
+A user receives a verified result even when the first draft is incomplete or unsupported, provided
+the problem can be repaired within the configured recovery limits.
+
+**Why this priority**: Verification has value only when failures lead to controlled correction and
+cannot be mislabeled as success.
+
+**Independent Test**: Use evidence that causes the first draft to contain one unsupported claim,
+confirm structured feedback selects an appropriate fix, and confirm the revised artifact is verified
+again before it is shown as verified.
+
+**Acceptance Scenarios**:
+
+1. **Given** a draft that misses a scoped requirement or has an unsupported factual claim, **When**
+   verification runs, **Then** the run records structured feedback identifying the affected section,
+   claim or scope item, evidence gap, and required correction.
+2. **Given** a verification failure, **When** a correction is selected, **Then** the workflow revises
+   the draft, researches the specific gap, or re-plans affected tasks without discarding valid work.
+3. **Given** a correction has completed, **When** the candidate artifact changes, **Then** the full
+   verification gate runs again before any verified status is assigned.
+4. **Given** all checks pass within the recovery limit, **When** verification completes, **Then** the
+   latest artifact is marked verified and prior failed versions remain distinguishable in the audit
+   history.
+5. **Given** the recovery limit is exhausted with unresolved failures, **When** the final attempt
+   ends, **Then** the run is marked `NEEDS_REVIEW`, the unresolved feedback is shown, and the artifact
+   is never described as verified.
+
+---
+
+### User Story 4 - Resume an Interrupted Run (Priority: P2)
+
+A user reopens a run after the application or research process was interrupted and continues from
+the last durable point without losing completed research.
+
+**Why this priority**: Deep research may be long-running and must tolerate routine interruption
+without costly or misleading repetition.
+
+**Independent Test**: Interrupt a run after at least one research task and evidence bundle are
+persisted, restart it, and confirm completed work remains available and execution resumes from the
+last valid checkpoint.
+
+**Acceptance Scenarios**:
+
+1. **Given** a run interrupted after a durable checkpoint, **When** the user resumes it, **Then** its
+   scope, task states, stored artifacts, evidence, attempt counters, and current stage are restored.
+2. **Given** completed external research before interruption, **When** execution resumes, **Then**
+   completed retrieval is not repeated unless its task was incomplete, invalidated, or explicitly
+   selected for repair.
+3. **Given** the newest checkpoint is missing or invalid, **When** resume is attempted, **Then** the
+   UI reports a recoverable error, preserves existing artifacts, and offers the latest valid resume
+   point or marks the run `NEEDS_REVIEW` if none exists.
+
+---
+
+### User Story 5 - Control Publication (Priority: P2)
+
+A user reviews a verified artifact and explicitly approves or rejects publication to the permanent
+output location.
+
+**Why this priority**: Human control prevents drafts, unresolved results, or unwanted content from
+being treated as an approved publication.
+
+**Independent Test**: Reach a verified artifact, reject publication, and confirm no permanent output
+is created; then approve the unchanged artifact and confirm only that exact version is published.
+
+**Acceptance Scenarios**:
+
+1. **Given** a verified artifact awaiting review, **When** the user rejects publication, **Then** no
+   permanent output is created or replaced and the rejection is recorded.
+2. **Given** a run that is unverified, failed, or `NEEDS_REVIEW`, **When** publication is requested,
+   **Then** publication is denied with a reason and existing permanent output remains unchanged.
+3. **Given** the user approves a verified artifact, **When** publication succeeds, **Then** the exact
+   approved version is written to the permanent output location and the approval and publication
+   outcome are recorded.
+4. **Given** an approved artifact is edited before publication, **When** publication is attempted,
+   **Then** prior verification and approval are invalidated and the changed artifact must be verified
+   and approved again.
+5. **Given** permanent output cannot be written, **When** publication is attempted, **Then** the user
+   sees a publication failure, no partial artifact is represented as published, and retry does not
+   require repeating completed research or verification of the unchanged artifact.
+
+### Edge Cases
+
+- The user abandons clarification or submits mutually contradictory scope answers.
+- A planned task has no accessible sources, returns irrelevant sources, or repeatedly times out.
+- An external research connector is unavailable, denies access, or returns malformed content.
+- Multiple sources conflict, a source disappears, or an excerpt can no longer be traced to its
+  origin.
+- The supervisor receives partial worker results or a worker stops after persisting some artifacts.
+- Research is declared ready while one or more required tasks are incomplete.
+- The draft contains analysis or recommendations that are not factual claims but must be clearly
+  distinguished from sourced facts.
+- A correction introduces new claims or invalidates evidence links that previously passed.
+- The process is interrupted during checkpoint creation or permanent publication.
+- The user attempts to resume, approve, reject, or publish an unknown run or stale artifact version.
+- The permanent output location already contains an artifact with the same requested identity.
+
+## Requirements *(mandatory)*
+
+### Functional Requirements
+
+- **FR-001**: The system MUST provide a multi-turn local chat experience in which a user can submit
+  and refine a technical research request.
+- **FR-002**: The system MUST validate each user input for required content, supported size and
+  format, and unsafe or malformed values before it changes durable state or initiates research.
+- **FR-003**: The Scope Agent MUST determine whether the objective, constraints, success criteria,
+  and deliverable format are sufficiently clear for planning.
+- **FR-004**: When required scope information is unclear, the Scope Agent MUST ask focused follow-up
+  questions and MUST preserve usable answers across turns.
+- **FR-005**: Once scope is clear, the system MUST record the scoped request and automatically enter
+  Planning without requiring approval of a research brief.
+- **FR-006**: The Planner MUST call `write_todos` to create structured research tasks before any
+  external retrieval begins.
+- **FR-007**: Each research task MUST identify its question or objective, completion criteria,
+  dependencies, and current status.
+- **FR-008**: A Research Supervisor MUST assign planned tasks to research workers, track their
+  outcomes, and record progress assessments.
+- **FR-009**: Research workers MUST access external research sources only through approved MCP
+  connections and MUST expose connection or retrieval failures as task outcomes.
+- **FR-010**: Workers MUST persist research notes, source excerpts, and evidence bundles outside
+  conversation history and associate each artifact with its run and task.
+- **FR-011**: The supervisor MUST explicitly record that research is ready before synthesis can
+  begin, and MUST NOT do so while required tasks lack a terminal outcome or documented disposition.
+- **FR-012**: The system MUST synthesize a versioned draft from stored research artifacts and
+  evidence rather than relying on conversation history as the source of record.
+- **FR-013**: The verifier MUST determine whether the draft addresses every required element of the
+  scoped request.
+- **FR-014**: The verifier MUST determine whether every factual claim intended for the final report
+  is supported by one or more traceable stored sources.
+- **FR-015**: Each factual claim in a verified artifact MUST link to stored evidence that identifies
+  its source and preserves reviewable source context.
+- **FR-016**: A failed verification MUST produce structured feedback identifying the failure type,
+  affected scope item or claim, supporting details, and recommended repair path.
+- **FR-017**: The recovery workflow MUST select among revising the draft, researching a specific
+  evidence gap, or re-planning affected tasks based on the recorded feedback.
+- **FR-018**: Every repaired candidate artifact MUST pass verification again; prior verification
+  MUST NOT carry over to changed artifact content.
+- **FR-019**: Every retry and recovery path MUST have a configured finite limit and visible attempt
+  count.
+- **FR-020**: When a recovery limit is exhausted without a passing verification result, the system
+  MUST mark the run `NEEDS_REVIEW`, preserve unresolved feedback, and MUST NOT label the artifact as
+  verified.
+- **FR-021**: The system MUST maintain durable checkpoints sufficient to restore the run's scoped
+  request, current stage, task states, stored-artifact references, supervisor assessments, draft
+  versions, verification history, recovery counters, and publication state.
+- **FR-022**: A resumed run MUST continue from the latest valid checkpoint and MUST NOT repeat
+  completed external work unless that work is incomplete, invalidated, or selected for repair.
+- **FR-023**: The UI MUST show the current stage, task-level research progress, latest verification
+  outcome, recovery status when applicable, and the latest reviewable report.
+- **FR-024**: The system MUST distinguish at least the states Scoping, Planning, Researching,
+  Synthesizing, Verifying, Awaiting Approval, Published, Failed, and `NEEDS_REVIEW`.
+- **FR-025**: Only a verified artifact MAY enter Awaiting Approval, and explicit human approval of
+  its exact version MUST be recorded before publication.
+- **FR-026**: Rejecting publication MUST leave the permanent output location unchanged and record
+  the rejection without representing the artifact as published.
+- **FR-027**: The system MUST deny publication for an unverified, changed-after-approval, failed, or
+  `NEEDS_REVIEW` artifact and provide an actionable reason.
+- **FR-028**: Publication MUST place only the exact approved artifact version in the permanent output
+  location and MUST record success or failure without exposing partial output as published.
+- **FR-029**: Errors MUST identify the affected stage or task, preserve completed durable work, and
+  tell the user whether the run can retry, resume, or requires review.
+- **FR-030**: Workflow stage transitions, bounded recovery attempts, resumable checkpoints, and
+  approval gates MUST be governed by the project's required workflow orchestration mechanism.
+
+### Key Entities *(include if feature involves data)*
+
+- **Research Run**: One execution for a user's request; includes identity, current stage, status,
+  timestamps, checkpoint reference, and terminal outcome.
+- **Scoped Request**: The agreed objective, constraints, success criteria, deliverable format, and
+  clarification history that define what verification must assess.
+- **Research Task**: A planned unit of investigation with objective, completion criteria,
+  dependencies, assignee, status, attempt count, and outcome.
+- **Progress Assessment**: A supervisor record of task coverage, gaps, blockers, and readiness for
+  synthesis.
+- **Research Artifact**: A persisted note, source excerpt, or other intermediate work product tied to
+  a run and task but stored outside chat history.
+- **Source Record**: The identity, location, retrieval context, and relevant metadata of an external
+  source accessed through an approved research connection.
+- **Evidence Bundle**: Reviewable source excerpts and provenance supporting one or more report claims.
+- **Report Artifact**: A versioned draft or final technical report with scope coverage and links from
+  factual claims to evidence.
+- **Verification Result**: The outcome, checks performed, structured failures, and affected artifact
+  version for a verification attempt.
+- **Checkpoint**: Durable workflow state needed to resume a run without depending on conversation
+  history.
+- **Approval Decision**: A human approval or rejection tied to an exact verified artifact version.
+- **Publication Record**: The requested destination, approved artifact version, outcome, timestamp,
+  and any failure details for a publication attempt.
+
+## Success Criteria *(mandatory)*
+
+### Measurable Outcomes
+
+- **SC-001**: In acceptance testing, 100% of clear valid requests advance from Scoping to Planning
+  without asking the user to approve a research brief.
+- **SC-002**: In 100% of tested runs, structured research tasks exist before the first external
+  retrieval attempt.
+- **SC-003**: In 100% of artifacts labeled verified, every scoped requirement has an explicit
+  verification result and every factual claim has at least one reviewable evidence link.
+- **SC-004**: A user can determine the run's current stage, completed and remaining research work,
+  latest verification outcome, and report availability from a single UI view within 10 seconds.
+- **SC-005**: In the defined failed-verification acceptance test, the system records the defect,
+  performs the targeted repair, and re-verifies the changed artifact before assigning verified
+  status.
+- **SC-006**: In 100% of recovery-limit exhaustion tests, the run ends as `NEEDS_REVIEW` and no UI or
+  output describes its artifact as verified.
+- **SC-007**: In interruption tests at each major workflow stage, 100% of runs resume from a valid
+  durable point with completed artifacts intact and without repeating completed retrieval work.
+- **SC-008**: In 100% of rejection and unauthorized-publication tests, the permanent output remains
+  unchanged and the user receives a clear reason.
+- **SC-009**: In 100% of successful publication tests, the published content exactly matches the
+  artifact version that the human approved.
+- **SC-010**: At least 90% of representative first-time users can submit a request, answer any scope
+  questions, inspect evidence, and make a publication decision without assistance.
+
+## Assumptions
+
+- The first release serves one local user at a time; multi-user accounts, roles, and remote hosting
+  are outside this feature's scope.
+- The permanent output location is a user-configured local destination. Publication to third-party
+  content platforms is outside scope.
+- A technical report is the only required deliverable type for this feature, though its requested
+  structure and format may vary by scoped request.
+- The user is responsible for having lawful access to configured external research sources.
+- Source quality may vary; verification establishes traceability and scope coverage, not universal
+  truth or endorsement of every source.
+- Retry and recovery limits are configurable, but every configured value is finite and visible in
+  run status.
+- Conversation history supports the chat experience but is not authoritative storage for workflow
+  state, research artifacts, evidence, or report versions.
+- The project-mandated local Python, Streamlit, LangGraph, `write_todos`, and MCP constraints are
+  accepted dependencies; this specification defines observable behavior rather than their internal
+  design.
