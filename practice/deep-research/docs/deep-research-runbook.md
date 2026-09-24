@@ -13,6 +13,10 @@ Permanent output is under `exports/` and is written only after approval bound to
 hash. Langfuse is optional and must be configured with environment variables. Ragas evaluation uses
 the deterministic local faithfulness baseline and does not publish a report.
 
+Run the full local acceptance validation with `uv run pytest -q`; it should pass with only the live
+MCP test skipped unless explicitly enabled. The controlled suite covers scope, todos-before-retrieval,
+VFS evidence, synthesis, verification, recovery, resume, and approval binding.
+
 The live MCP acceptance is opt-in only:
 
 ```text

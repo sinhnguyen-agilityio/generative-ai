@@ -7,5 +7,6 @@ class GraphState(TypedDict, total=False):
     stage: str
     status: str
     payload: dict
+    approval: dict
 
 __all__ = ["GraphState", "ResearchGraphState"]

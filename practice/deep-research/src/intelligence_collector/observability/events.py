@@ -25,3 +25,12 @@ class WorkflowError:
     can_resume: bool = False
     needs_review: bool = False
     artifact_ids: tuple[str, ...] = ()
+
+
+class EventRecorder:
+    def __init__(self):
+        self.events: list[WorkflowEvent | WorkflowError] = []
+
+    def record(self, event: WorkflowEvent | WorkflowError):
+        self.events.append(event)
+        return event

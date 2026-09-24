@@ -58,10 +58,64 @@ class ScopedRequest(Model):
     scope_hash: str = ""
 
 
+class ScopeDecision(str, Enum):
+    NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
+    SCOPE_CLEAR = "SCOPE_CLEAR"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
+class ScopeAssessment(Model):
+    decision: ScopeDecision
+    objective: str = ""
+    research_boundaries: str = ""
+    constraints: str = ""
+    success_criteria: str = ""
+    deliverable_format: str = ""
+    missing_fields: list[str] = Field(default_factory=list)
+    clarification_question: str | None = None
+    narrowing_suggestions: list[str] = Field(default_factory=list)
+    question_class: str = "technical_research"
+    reason: str = ""
+
+
 class ResearchTodo(Model):
     todo_id: str = Field(default_factory=lambda: str(uuid4()))
     research_question: str
     status: TodoStatus = TodoStatus.PLANNED
+
+
+class TodoPlan(Model):
+    todos: list[ResearchTodo] = Field(default_factory=list)
+
+
+class WorkerSearchPlan(Model):
+    queries: list[str] = Field(default_factory=list)
+    stop_condition: str = ""
+
+
+class VerificationAssessment(Model):
+    passed: bool
+    issue_type: IssueType | None = None
+    affected_claims: list[str] = Field(default_factory=list)
+    feedback: str = ""
+
+
+class SupervisorAssessment(Model):
+    coverage_complete: bool
+    research_complete: bool
+    blockers: list[str] = Field(default_factory=list)
+    delegation: list[str] = Field(default_factory=list)
+
+
+class DraftAssessment(Model):
+    report_markdown: str
+    claim_evidence_ids: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class FixDecision(Model):
+    action: str
+    reason: str
+    target_ids: list[str] = Field(default_factory=list)
 
 
 class ArtifactRef(Model):

@@ -35,6 +35,13 @@ evidence-backed technical report from a user's research request."
   Synthesis/Verification preserve the previous draft and latest report. Permanent output is written
   only after explicit human approval of the unchanged verified artifact.
 
+- Q: What interaction pattern should the Scope Agent use for clarification and brief creation? → A:
+  Use two sequential Scope nodes with separate structured LLM decisions: `clarify_with_user` reads
+  the initial request and prior chat turns, returns either one focused clarification question or a
+  clear decision, and pauses the same LangGraph thread when clarification is needed; once clear,
+  `write_research_brief` makes a second structured LLM call to produce the brief and the graph
+  automatically transitions to Planning without asking the user to approve the brief.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Complete a Verified Research Run (Priority: P1)
@@ -96,15 +103,20 @@ the required scope fields are clear.
 **Acceptance Scenarios**:
 
 1. **Given** a request with an unclear objective, constraint, success criterion, or deliverable
-   format, **When** the request is evaluated, **Then** the Scope Agent asks a relevant follow-up
-   question and the run remains in Scoping.
+   format, **When** the `clarify_with_user` Scope node evaluates it, **Then** it returns exactly one
+   focused follow-up question and the run remains in Scoping.
 2. **Given** an ambiguous request, **When** the user answers only part of the missing information,
-   **Then** the Scope Agent retains prior answers and asks only for information still needed.
+   **Then** the same LangGraph thread retains prior LangChain conversation turns and asks only for
+   information still needed.
 3. **Given** all required scope information has become clear, **When** the latest answer is accepted,
-   **Then** the bounded scope is recorded and the run automatically advances to Planning.
-4. **Given** malformed, empty, or unsafe input, **When** it is submitted, **Then** the input is
+   **Then** the clear decision is recorded and the run automatically advances to
+   `write_research_brief` and then Planning without brief approval.
+4. **Given** a clear scope decision, **When** `write_research_brief` runs, **Then** it makes a
+   separate structured LLM call and produces a brief containing the objective, constraints, success
+   criteria, research boundaries, and deliverable format before the Planning transition.
+5. **Given** malformed, empty, or unsafe input, **When** it is submitted, **Then** the input is
    rejected with an actionable error and no durable run state or external research is initiated.
-5. **Given** a request whose objective is understandable but whose research scope is too broad,
+6. **Given** a request whose objective is understandable but whose research scope is too broad,
    **When** the Scope Agent evaluates it, **Then** the agent proposes concrete narrowing options and
    keeps the run in Scoping until the user establishes explicit research boundaries.
 
@@ -303,6 +315,31 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   tell the user whether the run can retry, resume, or requires review.
 - **FR-030**: Workflow stage transitions, bounded recovery attempts, resumable checkpoints, and
   approval gates MUST be governed by the project's required workflow orchestration mechanism.
+- **FR-031**: Semantic decisions made by Scope, Planning, Supervision, Research, Synthesis,
+  Verification, and Fixer roles MUST use a real LLM call in live mode with a versioned prompt and a
+  typed, validated output. Deterministic fakes MAY be selected explicitly for offline tests but MUST
+  NOT silently replace the live model.
+- **FR-032**: The model router MUST centralize primary/fallback models, reasoning settings, timeouts,
+  retry limits, prompt versions, selected model, fallback events, errors, and structured decisions in
+  run traces without recording secrets.
+- **FR-033**: Scope Agent LLM output MUST be either `NEEDS_CLARIFICATION` with exactly one focused
+  question or `SCOPE_CLEAR` with objective, constraints, success criteria, research boundaries, and
+  deliverable format. `SCOPE_CLEAR` automatically transitions to Planning; clarification pauses the
+  same LangGraph thread for the next Streamlit turn.
+- **FR-033a**: Scope clarification MUST use two sequential decisions: a `clarify_with_user` node
+  evaluates the initial request plus prior LangChain conversation and either pauses with one focused
+  question or emits a clear decision; then `write_research_brief` performs a separate structured LLM
+  call to create the brief. The graph MUST invoke `write_research_brief` only after a clear decision
+  and MUST transition to Planning automatically after the brief is recorded.
+- **FR-034**: All LLM-powered roles MUST use LangChain chat models initialized through
+  `langchain.chat_models.init_chat_model` via the central model factory/router. LangGraph remains the
+  workflow orchestrator; the Deep Agents SDK is prohibited.
+- **FR-035**: Role prompts MUST be versioned `ChatPromptTemplate` instances using
+  `MessagesPlaceholder` for prior turns where applicable. User text and retrieved evidence MUST be
+  passed as data variables, not interpolated into system instructions.
+- **FR-036**: Every model output that can change workflow state MUST be parsed into its Pydantic schema
+  before routing. Invalid output MUST produce a recorded error or bounded retry and MUST NOT silently
+  become `SCOPE_CLEAR` or `VERIFIED`.
 
 ### Key Entities *(include if feature involves data)*
 

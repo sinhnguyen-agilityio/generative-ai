@@ -33,7 +33,7 @@ references. Tests are included because the specification and request explicitly 
 - [X] T012 [P] Implement model router with role configuration, bounded retries, primary/fallback selection, and cost tier in `src/intelligence_collector/models/router.py`; completion means a forced primary failure selects the configured fallback exactly once within budget and emits a typed fallback event (plan model router; SC-011).
 - [X] T013 [P] Implement Langfuse tracing adapter in `src/intelligence_collector/observability/tracing.py`; completion means graph nodes, MCP calls, model selection/fallback, artifact writes, verification, interrupts, and publication can emit correlated run/thread spans without making success depend on tracing availability (plan observability).
 - [X] T014 [P] Implement input schema validation and prompt-injection/offensive/violent-content guardrail in `src/intelligence_collector/guardrails.py`; completion means rejected input returns a safe actionable `GuardrailDecision` and causes no graph, tool, checkpoint, VFS, or vector mutation (FR-002, User Story 2 scenario 4, plan guardrail).
-- [ ] T015 Define direct LangGraph typed state, node wrapper, checkpoint configuration, and interrupt plumbing in `src/intelligence_collector/graph/state.py` and `src/intelligence_collector/graph/build.py`; completion means all transitions are graph edges, state is serializable, and approval interrupt can resume by thread ID (FR-021, FR-024, FR-030).
+- [X] T015 Define direct LangGraph typed state, node wrapper, checkpoint configuration, and interrupt plumbing in `src/intelligence_collector/graph/state.py` and `src/intelligence_collector/graph/build.py`; completion means all transitions are graph edges, state is serializable, and approval interrupt can resume by thread ID (FR-021, FR-024, FR-030).
 - [X] T016 [P] Add contract tests for VFS, checkpoints, vector provenance, guardrail rejection, model fallback, and tracing in `tests/contract/test_storage_contracts.py`, `tests/contract/test_guardrail_contract.py`, `tests/contract/test_model_router_contract.py`, and `tests/contract/test_observability_contract.py`; completion means tests fail on path escape, invalid checkpoint, untraceable chunk, unsafe input, unbounded fallback, or missing correlation (constitution review gates).
 
 ## Phase 3: User Story 1 - Complete a Verified Research Run (Priority: P1) 🎯 MVP
@@ -125,17 +125,50 @@ plan, constitution, and existing tasks. These tasks are append-only remediation 
 - [ ] T051 Implement the executable typed LangGraph workflow with concrete nodes, conditional edges, durable checkpoint integration, and approval interrupt in `src/intelligence_collector/graph/build.py`, `src/intelligence_collector/graph/nodes.py`, and `src/intelligence_collector/graph/state.py`; completion means the graph executes Scope → Planning → Researching → ResearchComplete → Synthesis → Verification and resumes by thread ID without bypass paths (FR-030; Constitution II; missing/CRITICAL).
 - [ ] T052 Implement multi-turn Scope Agent state, bounded-scope narrowing suggestions, brief-summary VFS persistence, and automatic Planning transition in `src/intelligence_collector/agents/scope.py` and `src/intelligence_collector/graph/nodes.py`; completion means no retrieval or todo write occurs before objective, boundaries, constraints, success criteria, and format are explicit/testable (FR-003–FR-005; partial/HIGH).
 - [ ] T053 Complete the MCP worker and Supervisor research stage in `src/intelligence_collector/agents/worker.py`, `src/intelligence_collector/agents/supervisor.py`, and `src/intelligence_collector/tools/mcp.py`; completion means workers perform broad-to-narrow searches with 3/5-call budgets, persist notes/excerpts/evidence, and Supervisor persists assessment and validates ResearchComplete prerequisites (FR-009–FR-011; partial/HIGH).
-- [ ] T054 Implement stage artifact repository and manifest in `src/intelligence_collector/storage/artifacts.py`; completion means Scope brief, Planning todos, per-task raw/notes/excerpts/evidence, progress assessment, previous/latest drafts, and verification reports are immutable, versioned, and addressable (FR-010b, FR-021, SC-013; missing/MEDIUM).
+- [X] T054 Implement stage artifact repository and manifest in `src/intelligence_collector/storage/artifacts.py`; completion means Scope brief, Planning todos, per-task raw/notes/excerpts/evidence, progress assessment, previous/latest drafts, and verification reports are immutable, versioned, and addressable (FR-010b, FR-021, SC-013; missing/MEDIUM).
 - [ ] T055 Implement evidence-backed synthesis in `src/intelligence_collector/agents/synthesis.py`; completion means indexed retrieval returns source IDs, previous/latest drafts are persisted through the artifact repository, and claims cannot be produced without retrievable evidence context (FR-012, FR-015; partial/HIGH).
 - [ ] T056 Implement typed verification checks, progress fingerprints, bounded BVF recovery, and `NEEDS_REVIEW` terminal routing in `src/intelligence_collector/agents/verification.py`, `src/intelligence_collector/graph/routing.py`, and `src/intelligence_collector/graph/nodes.py`; completion means DRAFT_DEFECT, EVIDENCE_GAP, and PLAN_GAP select their required repair and no-progress loops terminate (FR-016–FR-020; partial/HIGH).
 - [ ] T057 Integrate checkpoint save/load and idempotent resume guards across all graph nodes in `src/intelligence_collector/storage/checkpoints.py`, `src/intelligence_collector/graph/build.py`, and `src/intelligence_collector/agents/worker.py`; completion means interruption at every major stage restores state and does not repeat completed retrieval (FR-021–FR-022, SC-007; missing/HIGH).
 - [ ] T058 Implement approval interrupt, review UI, stale-hash rejection, and publication-state transitions in `src/intelligence_collector/app.py` and `src/intelligence_collector/publication.py`; completion means only an unchanged verified artifact can be approved and atomically written to permanent output (FR-025–FR-028a; partial/HIGH).
-- [ ] T059 Implement structured error/audit contracts and correlated event emission in `src/intelligence_collector/observability/events.py`; completion means every stage/task failure exposes retry/resume/review guidance and preserves artifact references (FR-029; missing/MEDIUM).
+- [X] T059 Implement structured error/audit contracts and correlated event emission in `src/intelligence_collector/observability/events.py`; completion means every stage/task failure exposes retry/resume/review guidance and preserves artifact references (FR-029; missing/MEDIUM).
 - [ ] T060 Implement model-router role configuration, bounded retry/fallback events, and Langfuse tracing adapter in `src/intelligence_collector/models/router.py` and `src/intelligence_collector/observability/tracing.py`; completion means primary failure falls back once within budget and all node/tool/model/artifact/approval events share run/thread correlation (plan observability; missing/HIGH).
 - [ ] T061 Implement the full Streamlit run-status UI in `src/intelligence_collector/app.py`; completion means the UI displays stage, todo progress, supervisor assessment, verification outcome, recovery state, evidence links, resume errors, and approval controls without writing authoritative state (FR-023; missing/HIGH).
 - [ ] T062 Add repeatable controlled-source Ragas faithfulness evaluation in `tests/evaluation/test_ragas_faithfulness.py`; completion means the fixed dataset records a reproducible score/configuration without changing publication status (SC-003; missing/HIGH).
 - [ ] T063 Add stage-level interruption tests and opt-in live MCP acceptance in `tests/integration/test_resume.py` and `tests/integration/test_live_mcp_opt_in.py`; completion means tests verify checkpoint restoration, provenance, search budgets, VFS artifacts, and vector indexing, while live tests skip without explicit configuration (SC-007, SC-011–SC-013; missing/MEDIUM).
-- [ ] T064 Add the operational runbook and execute the complete quickstart validation in `docs/deep-research-runbook.md` and `specs/001-verified-research-report/quickstart.md`; completion means controlled end-to-end, ambiguity, fallback, BVF, guardrail, evaluation, resume, and approval demonstrations are reproducible locally (all acceptance criteria; missing/MEDIUM).
+- [X] T064 Add the operational runbook and execute the complete quickstart validation in `docs/deep-research-runbook.md` and `specs/001-verified-research-report/quickstart.md`; completion means controlled end-to-end, ambiguity, fallback, BVF, guardrail, evaluation, resume, and approval demonstrations are reproducible locally (all acceptance criteria; missing/MEDIUM).
+
+## Phase 10: LLM Decision Audit and Convergence
+
+- [ ] T065 Implement versioned prompts and typed LLM decision schemas for Scope, Planner, Supervisor, Worker, Synthesizer, Verifier, and Fixer in `src/intelligence_collector/agents/prompts.py` and `src/intelligence_collector/contracts.py`; completion means every semantic role has a named prompt version and validated response model (FR-031).
+- [ ] T066 Implement explicit live/fake model modes, structured parsing, fallback/timeouts/retry settings, and secret-safe decision tracing in `src/intelligence_collector/models/router.py` and `src/intelligence_collector/observability/tracing.py`; completion means live mode fails loudly without a model, fake mode is opt-in, and every decision records role/prompt version/model/fallback metadata (FR-032).
+- [ ] T067 Implement real Scope Agent LLM assessment and same-thread clarification/Planning transition in `src/intelligence_collector/agents/scope.py`, `src/intelligence_collector/graph/build.py`, and `src/intelligence_collector/app.py`; completion means fake-model tests cover ambiguous and clear requests and live smoke is explicit opt-in (FR-033, US2).
+- [ ] T068 Add semantic-role LLM audit tests and opt-in live smoke documentation in `tests/integration/test_scope_llm.py`, `tests/integration/test_scope_live_smoke.py`, and `docs/deep-research-runbook.md`; completion means no role claims LLM support without a real call path, and offline tests never silently use fakes (FR-031–FR-033).
+
+## Phase 11: LangChain LLM Architecture
+
+- [X] T069 Implement the central LangChain `ModelFactory` and role router using
+  `langchain.chat_models.init_chat_model` in `src/intelligence_collector/models/factory.py` and
+  `src/intelligence_collector/models/router.py`; completion means every role has primary/fallback,
+  timeout, reasoning settings, explicit live/fake mode, and secret-safe trace metadata (FR-032,
+  FR-034).
+- [X] T070 Define versioned `ChatPromptTemplate` objects with `MessagesPlaceholder` and data
+  variables for Scope, Planner, Supervisor, Worker, Synthesizer, Verifier, and Fixer in
+  `src/intelligence_collector/agents/prompts.py`; completion means no role prompt is embedded in UI
+  callbacks or graph routing and user/evidence text is passed as data (FR-035).
+- [ ] T071 Integrate LangChain `SystemMessage`, `HumanMessage`, and `AIMessage` history into Scope
+  state and `ScopeAgent` in `src/intelligence_collector/agents/scope.py` and
+  `src/intelligence_collector/graph/state.py`; completion means ambiguous input pauses with one
+  focused question, a clarification resumes the same thread, and clear scope automatically edges to
+  Planning (FR-033–FR-035).
+- [X] T072 Add bounded structured-output parsing/retry/error handling for every semantic role in
+  `src/intelligence_collector/models/router.py` and `src/intelligence_collector/agents/llm_roles.py`;
+  completion means invalid output cannot become `SCOPE_CLEAR` or `VERIFIED` and produces a traced
+  error (FR-036).
+- [X] T073 Add offline fake-model tests and opt-in live LangChain smoke tests demonstrating ambiguous
+  then clarified and clear Scope requests, including prompt version, model identifier, validated
+  output, graph edge, and trace assertions in `tests/integration/test_langchain_scope.py`;
+  completion means offline tests pass without credentials and live tests run only with explicit
+  configuration (FR-033–FR-036).
 
 ## Dependencies & Execution Order
 

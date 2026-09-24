@@ -19,9 +19,9 @@ observability and quality evidence. The Deep Agents SDK is explicitly excluded.
 
 **Language/Version**: Python 3.11+
 
-**Primary Dependencies**: Streamlit; LangGraph directly; LangChain core interfaces only where
-needed for model/MCP adapters; Pydantic v2; an MCP client; a local vector store; Langfuse SDK;
-Ragas; pytest.
+**Primary Dependencies**: Streamlit; LangGraph directly; LangChain chat models and prompt/message
+interfaces; `langchain.chat_models.init_chat_model`; Pydantic v2; an MCP client; a local vector
+store; Langfuse SDK; Ragas; pytest. The Deep Agents SDK is prohibited.
 
 **Storage**: Run-scoped VFS directory for immutable/versioned artifacts; SQLite (or equivalent
 local checkpoint store) for LangGraph checkpoints and run metadata; local vector index for raw
@@ -45,6 +45,18 @@ before durable `write_todos`; no authoritative state in chat history; raw source
 artifacts remain run-scoped; max five searches per task; bounded recovery budget; guardrails reject
 prompt injection and disallowed offensive/violent requests before workflow mutation; no permanent
 output write without human approval bound to the unchanged verified artifact.
+
+**LLM Decision Contract**: Live semantic roles use `ModelRouter.invoke_structured()` with explicit
+versioned prompts and Pydantic output schemas. `mode="live"` requires a configured primary model;
+`mode="fake"` is explicit and test-only. Router traces role, prompt version, selected model,
+fallback/error events, and validated decision metadata without secrets.
+
+**LangChain Chat Architecture**: `ModelFactory` initializes each configured live model with
+`langchain.chat_models.init_chat_model`; the router binds role-specific primary/fallback models,
+timeouts, and provider reasoning settings. Role prompts are `ChatPromptTemplate` objects composed
+of `SystemMessage`, `MessagesPlaceholder`, and data variables. Scope history is stored in LangGraph
+state under the thread ID and passed as `HumanMessage`/`AIMessage` turns. Invalid structured output
+is retried within bounds or recorded as an error.
 
 **Scale/Scope**: One local user and one active run at a time for the first release; dozens of
 research tasks and thousands of source chunks per run; local persistence is the source of truth.

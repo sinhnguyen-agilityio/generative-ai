@@ -14,6 +14,7 @@ class ArtifactStore:
     def __init__(self, vfs: VFS):
         self.vfs = vfs
         self._versions: dict[tuple[str, str], int] = defaultdict(int)
+        self._catalog: dict[str, list[ArtifactRef]] = defaultdict(list)
 
     def write(self, run_id: str, kind: str, relative_path: str, value: Any, *, task_id: str | None = None) -> ArtifactRef:
         key = (run_id, kind)
@@ -22,4 +23,10 @@ class ArtifactStore:
             value, default=str, indent=2)
         ref = self.vfs.write(run_id, relative_path,
                              payload, kind, task_id=task_id)
-        return ref.model_copy(update={"version": self._versions[key]})
+        versioned = ref.model_copy(update={"version": self._versions[key]})
+        self._catalog[run_id].append(versioned)
+        return versioned
+
+    def list(self, run_id: str, kind: str | None = None) -> list[ArtifactRef]:
+        refs = self._catalog.get(run_id, [])
+        return [ref for ref in refs if kind is None or ref.kind == kind]
