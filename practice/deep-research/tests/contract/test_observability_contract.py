@@ -68,7 +68,7 @@ def test_trace_payload_redacts_credential_shaped_fields(monkeypatch):
     with tracer.execution("run", "thread", input={"api_key": "do-not-export"}):
         pass
 
-    assert client.records[0]["input"] == {"api_key": "[REDACTED]"}
+    assert client.records[0]["input"] == '{\n  "api_key": "[REDACTED]"\n}'
     assert "do-not-export" not in repr(client.records)
 
 
@@ -78,3 +78,22 @@ def test_required_live_settings_fail_before_client_creation(monkeypatch):
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     with pytest.raises(RuntimeError, match="credentials are not configured"):
         LangfuseSettings.from_env(required=True)
+
+
+def test_langfuse_authentication_failure_is_actionable(monkeypatch):
+    class UnauthenticatedClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def auth_check(self):
+            return False
+
+    monkeypatch.setattr("langfuse.Langfuse", UnauthenticatedClient)
+    settings = LangfuseSettings(
+        enabled=True,
+        public_key="public-key",
+        secret_key="secret-key",
+    )
+
+    with pytest.raises(RuntimeError, match="LANGFUSE_BASE_URL"):
+        Tracer.from_settings(settings)

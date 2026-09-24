@@ -25,9 +25,15 @@ VFS evidence, synthesis, verification, recovery, resume, and approval binding.
 The live MCP acceptance is opt-in only:
 
 ```text
+$env:TAVILY_MCP_URL = "https://mcp.tavily.com/mcp/"
+$env:TAVILY_API_KEY = "<your-api-key>"
 $env:RUN_LIVE_MCP = "1"
 uv run pytest -q tests/integration/test_live_mcp_opt_in.py
 ```
+
+Keep the endpoint and API key in separate variables. The adapter adds `tavilyApiKey` only to the
+in-memory transport URL; the credential is not included in request history, provenance, artifacts,
+test output, or object representations.
 
 The live Scope and Langfuse smoke test is also opt-in. Configure the blank variables documented in
 `.env.example`, then run:

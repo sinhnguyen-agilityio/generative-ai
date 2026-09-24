@@ -85,6 +85,13 @@ class ScopeAssessment(Model):
                 raise ValueError("clarification requires exactly one non-empty question")
             if self.verification.strip():
                 raise ValueError("clarification cannot contain a verification message")
+            if (
+                "research_boundaries" in self.missing_fields
+                and not self.narrowing_suggestions
+            ):
+                raise ValueError(
+                    "broad scope requires at least one concrete narrowing suggestion"
+                )
         elif self.decision == ScopeDecision.SCOPE_CLEAR:
             values = (
                 self.objective,
@@ -231,6 +238,7 @@ class ResearchGraphState(Model):
     draft: str = ""
     previous_draft: str = ""
     verification: VerificationResult | None = None
+    verification_history: list[VerificationResult] = Field(default_factory=list)
     recovery_attempt: int = 0
     recovery_budget: int = 3
     progress_fingerprint: str = ""

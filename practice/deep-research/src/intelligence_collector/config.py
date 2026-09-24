@@ -16,7 +16,7 @@ def load_local_env() -> None:
 @dataclass(frozen=True)
 class Settings:
     vfs_root: str = ".data/vfs"
-    checkpoint_path: str = ".data/checkpoints.json"
+    checkpoint_path: str = ".data/checkpoints.sqlite3"
     vector_path: str = ".data/vector-index.json"
     output_dir: str = "exports"
     max_search_calls: int = 5
@@ -88,11 +88,15 @@ class LangfuseSettings:
         }
         settings = cls(
             enabled=enabled,
-            public_key=os.getenv("LANGFUSE_PUBLIC_KEY", ""),
-            secret_key=os.getenv("LANGFUSE_SECRET_KEY", ""),
-            host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-            environment=os.getenv("LANGFUSE_ENVIRONMENT", "development"),
-            release=os.getenv("LANGFUSE_RELEASE", "local"),
+            public_key=os.getenv("LANGFUSE_PUBLIC_KEY", "").strip(),
+            secret_key=os.getenv("LANGFUSE_SECRET_KEY", "").strip(),
+            host=(
+                os.getenv("LANGFUSE_BASE_URL")
+                or os.getenv("LANGFUSE_HOST")
+                or "https://cloud.langfuse.com"
+            ).strip().rstrip("/"),
+            environment=os.getenv("LANGFUSE_ENVIRONMENT", "development").strip(),
+            release=os.getenv("LANGFUSE_RELEASE", "local").strip(),
         )
         if required and not settings.enabled:
             raise RuntimeError("Langfuse tracing must be enabled for live execution")

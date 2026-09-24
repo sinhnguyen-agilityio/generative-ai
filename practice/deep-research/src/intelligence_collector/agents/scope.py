@@ -83,7 +83,10 @@ class ScopeAgent:
         thread_id: str = "",
     ) -> ScopeAssessment:
         conversation = self._messages(prior_turns) + [HumanMessage(content=request)]
-        messages = SCOPE_TEMPLATE.format_messages(conversation=conversation)
+        messages = SCOPE_TEMPLATE.format_messages(
+            conversation=conversation,
+            date=date.today().isoformat(),
+        )
         return self.router.invoke_messages(
             "scope",
             messages,

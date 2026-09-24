@@ -4,7 +4,8 @@ from intelligence_collector.models.factory import ModelConfig, ModelFactory
 
 def test_role_prompts_are_chat_templates_and_scope_has_history_placeholder():
     messages = SCOPE_TEMPLATE.format_messages(
-        conversation=[HumanMessage(content="prior"), HumanMessage(content="compare databases")]
+        conversation=[HumanMessage(content="prior"), HumanMessage(content="compare databases")],
+        date="2026-09-25",
     )
     assert isinstance(messages[0], SystemMessage)
     assert any("prior" in str(message.content) for message in messages)

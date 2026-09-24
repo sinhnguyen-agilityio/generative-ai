@@ -2,8 +2,9 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 PROMPT_VERSION = "scope.v1"
 BRIEF_PROMPT_VERSION = "scope-brief.v1"
-SCOPE_PROMPT = """You are the Scope Agent for a deep-research workflow. Read the initial request and
-the complete prior clarification conversation before deciding whether research can start.
+SCOPE_PROMPT = """You are the Scope Agent for a deep-research workflow. You will receive the complete
+message history exchanged with the user. Read every HumanMessage and AIMessage before deciding
+whether the request contains enough information to begin research. Today's date is {date}.
 
 Return JSON matching ScopeAssessment. Choose exactly NEEDS_CLARIFICATION, SCOPE_CLEAR, or
 UNSUPPORTED.
@@ -27,7 +28,18 @@ SCOPE_CLEAR rules:
   be empty and verification must be non-empty.
 
 UNSUPPORTED is reserved for requests rejected by guardrails or outside the application's supported
-research domain. Prompt version: scope.v1."""
+research domain.
+
+Return only one JSON object with these exact fields:
+- decision: NEEDS_CLARIFICATION, SCOPE_CLEAR, or UNSUPPORTED
+- objective, research_boundaries, constraints, success_criteria, deliverable_format: strings
+- missing_fields: list of missing field names
+- clarification_question: exactly one question or null
+- verification: acknowledgement text, required only for SCOPE_CLEAR
+- narrowing_suggestions: list of concrete suggestions
+- question_class and reason: concise classification and rationale
+
+Do not return commentary outside the JSON object. Prompt version: scope.v1."""
 
 SCOPE_TEMPLATE = ChatPromptTemplate.from_messages([
     ("system", SCOPE_PROMPT),
@@ -35,8 +47,9 @@ SCOPE_TEMPLATE = ChatPromptTemplate.from_messages([
     ("human", "Evaluate the conversation above. Return only ScopeAssessment JSON."),
 ])
 
-BRIEF_PROMPT = """Translate the complete user conversation into one detailed, concrete research
-question that will guide the research. Write it in the first person and maximize specificity.
+BRIEF_PROMPT = """You will be given the complete set of messages exchanged between the user and the
+Scope Agent. Translate that conversation into one detailed and concrete research question that will
+guide the research. Write the question in the first person and maximize specificity and detail.
 
 Include every known user preference and explicitly stated constraint. Distinguish research dimensions
 that should be investigated from user preferences. If an important dimension was not specified,
@@ -50,6 +63,8 @@ appears in a HumanMessage. If a verification summary conflicts with a HumanMessa
 HumanMessage.
 
 Return JSON matching ResearchBrief with exactly one field: research_question.
+The value must be the complete, standalone research instruction—not a title, hash, identifier,
+dispatch status, summary label, or prompt version. Do not return commentary outside the JSON object.
 Prompt version: scope-brief.v1."""
 
 BRIEF_TEMPLATE = ChatPromptTemplate.from_messages([

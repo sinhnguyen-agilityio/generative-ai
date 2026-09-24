@@ -1,31 +1,70 @@
 from collections.abc import Callable
+import json
 
 from intelligence_collector.graph.state import GraphState
 
 
-def node_wrapper(name: str, fn: Callable[[GraphState], GraphState], tracer=None):
+def node_wrapper(
+    name: str,
+    fn: Callable[[GraphState], GraphState],
+    tracer=None,
+    checkpoint_store=None,
+):
     """Normalize node execution so every graph node returns a serializable state update."""
     def wrapped(state: GraphState) -> GraphState:
+        current = dict(state)
+        thread_id = current.get("thread_id", "")
+        if checkpoint_store is not None and thread_id:
+            persisted = checkpoint_store.load(thread_id) or {}
+            current = {**persisted, **current}
         if tracer is None:
-            result = fn(state)
+            result = fn(current)
         else:
             with tracer.span(
                 f"graph.{name}",
-                state.get("run_id", ""),
-                state.get("thread_id", ""),
-                input={"stage": state.get("stage"), "request": state.get("request", "")},
+                current.get("run_id", ""),
+                current.get("thread_id", ""),
+                input=json.dumps({
+                    "stage": current.get("stage"),
+                    "request": current.get("request", ""),
+                    "messages": [
+                        {"role": getattr(message, "type", "message"), "content": getattr(
+                            message, "content", str(message))}
+                        for message in current.get("messages", [])
+                    ],
+                    "scope_assessment": current.get("scope_assessment"),
+                    "research_brief": current.get("scoped_request"),
+                }, ensure_ascii=False, indent=2, default=str),
                 node=name,
             ) as span:
-                result = fn(state)
-                span.output = {"stage": result.get("stage"), "status": result.get("status")}
+                result = fn(current)
+                span.output = json.dumps({
+                    "stage": result.get("stage"),
+                    "status": result.get("status"),
+                    "scope_assessment": result.get("scope_assessment"),
+                    "research_brief": result.get("scoped_request"),
+                    "todos": result.get("todos"),
+                }, ensure_ascii=False, indent=2, default=str)
         if not isinstance(result, dict):
             raise TypeError(f"{name} must return a mapping state update")
+        if checkpoint_store is not None:
+            result_thread_id = result.get("thread_id", thread_id)
+            if result_thread_id:
+                checkpoint_store.save(result_thread_id, result)
         return result
     wrapped.__name__ = name
     return wrapped
 
 
-def build_graph(*, checkpointer=None, with_approval: bool = False, scope_agent=None, vfs=None, tracer=None):
+def build_graph(
+    *,
+    checkpointer=None,
+    checkpoint_store=None,
+    with_approval: bool = False,
+    scope_agent=None,
+    vfs=None,
+    tracer=None,
+):
     """Build the typed MVP graph with optional resumable approval interrupt."""
     from langgraph.graph import END, START, StateGraph
 
@@ -101,10 +140,11 @@ def build_graph(*, checkpointer=None, with_approval: bool = False, scope_agent=N
             return "write_research_brief" if decision == ScopeDecision.SCOPE_CLEAR.value else "__end__"
 
         graph.add_node("clarify_with_user", node_wrapper(
-            "clarify_with_user", clarify, tracer))
+            "clarify_with_user", clarify, tracer, checkpoint_store))
         graph.add_node("write_research_brief", node_wrapper(
-            "write_research_brief", write_brief, tracer))
-        graph.add_node("planning", node_wrapper("planning", planning, tracer))
+            "write_research_brief", write_brief, tracer, checkpoint_store))
+        graph.add_node("planning", node_wrapper(
+            "planning", planning, tracer, checkpoint_store))
         graph.add_edge(START, "clarify_with_user")
         graph.add_conditional_edges("clarify_with_user", scope_route, {
             "write_research_brief": "write_research_brief", "__end__": END,
@@ -115,9 +155,11 @@ def build_graph(*, checkpointer=None, with_approval: bool = False, scope_agent=N
         graph.add_edge(START, "scope")
     stage_names = ("scope", "researching", "synthesizing", "verifying")
     if scope_agent is None:
-        stage_names = ("scope", "planning", "researching", "synthesizing", "verifying")
+        stage_names = ("scope", "planning", "researching",
+                       "synthesizing", "verifying")
     for name in stage_names:
-        graph.add_node(name, node_wrapper(name, stage(name), tracer))
+        graph.add_node(name, node_wrapper(
+            name, stage(name), tracer, checkpoint_store))
     if scope_agent is None:
         graph.add_edge("scope", "planning")
     if scope_agent is None:
@@ -125,7 +167,8 @@ def build_graph(*, checkpointer=None, with_approval: bool = False, scope_agent=N
     graph.add_edge("researching", "synthesizing")
     graph.add_edge("synthesizing", "verifying")
     if with_approval:
-        graph.add_node("approval", node_wrapper("approval", approval))
+        graph.add_node("approval", node_wrapper(
+            "approval", approval, tracer, checkpoint_store))
         graph.add_edge("verifying", "approval")
         graph.add_edge("approval", END)
     else:

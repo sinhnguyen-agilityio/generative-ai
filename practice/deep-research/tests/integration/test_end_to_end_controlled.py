@@ -12,9 +12,9 @@ def test_controlled_end_to_end(stores):
     calls = []
     mcp = ControlledMCP([{"url": "https://controlled.test/cache", "content": "A cache stores reusable data."}])
     original = mcp.search
-    def tracked(query):
+    def tracked(query, **kwargs):
         assert vfs.read(run_id, "planning/todos.v1.json")
-        calls.append(query); return original(query)
+        calls.append(query); return original(query, **kwargs)
     mcp.search = tracked
     todo, refs, chunks = run_worker(vfs, index, run_id, todos[0], mcp)
     assert calls and todo.status.value == "completed"

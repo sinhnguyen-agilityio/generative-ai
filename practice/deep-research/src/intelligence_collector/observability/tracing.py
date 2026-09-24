@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+import json
 from typing import Any, Iterator
 from uuid import uuid4
 
@@ -21,6 +22,14 @@ def _safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_safe(item) for item in value]
     return value
+
+
+def _text_payload(value: Any) -> str:
+    """Keep Langfuse observation inputs/outputs human-readable and searchable."""
+    safe = _safe(value)
+    if isinstance(safe, str):
+        return safe
+    return json.dumps(safe, ensure_ascii=False, indent=2, default=str)
 
 
 @dataclass
@@ -57,6 +66,12 @@ class Tracer:
             environment=settings.environment,
             release=settings.release,
         )
+        if not client.auth_check():
+            raise RuntimeError(
+                "Langfuse authentication failed. Verify that LANGFUSE_PUBLIC_KEY and "
+                "LANGFUSE_SECRET_KEY belong to the same project and that LANGFUSE_BASE_URL "
+                "matches that project's region."
+            )
         return cls(client=client, callback_handler=CallbackHandler(public_key=settings.public_key))
 
     @classmethod
@@ -99,7 +114,7 @@ class Tracer:
                 as_type="agent",
                 name=local.name,
                 trace_context={"trace_id": trace_id},
-                input=_safe(input),
+                input=_text_payload(input),
                 metadata=_safe(attributes),
             ) as remote:
                 with propagate_attributes(
@@ -115,7 +130,7 @@ class Tracer:
                         remote.update(level="ERROR", status_message=local.error)
                         raise
                     finally:
-                        remote.update(output=_safe(local.output), metadata=_safe(local.attributes))
+                        remote.update(output=_text_payload(local.output), metadata=_safe(local.attributes))
         finally:
             self.flush()
 
@@ -138,7 +153,7 @@ class Tracer:
         with self.client.start_as_current_observation(
             as_type=as_type,
             name=name,
-            input=_safe(input),
+            input=_text_payload(input),
             metadata={"run_id": run_id, "thread_id": thread_id, **_safe(attributes)},
         ) as remote:
             try:
@@ -148,7 +163,7 @@ class Tracer:
                 remote.update(level="ERROR", status_message=local.error)
                 raise
             finally:
-                remote.update(output=_safe(local.output), metadata=_safe(local.attributes))
+                remote.update(output=_text_payload(local.output), metadata=_safe(local.attributes))
 
     def model_event(self, **event: Any) -> None:
         run_id = str(event.get("run_id", ""))
@@ -157,10 +172,18 @@ class Tracer:
         attributes = _safe(event)
         attributes.pop("run_id", None)
         attributes.pop("thread_id", None)
-        with self.span(name, run_id, thread_id, **attributes) as span:
-            span.output = event.get("decision") or {
-                "validation_error": event.get("validation_error")
-            }
+        input_text = attributes.pop("input_text", "")
+        output_text = attributes.pop("output_text", "")
+        attributes.pop("decision", None)
+        with self.span(
+            name,
+            run_id,
+            thread_id,
+            as_type="generation",
+            input=input_text,
+            **attributes,
+        ) as span:
+            span.output = output_text
 
     def flush(self) -> None:
         if self.client is not None:

@@ -88,6 +88,9 @@ def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
             "decision": "NEEDS_CLARIFICATION",
             "clarification_question": "Which database versions and workload should be compared?",
             "missing_fields": ["research_boundaries"],
+            "narrowing_suggestions": [
+                "Limit the comparison to current stable releases used by local Python apps."
+            ],
         },
         {
             "decision": "NEEDS_CLARIFICATION",

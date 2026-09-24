@@ -54,4 +54,15 @@ def test_scope_execution_has_root_nodes_model_events_callbacks_and_flush(monkeyp
     assert len(model.configs) == 2
     assert all(config["callbacks"] == [callback] for config in model.configs)
     assert all(config["metadata"]["langfuse_session_id"] == "thread" for config in model.configs)
+    model_records = [record for record in client.records if record["name"] == "model.validation.scope"]
+    assert "You are the Scope Agent" in model_records[0]["input"]
+    assert "bounded request" in model_records[0]["input"]
+    assert '"decision": "SCOPE_CLEAR"' in model_records[0]["updates"][-1]["output"]
+    assert "Translate that conversation into one detailed" in model_records[1]["input"]
+    assert '"research_question"' in model_records[1]["updates"][-1]["output"]
+    assert all(isinstance(record["input"], str) for record in client.records)
+    assert all(
+        isinstance(record["updates"][-1]["output"], str)
+        for record in client.records
+    )
     assert client.flush_count == 1

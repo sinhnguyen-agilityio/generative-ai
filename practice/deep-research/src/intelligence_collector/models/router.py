@@ -62,6 +62,26 @@ class ModelRouter:
             return schema.model_validate(json.loads(raw))
         raise TypeError(f"model output for {role} is not structured")
 
+    @staticmethod
+    def _prompt_text(prompt) -> str:
+        """Render the exact model input as readable text for trace inspection."""
+        if isinstance(prompt, list):
+            blocks = []
+            for message in prompt:
+                role = getattr(message, "type", type(message).__name__).upper()
+                blocks.append(f"[{role}]\n{getattr(message, 'content', str(message))}")
+            return "\n\n".join(blocks)
+        return str(prompt)
+
+    @staticmethod
+    def _output_text(raw) -> str:
+        value = getattr(raw, "content", raw)
+        if isinstance(value, BaseModel):
+            return value.model_dump_json(indent=2)
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+        return str(value)
+
     def invoke(self, role, prompt, *, run_id="", thread_id="", prompt_version=""):
         if self.mode == "live" and self.primary is None:
             raise RuntimeError("live model router requires a configured primary model")
@@ -106,19 +126,17 @@ class ModelRouter:
     def _invoke_and_parse(self, role, prompt, schema, prompt_version, run_id, thread_id, message_count=None):
         errors = []
         attempts = max(1, self.max_attempts)
+        prompt_text = self._prompt_text(prompt)
         for attempt in range(1, attempts + 1):
             try:
-                result = self._parse(
+                raw = self.invoke(
                     role,
-                    self.invoke(
-                        role,
-                        prompt,
-                        run_id=run_id,
-                        thread_id=thread_id,
-                        prompt_version=prompt_version,
-                    ),
-                    schema,
+                    prompt,
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    prompt_version=prompt_version,
                 )
+                result = self._parse(role, raw, schema)
                 event = {
                     "role": role,
                     "prompt_version": prompt_version,
@@ -128,6 +146,8 @@ class ModelRouter:
                     "selected_model": self.last_model,
                     "fallback_used": self.fallback_used,
                     "attempt": attempt,
+                    "input_text": prompt_text,
+                    "output_text": result.model_dump_json(indent=2),
                 }
                 if message_count is not None:
                     event["message_count"] = message_count
@@ -143,6 +163,8 @@ class ModelRouter:
                     selected_model=self.last_model,
                     fallback_used=self.fallback_used,
                     attempt=attempt,
+                    input_text=prompt_text,
+                    output_text=f"{type(exc).__name__}: invalid structured output",
                     validation_error=f"{type(exc).__name__}: invalid structured output",
                 )
         raise ValueError(f"invalid structured output for {role} after {attempts} attempts: {'; '.join(errors)}")

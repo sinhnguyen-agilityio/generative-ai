@@ -15,6 +15,9 @@ def test_scope_clarification_checkpoint_resumes_after_process_restart(tmp_path):
             "decision": "NEEDS_CLARIFICATION",
             "clarification_question": "Which versions and workload should be compared?",
             "missing_fields": ["research_boundaries"],
+            "narrowing_suggestions": [
+                "Limit the comparison to current stable releases and one workload."
+            ],
         },
         _clear_payload(),
         _brief_payload(),

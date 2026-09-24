@@ -11,6 +11,18 @@ evidence-backed technical report from a user's research request."
 
 ## Clarifications
 
+### Session 2026-09-25
+
+- Q: Trong lúc workflow đang chạy, Streamlit nên hiển thị mức độ chi tiết nào về Scope,
+  Planning và tool calls? → A: Hiển thị stage hiện tại, bước đang chạy và activity feed ngắn như
+  “Evaluating scope”, “Generating brief”, hoặc “Calling write_todos”; ẩn tool arguments nhạy cảm.
+- Q: Indicator nên hoạt động thế nào khi workflow đang xử lý hoặc đang chờ người dùng trả lời
+  clarification? → A: Chỉ animate spinner khi backend đang thực thi; khi graph pause để chờ
+  clarification, dừng spinner và hiển thị trạng thái tĩnh “Waiting for your response”.
+- Q: Activity feed nên cập nhật vào thời điểm nào trong quá trình Scope, Planning và tool
+  execution? → A: Cập nhật realtime theo lifecycle; tạo item khi node hoặc tool bắt đầu rồi cập nhật
+  chính item đó thành success hoặc failure khi kết thúc.
+
 ### Session 2026-09-24
 
 - Q: When should the Scope Agent consider a request sufficiently clear and automatically transition
@@ -85,6 +97,12 @@ links without asking for approval of the research brief.
 10. **Given** a run advances through Scope, Planning, Research, and Synthesis/Verification, **When**
     each step completes, **Then** its required run-scoped VFS artifact exists: brief summary, todo
     list, scraped website content, and previous/latest report versions respectively.
+11. **Given** a workflow execution is active, **When** Scope, Planning, or an approved tool runs,
+    **Then** the UI shows the current stage, a concise current-action label, and a chronological
+    activity item without exposing credentials or sensitive tool arguments.
+12. **Given** a graph node or tool call starts, **When** its lifecycle changes, **Then** one activity
+    item appears immediately as running and that same item changes to success or failure when the
+    operation ends, without creating misleading duplicate completion items.
 
 ---
 
@@ -120,6 +138,9 @@ the required scope fields are clear.
 6. **Given** a request whose objective is understandable but whose research scope is too broad,
    **When** the Scope Agent evaluates it, **Then** the agent proposes concrete narrowing options and
    keeps the run in Scoping until the user establishes explicit research boundaries.
+7. **Given** the Scope graph pauses for clarification, **When** no backend work remains active,
+   **Then** the UI stops all processing animation, displays “Waiting for your response”, and keeps the
+   clarification question visible until the user replies.
 
 ---
 
@@ -297,8 +318,17 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   versions, verification history, recovery counters, and publication state.
 - **FR-022**: A resumed run MUST continue from the latest valid checkpoint and MUST NOT repeat
   completed external work unless that work is incomplete, invalidated, or selected for repair.
-- **FR-023**: The UI MUST show the current stage, task-level research progress, latest verification
-  outcome, recovery status when applicable, and the latest reviewable report.
+- **FR-023**: The UI MUST show the current stage, concise current action, chronological activity feed,
+  task-level research progress, latest verification outcome, recovery status when applicable, and
+  the latest reviewable report. Scope, Planning, and approved tool calls MUST emit user-readable
+  activity items such as “Evaluating scope”, “Generating brief”, and “Calling write_todos”; the UI
+  MUST NOT expose credentials or sensitive tool arguments.
+- **FR-023a**: The UI MUST animate a processing indicator only while backend execution is active. A
+  graph paused for clarification MUST show a non-animated “Waiting for your response” state with the
+  outstanding question visible and MUST NOT imply that processing continues.
+- **FR-023b**: UI progress MUST update during execution from graph-node and approved-tool lifecycle
+  events. Each operation MUST have one stable activity item that transitions from running to success
+  or failure and retains chronological ordering.
 - **FR-024**: The system MUST distinguish at least the states Scoping, Planning, Researching,
   Synthesizing, Verifying, Awaiting Approval, Published, Failed, and `NEEDS_REVIEW`.
 - **FR-025**: Only a verified artifact MAY enter Awaiting Approval, and explicit human approval of
@@ -362,6 +392,10 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   attempts, fallback status, validated result or safe error metadata, and final stage. Missing or
   invalid tracing configuration MUST fail a live execution before any model call. Credentials and
   secret values MUST never appear in trace inputs, outputs, metadata, errors, or logs.
+- **FR-038a**: Every Langfuse observation input and output MUST be human-readable text. Structured
+  model observations MUST contain the complete rendered instructions and conversation supplied to
+  the model plus the validated response serialized as JSON text. Prompt versions, hashes, IDs, and
+  dispatch statuses MAY remain metadata but MUST NOT replace semantic input or output content.
 
 ### Key Entities *(include if feature involves data)*
 
