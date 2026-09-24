@@ -14,7 +14,7 @@ references. Tests are included because the specification and request explicitly 
 
 - [X] T001 Create the package tree from `plan.md` under `src/intelligence_collector/` and `tests/`; completion means every planned module directory exists with package markers where needed (plan Project Structure).
 - [X] T002 Initialize Python 3.11 project dependencies and commands in `pyproject.toml`; completion means Streamlit, direct LangGraph, Pydantic, MCP client, vector-index adapter, Langfuse, Ragas, and pytest dependencies are declared without Deep Agents SDK (plan Technical Context; FR-030).
-- [ ] T003 [P] Add repository configuration and safe local environment examples in `config.example.toml`, `.env.example`, and `.gitignore`; completion means secrets, VFS data, checkpoints, vector indexes, and permanent outputs are excluded from source control (constitution; FR-021).
+- [X] T003 [P] Add repository configuration and safe local environment examples in `config.example.toml`, `.env.example`, and `.gitignore`; completion means secrets, VFS data, checkpoints, vector indexes, and permanent outputs are excluded from source control (constitution; FR-021).
 - [ ] T004 [P] Add test fixtures and deterministic fake ports in `tests/conftest.py`, `tests/fixtures/fake_models.py`, `tests/fixtures/fake_mcp.py`, and `tests/fixtures/fake_vector.py`; completion means tests can run without network or paid model calls (quickstart).
 - [ ] T005 [P] Add baseline lint/type/test commands in `pyproject.toml` and `tests/unit/test_imports.py`; completion means the package imports and the baseline test command runs successfully (plan Testing).
 

@@ -5,9 +5,13 @@ venv/
 dist/
 *.egg-info/
 .env*
+!.env.example
 .data/
 runtime/
 exports/
+.pytest_cache/
+coverage.xml
+htmlcov/
 .streamlit/secrets.toml
 .vscode/
 .idea/
