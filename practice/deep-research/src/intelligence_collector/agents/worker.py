@@ -1,7 +1,10 @@
 from intelligence_collector.contracts import IndexedChunk, ResearchTodo, SourceRecord, TodoStatus
 class ControlledMCP:
-    def __init__(self, sources): self.sources, self.calls = sources, 0
-    def search(self, query): self.calls += 1; return self.sources
+    def __init__(self, sources, max_calls=5): self.sources, self.calls, self.max_calls = sources, 0, max_calls
+    def search(self, query):
+        if self.calls >= self.max_calls: raise RuntimeError("search budget exhausted")
+        self.calls += 1
+        return self.sources
 def run_worker(vfs, index, run_id, todo: ResearchTodo, mcp: ControlledMCP):
     result = mcp.search(todo.research_question)
     if not result: raise RuntimeError("MCP returned no sources")
@@ -12,6 +15,7 @@ def run_worker(vfs, index, run_id, todo: ResearchTodo, mcp: ControlledMCP):
         ref = vfs.write_json(run_id, f"research/{todo.todo_id}/raw/{i}.json", {"source": src.model_dump(mode="json"), "content": raw}, "raw_capture", task_id=todo.todo_id)
         refs.append(ref); chunks.append(IndexedChunk(source_id=src.source_id, artifact_id=ref.artifact_id, text=raw, metadata={"todo_id": todo.todo_id}))
     index.index(chunks); todo.status = TodoStatus.COMPLETED
+    vfs.write_json(run_id, f"research/{todo.todo_id}/notes/result.json", {"question": todo.research_question, "sources": len(result)}, "notes", task_id=todo.todo_id)
+    vfs.write_json(run_id, f"research/{todo.todo_id}/excerpts/result.json", {"chunks": [c.text for c in chunks]}, "excerpts", task_id=todo.todo_id)
     vfs.write_json(run_id, f"research/{todo.todo_id}/evidence/result.json", {"artifact_ids": [r.artifact_id for r in refs]}, "evidence_bundle", task_id=todo.todo_id)
     return todo, refs, chunks
-

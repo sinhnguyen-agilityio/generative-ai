@@ -58,8 +58,8 @@ references. Tests are included because the specification and request explicitly 
 - [X] T025 [US1] Implement Supervisor and `think_tool` in `src/intelligence_collector/agents/supervisor.py` and `src/intelligence_collector/tools/think_tool.py`; completion means task status/progress assessment is persisted and `ResearchComplete` is emitted only when every todo is completed, required VFS files exist, and vector indexing succeeds (FR-008, FR-011, SC-012).
 - [ ] T026 [US1] Implement synthesis node in `src/intelligence_collector/agents/synthesis.py`; completion means indexed chunks/evidence are retrieved by provenance, previous and latest draft files are preserved, and no factual content is invented from chat history (FR-012, FR-010b).
 - [X] T027 [US1] Implement verifier node and pass result in `src/intelligence_collector/agents/verification.py`; completion means scope coverage and claim-to-evidence checks produce a typed result, and passing output exposes a versioned verified artifact with navigable evidence refs (FR-013–FR-015, SC-003).
-- [ ] T028 [US1] Wire the MVP graph nodes and conditional edges in `src/intelligence_collector/graph/nodes.py` and `src/intelligence_collector/graph/routing.py`; completion means the controlled-source test executes Scope → Planning → Researching → ResearchComplete → Synthesis → Verification without a research-brief approval interrupt (FR-005, FR-024, SC-001).
-- [ ] T029 [US1] Add MVP runbook and fixture references in `tests/integration/README.md`; completion means a developer can reproduce the controlled-source flow using the quickstart command and inspect every stage artifact (quickstart; SC-013).
+- [X] T028 [US1] Wire the MVP graph nodes and conditional edges in `src/intelligence_collector/graph/nodes.py` and `src/intelligence_collector/graph/routing.py`; completion means the controlled-source test executes Scope → Planning → Researching → ResearchComplete → Synthesis → Verification without a research-brief approval interrupt (FR-005, FR-024, SC-001).
+- [X] T029 [US1] Add MVP runbook and fixture references in `tests/integration/README.md`; completion means a developer can reproduce the controlled-source flow using the quickstart command and inspect every stage artifact (quickstart; SC-013).
 
 **Checkpoint**: MVP vertical slice is independently demonstrable before parallel workers or live MCP are added.
 
@@ -69,9 +69,9 @@ references. Tests are included because the specification and request explicitly 
 
 **Independent Test**: `tests/integration/test_scope_clarification.py` submits broad, incomplete, contradictory, and unsafe requests; it asserts questions/narrowing, no retrieval before clarity, and automatic Planning after boundaries are explicit (US2; FR-002–FR-005).
 
-- [ ] T030 [P] [US2] Add multi-turn scope tests in `tests/integration/test_scope_clarification.py`; completion means prior answers persist, only missing fields are requested, broad scopes receive narrowing suggestions, and no `write_todos`/MCP call occurs before scope completion (US2 scenarios 1–5).
-- [ ] T031 [US2] Harden Scope Agent clarification schema and narrowing suggestions in `src/intelligence_collector/agents/scope.py`; completion means all five scope acceptance scenarios pass and each accepted scope writes one durable brief summary (FR-003, FR-004, FR-005).
-- [ ] T032 [US2] Integrate guardrail and validation outcomes into Streamlit error rendering in `src/intelligence_collector/app.py` and `src/intelligence_collector/guardrails.py`; completion means unsafe/malformed input is actionable, safe, and mutation-free (FR-002, FR-029).
+- [X] T030 [P] [US2] Add multi-turn scope tests in `tests/integration/test_scope_clarification.py`; completion means prior answers persist, only missing fields are requested, broad scopes receive narrowing suggestions, and no `write_todos`/MCP call occurs before scope completion (US2 scenarios 1–5).
+- [X] T031 [US2] Harden Scope Agent clarification schema and narrowing suggestions in `src/intelligence_collector/agents/scope.py`; completion means all five scope acceptance scenarios pass and each accepted scope writes one durable brief summary (FR-003, FR-004, FR-005).
+- [X] T032 [US2] Integrate guardrail and validation outcomes into Streamlit error rendering in `src/intelligence_collector/app.py` and `src/intelligence_collector/guardrails.py`; completion means unsafe/malformed input is actionable, safe, and mutation-free (FR-002, FR-029).
 
 ## Phase 5: User Story 3 - Recover from Failed Verification (Priority: P1)
 
