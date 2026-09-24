@@ -3,9 +3,11 @@ def synthesize(scope, chunks, vfs=None, run_id=None, version=1):
     report = f"# Technical Report\n\n## Objective\n{scope.objective}\n\n## Evidence\n{evidence}\n"
     if vfs and run_id:
         if version > 1:
-            vfs.write(run_id, f"reports/draft.v{version-1}.md", report, "previous_draft")
+            vfs.write(
+                run_id, f"reports/draft.v{version-1}.md", report, "previous_draft")
         vfs.write(run_id, f"reports/draft.v{version}.md", report, "draft")
     return report
+
 
 def revise_draft(scope, chunks, feedback, vfs=None, run_id=None, version=2):
     report = synthesize(scope, chunks, vfs, run_id, version)

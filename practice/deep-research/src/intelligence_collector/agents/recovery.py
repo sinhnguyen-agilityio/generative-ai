@@ -45,6 +45,7 @@ def persist_review_artifact(vfs, state: ResearchGraphState, feedback: str):
     return vfs.write_json(
         state.run_id,
         f"verification/needs_review.v{state.recovery_attempt + 1}.json",
-        {"status": "NEEDS_REVIEW", "feedback": feedback, "attempt": state.recovery_attempt},
+        {"status": "NEEDS_REVIEW", "feedback": feedback,
+            "attempt": state.recovery_attempt},
         "needs_review",
     )
