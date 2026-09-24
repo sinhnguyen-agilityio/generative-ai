@@ -1,6 +1,7 @@
 from __future__ import annotations
 from intelligence_collector.agents.scope import missing_scope_fields, narrowing_suggestions
 from intelligence_collector.guardrails import validate_request
+from intelligence_collector.publication import can_request_approval
 def render():
     try:
         import streamlit as st
@@ -14,6 +15,13 @@ def render():
     if st.session_state.get("needs_review"):
         st.error("This run needs human review before it can be treated as verified or published.")
         st.caption(st.session_state.get("review_feedback", "Unresolved verification feedback is stored with the run."))
+    verification = st.session_state.get("verification")
+    if verification is not None and can_request_approval(verification):
+        st.subheader("Review and publish")
+        decision = st.radio("Publication decision", ["Approve", "Reject"], key="publication_decision")
+        if st.button("Record decision"):
+            st.session_state.approval = decision == "Approve"
+            st.success("Approval recorded; publication remains hash-bound.")
     text = st.chat_input("What should we research?")
     if text:
         decision = validate_request(text)

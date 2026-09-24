@@ -102,8 +102,8 @@ references. Tests are included because the specification and request explicitly 
 **Independent Test**: `tests/integration/test_approval_binding.py` rejects, approves, mutates, and retries publication; it asserts no unauthorized permanent write and exact hash equality on success (US5; FR-025–FR-028a, SC-008–SC-009).
 
 - [X] T041 [P] [US5] Add approval/rejection and stale-hash tests in `tests/integration/test_approval_binding.py`; completion means unverified, failed, `NEEDS_REVIEW`, stale, rejected, and write-failure cases leave permanent output unchanged (US5 scenarios 1–5).
-- [ ] T042 [US5] Implement approval interrupt/resume UI in `src/intelligence_collector/app.py` and `src/intelligence_collector/publication.py`; completion means only verified artifacts expose approval, decisions bind actor/time/hash, and rejection is durable without publication (FR-025–FR-027).
-- [ ] T043 [US5] Implement atomic publisher in `src/intelligence_collector/publication.py`; completion means it is the only permanent-output writer, validates unchanged approved hash and verification ID, records success/failure, and never exposes partial output (FR-028, FR-028a, SC-008–SC-009).
+- [X] T042 [US5] Implement approval interrupt/resume UI in `src/intelligence_collector/app.py` and `src/intelligence_collector/publication.py`; completion means only verified artifacts expose approval, decisions bind actor/time/hash, and rejection is durable without publication (FR-025–FR-027).
+- [X] T043 [US5] Implement atomic publisher in `src/intelligence_collector/publication.py`; completion means it is the only permanent-output writer, validates unchanged approved hash and verification ID, records success/failure, and never exposes partial output (FR-028, FR-028a, SC-008–SC-009).
 
 ## Phase 8: Cross-Cutting Resilience, Observability, and Acceptance
 

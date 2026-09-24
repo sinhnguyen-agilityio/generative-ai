@@ -25,4 +25,3 @@ class WorkflowError:
     can_resume: bool = False
     needs_review: bool = False
     artifact_ids: tuple[str, ...] = ()
-

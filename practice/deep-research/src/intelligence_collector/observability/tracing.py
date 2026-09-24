@@ -29,7 +29,8 @@ class Tracer:
             return
         try:
             with self.client.start_as_current_observation(as_type="span", name=name) as remote:
-                remote.update(metadata={"run_id": run_id, "thread_id": thread_id, **attributes})
+                remote.update(
+                    metadata={"run_id": run_id, "thread_id": thread_id, **attributes})
                 yield span
         except Exception:
             yield span

@@ -18,7 +18,8 @@ class ArtifactStore:
     def write(self, run_id: str, kind: str, relative_path: str, value: Any, *, task_id: str | None = None) -> ArtifactRef:
         key = (run_id, kind)
         self._versions[key] += 1
-        payload = value if isinstance(value, str) else json.dumps(value, default=str, indent=2)
-        ref = self.vfs.write(run_id, relative_path, payload, kind, task_id=task_id)
+        payload = value if isinstance(value, str) else json.dumps(
+            value, default=str, indent=2)
+        ref = self.vfs.write(run_id, relative_path,
+                             payload, kind, task_id=task_id)
         return ref.model_copy(update={"version": self._versions[key]})
-
