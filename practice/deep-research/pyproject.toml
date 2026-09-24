@@ -1,0 +1,16 @@
+[project]
+name = "intelligence-collector"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2", "streamlit>=1.35", "langgraph>=0.2", "langchain-core>=0.3", "mcp>=1", "langfuse>=2", "ragas>=0.2"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-cov>=5"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
