@@ -9,6 +9,32 @@
 **Input**: User description: "Build a local deep research application that produces a verified,
 evidence-backed technical report from a user's research request."
 
+## Clarifications
+
+### Session 2026-09-24
+
+- Q: When should the Scope Agent consider a request sufficiently clear and automatically transition
+  to Planning? → A: Only when the objective, research boundaries, constraints, success criteria, and
+  deliverable format are explicit, internally consistent, and testable; otherwise the agent helps
+  the user narrow the scope.
+- Q: What minimum structure and readiness checks must every todo satisfy before the workflow can
+  enter Research? → A: Each todo contains a research question and status; Research starts only after
+  a valid todo list is durably written, and each worker uses broad-to-narrow searches with a 2–3
+  call budget for simple questions and an absolute 5-call limit for complex or unresolved questions.
+- Q: Under what conditions may the Supervisor signal `ResearchComplete` and allow synthesis to
+  begin? → A: Only when every todo is completed, intermediate artifacts are stored as files through
+  the Virtual File System (VFS), and raw web research data is indexed in the vector store for later
+  synthesis.
+- Q: Which verification feedback taxonomy should deterministically select draft revision, additional
+  research, or re-planning? → A: `DRAFT_DEFECT` triggers draft revision when adequate evidence exists;
+  `EVIDENCE_GAP` triggers targeted additional research; and `PLAN_GAP` triggers re-planning affected
+  todos.
+- Q: Which file locations and publication actions should be permitted during research? → A: Each
+  intermediate step writes a run-scoped VFS artifact proving that step occurred: Scope writes a brief
+  summary, Planning writes the todo list, each Research task writes scraped website content, and
+  Synthesis/Verification preserve the previous draft and latest report. Permanent output is written
+  only after explicit human approval of the unchanged verified artifact.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Complete a Verified Research Run (Priority: P1)
@@ -30,7 +56,8 @@ links without asking for approval of the research brief.
    format, **When** the user submits it, **Then** the run advances from Scoping to Planning without a
    research-brief approval prompt.
 2. **Given** a scoped run in Planning, **When** planning completes, **Then** structured research tasks
-   exist before the first external source is retrieved.
+   containing a research question and initial status have been durably written by `write_todos`
+   before the first external source is retrieved.
 3. **Given** planned research tasks, **When** research executes, **Then** each task has a visible
    status and its notes, excerpts, and evidence bundles are stored outside the chat transcript.
 4. **Given** the supervisor has explicitly marked research ready for synthesis, **When** synthesis
@@ -38,6 +65,19 @@ links without asking for approval of the research brief.
    sources.
 5. **Given** verification passes, **When** the user opens the result, **Then** the UI identifies the
    artifact as verified and shows the final report with navigable evidence references.
+6. **Given** a simple research question, **When** a worker searches for evidence, **Then** it uses a
+   budget of two or three search calls and stops early once it can answer confidently.
+7. **Given** a complex question or unsuccessful searches, **When** a worker reaches its fifth search
+   call, **Then** it stops searching and records the evidence found and any unresolved gap.
+8. **Given** any todo is not completed or its required artifacts are not persisted and indexed,
+   **When** the Supervisor assesses readiness, **Then** it MUST NOT signal `ResearchComplete` or
+   permit synthesis to begin.
+9. **Given** every todo is completed, **When** all intermediate artifact files are stored through the
+   VFS and all raw web research data is indexed in the vector store, **Then** the Supervisor records
+   `ResearchComplete` and synthesis may begin from those stored research assets.
+10. **Given** a run advances through Scope, Planning, Research, and Synthesis/Verification, **When**
+    each step completes, **Then** its required run-scoped VFS artifact exists: brief summary, todo
+    list, scraped website content, and previous/latest report versions respectively.
 
 ---
 
@@ -61,9 +101,12 @@ the required scope fields are clear.
 2. **Given** an ambiguous request, **When** the user answers only part of the missing information,
    **Then** the Scope Agent retains prior answers and asks only for information still needed.
 3. **Given** all required scope information has become clear, **When** the latest answer is accepted,
-   **Then** the scope is recorded and the run automatically advances to Planning.
+   **Then** the bounded scope is recorded and the run automatically advances to Planning.
 4. **Given** malformed, empty, or unsafe input, **When** it is submitted, **Then** the input is
    rejected with an actionable error and no durable run state or external research is initiated.
+5. **Given** a request whose objective is understandable but whose research scope is too broad,
+   **When** the Scope Agent evaluates it, **Then** the agent proposes concrete narrowing options and
+   keeps the run in Scoping until the user establishes explicit research boundaries.
 
 ---
 
@@ -94,6 +137,12 @@ again before it is shown as verified.
 5. **Given** the recovery limit is exhausted with unresolved failures, **When** the final attempt
    ends, **Then** the run is marked `NEEDS_REVIEW`, the unresolved feedback is shown, and the artifact
    is never described as verified.
+6. **Given** verification finds a `DRAFT_DEFECT`, **When** adequate stored evidence already exists,
+   **Then** the workflow revises the draft without unnecessary retrieval.
+7. **Given** verification finds an `EVIDENCE_GAP`, **When** a required claim lacks sufficient or
+   consistent support, **Then** the workflow performs targeted additional research for that gap.
+8. **Given** verification finds a `PLAN_GAP`, **When** existing todos do not cover or correctly
+   decompose the scoped request, **Then** the workflow re-plans the affected todos before continuing.
 
 ---
 
@@ -173,36 +222,56 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   and refine a technical research request.
 - **FR-002**: The system MUST validate each user input for required content, supported size and
   format, and unsafe or malformed values before it changes durable state or initiates research.
-- **FR-003**: The Scope Agent MUST determine whether the objective, constraints, success criteria,
-  and deliverable format are sufficiently clear for planning.
+- **FR-003**: The Scope Agent MUST consider a request ready for Planning only when its objective,
+  research boundaries, constraints, success criteria, and deliverable format are explicit,
+  internally consistent, and testable.
 - **FR-004**: When required scope information is unclear, the Scope Agent MUST ask focused follow-up
-  questions and MUST preserve usable answers across turns.
+  questions, MUST preserve usable answers across turns, and MUST propose concrete ways to narrow a
+  scope that is too broad.
 - **FR-005**: Once scope is clear, the system MUST record the scoped request and automatically enter
   Planning without requiring approval of a research brief.
-- **FR-006**: The Planner MUST call `write_todos` to create structured research tasks before any
-  external retrieval begins.
-- **FR-007**: Each research task MUST identify its question or objective, completion criteria,
-  dependencies, and current status.
+- **FR-006**: The Planner MUST call `write_todos` to durably create a non-empty list of structured
+  research tasks before any external retrieval begins; a failed or invalid write MUST keep the run
+  in Planning and expose an actionable error.
+- **FR-007**: Each research task MUST contain a non-empty research question and a valid current
+  status. Each newly written task MUST start in the planned status.
 - **FR-008**: A Research Supervisor MUST assign planned tasks to research workers, track their
   outcomes, and record progress assessments.
 - **FR-009**: Research workers MUST access external research sources only through approved MCP
   connections and MUST expose connection or retrieval failures as task outcomes.
-- **FR-010**: Workers MUST persist research notes, source excerpts, and evidence bundles outside
-  conversation history and associate each artifact with its run and task.
-- **FR-011**: The supervisor MUST explicitly record that research is ready before synthesis can
-  begin, and MUST NOT do so while required tasks lack a terminal outcome or documented disposition.
-- **FR-012**: The system MUST synthesize a versioned draft from stored research artifacts and
-  evidence rather than relying on conversation history as the source of record.
+- **FR-009a**: Before searching, a worker MUST read the task question and identify the specific
+  information needed. It MUST start with a broad search, assess sufficiency and remaining gaps after
+  every search call, and use narrower searches only to address identified gaps.
+- **FR-009b**: A worker MUST stop searching as soon as it has enough evidence to answer confidently.
+  It MUST use no more than three search calls for a simple question and no more than five for a
+  complex question. Five search calls is an absolute per-task limit; reaching it MUST produce the
+  best available outcome plus an explicit unresolved-gap record when adequate sources were not
+  found.
+- **FR-010**: Workers MUST persist research notes, source excerpts, and evidence bundles as
+  intermediate files through the Virtual File System (VFS), outside conversation history, and
+  associate each artifact with its run and task.
+- **FR-010b**: The workflow MUST write a run-scoped VFS artifact after each completed stage: Scope
+  writes a brief summary; Planning writes the todo list; each Research task writes the content scraped
+  from its website sources; and Synthesis/Verification writes or preserves both the previous draft
+  report and the latest report.
+- **FR-010a**: Workers MUST preserve raw data retrieved from web sources with its source provenance
+  and index that research data in the vector store for retrieval during synthesis.
+- **FR-011**: The Supervisor MUST signal `ResearchComplete` before synthesis can begin and MAY signal
+  it only when every todo has completed status, all required intermediate artifact files are
+  durably stored through the VFS, and all raw web research data is indexed successfully.
+- **FR-012**: The system MUST synthesize a versioned draft by retrieving from the indexed research
+  data and stored evidence rather than relying on conversation history as the source of record.
 - **FR-013**: The verifier MUST determine whether the draft addresses every required element of the
   scoped request.
 - **FR-014**: The verifier MUST determine whether every factual claim intended for the final report
   is supported by one or more traceable stored sources.
 - **FR-015**: Each factual claim in a verified artifact MUST link to stored evidence that identifies
   its source and preserves reviewable source context.
-- **FR-016**: A failed verification MUST produce structured feedback identifying the failure type,
-  affected scope item or claim, supporting details, and recommended repair path.
-- **FR-017**: The recovery workflow MUST select among revising the draft, researching a specific
-  evidence gap, or re-planning affected tasks based on the recorded feedback.
+- **FR-016**: A failed verification MUST produce structured feedback with exactly one primary failure
+  type: `DRAFT_DEFECT`, `EVIDENCE_GAP`, or `PLAN_GAP`; it MUST identify the affected scope item or
+  claim, supporting details, and recommended repair path.
+- **FR-017**: The recovery workflow MUST revise the draft for `DRAFT_DEFECT`, research the specific
+  gap for `EVIDENCE_GAP`, and re-plan affected tasks for `PLAN_GAP`.
 - **FR-018**: Every repaired candidate artifact MUST pass verification again; prior verification
   MUST NOT carry over to changed artifact content.
 - **FR-019**: Every retry and recovery path MUST have a configured finite limit and visible attempt
@@ -227,6 +296,9 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   `NEEDS_REVIEW` artifact and provide an actionable reason.
 - **FR-028**: Publication MUST place only the exact approved artifact version in the permanent output
   location and MUST record success or failure without exposing partial output as published.
+- **FR-028a**: Research, planning, synthesis, and verification MUST NOT write to the permanent output
+  location. Publication MUST be the only action that writes there, and it MUST require explicit human
+  approval tied to the unchanged verified artifact version.
 - **FR-029**: Errors MUST identify the affected stage or task, preserve completed durable work, and
   tell the user whether the run can retry, resume, or requires review.
 - **FR-030**: Workflow stage transitions, bounded recovery attempts, resumable checkpoints, and
@@ -238,19 +310,25 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   timestamps, checkpoint reference, and terminal outcome.
 - **Scoped Request**: The agreed objective, constraints, success criteria, deliverable format, and
   clarification history that define what verification must assess.
-- **Research Task**: A planned unit of investigation with objective, completion criteria,
-  dependencies, assignee, status, attempt count, and outcome.
+- **Research Task**: A planned unit of investigation whose required todo fields are a research
+  question and status; assignment, search-call count, stored artifacts, unresolved gaps, and outcome
+  are recorded as the task progresses.
 - **Progress Assessment**: A supervisor record of task coverage, gaps, blockers, and readiness for
   synthesis.
 - **Research Artifact**: A persisted note, source excerpt, or other intermediate work product tied to
-  a run and task but stored outside chat history.
+  a run and task, stored as a file through the VFS outside chat history.
+- **Stage Artifact**: A run-scoped VFS file proving a completed stage, including the scope brief
+  summary, planning todo list, per-task scraped website content, and previous/latest report versions.
+- **Indexed Research Data**: Raw web-retrieved content with source provenance, associated with its
+  run and task and indexed in the vector store for synthesis retrieval.
 - **Source Record**: The identity, location, retrieval context, and relevant metadata of an external
   source accessed through an approved research connection.
 - **Evidence Bundle**: Reviewable source excerpts and provenance supporting one or more report claims.
 - **Report Artifact**: A versioned draft or final technical report with scope coverage and links from
   factual claims to evidence.
 - **Verification Result**: The outcome, checks performed, structured failures, and affected artifact
-  version for a verification attempt.
+  version for a verification attempt, including one primary `DRAFT_DEFECT`, `EVIDENCE_GAP`, or
+  `PLAN_GAP` type when verification fails.
 - **Checkpoint**: Durable workflow state needed to resume a run without depending on conversation
   history.
 - **Approval Decision**: A human approval or rejection tied to an exact verified artifact version.
@@ -264,7 +342,8 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **SC-001**: In acceptance testing, 100% of clear valid requests advance from Scoping to Planning
   without asking the user to approve a research brief.
 - **SC-002**: In 100% of tested runs, structured research tasks exist before the first external
-  retrieval attempt.
+  retrieval attempt, every task has a non-empty research question and planned status, and
+  `write_todos` completed successfully.
 - **SC-003**: In 100% of artifacts labeled verified, every scoped requirement has an explicit
   verification result and every factual claim has at least one reviewable evidence link.
 - **SC-004**: A user can determine the run's current stage, completed and remaining research work,
@@ -282,6 +361,13 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   artifact version that the human approved.
 - **SC-010**: At least 90% of representative first-time users can submit a request, answer any scope
   questions, inspect evidence, and make a publication decision without assistance.
+- **SC-011**: In 100% of worker tests, no task exceeds five search calls; simple tasks use no more
+  than three, and tasks stop earlier when their question can be answered confidently.
+- **SC-012**: In 100% of tested runs, synthesis remains blocked until every todo is completed, all
+  required intermediate files are stored through the VFS, and all raw web research data is indexed;
+  synthesis retrieves its research context from those durable assets rather than chat history.
+- **SC-013**: In 100% of stage-completion tests, the required stage artifact is present in the run's
+  VFS, and in 100% of rejected or unapproved publication tests the permanent output is unchanged.
 
 ## Assumptions
 
