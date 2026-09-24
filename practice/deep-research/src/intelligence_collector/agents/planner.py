@@ -5,3 +5,6 @@ def plan(vfs, run_id, questions):
     write_todos(vfs, run_id, todos)
     return todos
 
+def replan(vfs, run_id, questions):
+    """Replace only the affected plan while retaining existing run artifacts."""
+    return plan(vfs, run_id, questions)

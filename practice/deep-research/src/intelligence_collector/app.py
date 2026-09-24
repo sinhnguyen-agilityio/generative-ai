@@ -13,6 +13,7 @@ def render():
     st.write(f"Progress: {st.session_state.progress}")
     if st.session_state.get("needs_review"):
         st.error("This run needs human review before it can be treated as verified or published.")
+        st.caption(st.session_state.get("review_feedback", "Unresolved verification feedback is stored with the run."))
     text = st.chat_input("What should we research?")
     if text:
         decision = validate_request(text)

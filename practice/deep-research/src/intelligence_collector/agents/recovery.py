@@ -25,3 +25,26 @@ def choose_repair(state: ResearchGraphState, issue: IssueType, fingerprint: str)
     }[issue]
     return RecoveryDecision(target, next_attempt, False, issue.value)
 
+
+def apply_repair(state: ResearchGraphState, issue: IssueType, *, feedback: str, new_fingerprint: str) -> ResearchGraphState:
+    """Apply the route-level state transition while preserving valid evidence."""
+    decision = choose_repair(state, issue, new_fingerprint)
+    updates = {
+        "stage": decision.stage,
+        "recovery_attempt": decision.attempt,
+        "progress_fingerprint": new_fingerprint,
+        "last_error": feedback if decision.exhausted else "",
+    }
+    if decision.exhausted:
+        updates["status"] = "needs_review"
+    return state.model_copy(update=updates)
+
+
+def persist_review_artifact(vfs, state: ResearchGraphState, feedback: str):
+    """Persist structured unresolved feedback outside conversation history."""
+    return vfs.write_json(
+        state.run_id,
+        f"verification/needs_review.v{state.recovery_attempt + 1}.json",
+        {"status": "NEEDS_REVIEW", "feedback": feedback, "attempt": state.recovery_attempt},
+        "needs_review",
+    )

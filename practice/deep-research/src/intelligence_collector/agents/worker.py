@@ -19,3 +19,7 @@ def run_worker(vfs, index, run_id, todo: ResearchTodo, mcp: ControlledMCP):
     vfs.write_json(run_id, f"research/{todo.todo_id}/excerpts/result.json", {"chunks": [c.text for c in chunks]}, "excerpts", task_id=todo.todo_id)
     vfs.write_json(run_id, f"research/{todo.todo_id}/evidence/result.json", {"artifact_ids": [r.artifact_id for r in refs]}, "evidence_bundle", task_id=todo.todo_id)
     return todo, refs, chunks
+
+def targeted_research(vfs, index, run_id, question, mcp):
+    todo = ResearchTodo(research_question=question)
+    return run_worker(vfs, index, run_id, todo, mcp)
