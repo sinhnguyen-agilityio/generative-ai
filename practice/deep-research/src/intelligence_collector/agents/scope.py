@@ -1,9 +1,19 @@
 from __future__ import annotations
 import hashlib
-from intelligence_collector.contracts import ScopeAssessment, ScopeDecision, ScopedRequest
-from intelligence_collector.agents.prompts import PROMPT_VERSION, SCOPE_PROMPT
-from intelligence_collector.agents.prompts import SCOPE_TEMPLATE
-from langchain_core.messages import AIMessage, HumanMessage
+from datetime import date
+from intelligence_collector.contracts import (
+    ResearchBrief,
+    ScopeAssessment,
+    ScopeDecision,
+    ScopedRequest,
+)
+from intelligence_collector.agents.prompts import (
+    BRIEF_PROMPT_VERSION,
+    BRIEF_TEMPLATE,
+    PROMPT_VERSION,
+    SCOPE_TEMPLATE,
+)
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from intelligence_collector.storage.vfs import VFS
 
 REQUIRED = ("objective", "research_boundaries", "constraints",
@@ -53,10 +63,90 @@ class ScopeAgent:
     def __init__(self, router):
         self.router = router
 
-    def assess(self, request: str, prior_turns: list[str] | None = None, *, run_id: str = "", thread_id: str = "") -> ScopeAssessment:
-        history = [HumanMessage(content=t) if i % 2 == 0 else AIMessage(content=t) for i, t in enumerate(prior_turns or [])]
-        messages = SCOPE_TEMPLATE.format_messages(request=request, history=history)
-        assessment = self.router.invoke_messages("scope", messages, ScopeAssessment, prompt_version=PROMPT_VERSION, run_id=run_id, thread_id=thread_id)
+    @staticmethod
+    def _messages(prior_turns: list[str | BaseMessage] | None) -> list[BaseMessage]:
+        if not prior_turns:
+            return []
+        if all(isinstance(turn, BaseMessage) for turn in prior_turns):
+            return list(prior_turns)  # type: ignore[arg-type]
+        return [
+            HumanMessage(content=turn) if i % 2 == 0 else AIMessage(content=turn)
+            for i, turn in enumerate(prior_turns)
+        ]
+
+    def clarify_with_user(
+        self,
+        request: str,
+        prior_turns: list[str | BaseMessage] | None = None,
+        *,
+        run_id: str = "",
+        thread_id: str = "",
+    ) -> ScopeAssessment:
+        conversation = self._messages(prior_turns) + [HumanMessage(content=request)]
+        messages = SCOPE_TEMPLATE.format_messages(conversation=conversation)
+        return self.router.invoke_messages(
+            "scope",
+            messages,
+            ScopeAssessment,
+            prompt_version=PROMPT_VERSION,
+            run_id=run_id,
+            thread_id=thread_id,
+        )
+
+    def write_research_brief(
+        self,
+        request: str,
+        assessment: ScopeAssessment,
+        prior_turns: list[str | BaseMessage] | None = None,
+        *,
+        run_id: str = "",
+        thread_id: str = "",
+        vfs: VFS | None = None,
+    ) -> ResearchBrief:
+        if assessment.decision != ScopeDecision.SCOPE_CLEAR:
+            raise ValueError("write_research_brief requires a SCOPE_CLEAR decision")
+        conversation = self._messages(prior_turns)
+        messages = BRIEF_TEMPLATE.format_messages(
+            conversation=conversation,
+            decision=assessment.model_dump_json(),
+            date=date.today().isoformat(),
+        )
+        brief = self.router.invoke_messages(
+            "scope",
+            messages,
+            ResearchBrief,
+            prompt_version=BRIEF_PROMPT_VERSION,
+            run_id=run_id,
+            thread_id=thread_id,
+        )
+        if vfs and run_id:
+            vfs.write_json(
+                run_id,
+                "scope/brief_summary.v1.json",
+                brief.model_dump(mode="json"),
+                "brief_summary",
+            )
+        return brief
+
+    def assess(
+        self,
+        request: str,
+        prior_turns: list[str | BaseMessage] | None = None,
+        *,
+        run_id: str = "",
+        thread_id: str = "",
+        vfs: VFS | None = None,
+    ) -> ScopeAssessment | ResearchBrief:
+        assessment = self.clarify_with_user(
+            request, prior_turns, run_id=run_id, thread_id=thread_id
+        )
         if assessment.decision == ScopeDecision.SCOPE_CLEAR:
-            build_scope(assessment.model_dump(exclude={"decision", "missing_fields", "clarification_question", "narrowing_suggestions", "question_class", "reason", "schema_version"}))
+            return self.write_research_brief(
+                request,
+                assessment,
+                prior_turns,
+                run_id=run_id,
+                thread_id=thread_id,
+                vfs=vfs,
+            )
         return assessment

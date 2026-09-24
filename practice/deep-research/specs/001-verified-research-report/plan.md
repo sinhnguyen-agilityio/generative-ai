@@ -58,6 +58,14 @@ of `SystemMessage`, `MessagesPlaceholder`, and data variables. Scope history is 
 state under the thread ID and passed as `HumanMessage`/`AIMessage` turns. Invalid structured output
 is retried within bounds or recorded as an error.
 
+**Langfuse Trace Hierarchy**: A live Streamlit submission creates one root `agent` observation with
+a deterministic execution trace ID. Langfuse `session_id` equals the LangGraph `thread_id`, while
+`run_id` and a per-submission `execution_id` are propagated metadata. Every graph node creates a
+child span, LangChain's callback handler records nested model generations and token usage, and the
+router records structured validation/fallback metadata. The client flushes after every execution.
+Live execution fails before model invocation when tracing is disabled or misconfigured; offline
+tests use a recording client and never require or expose credentials.
+
 **Scale/Scope**: One local user and one active run at a time for the first release; dozens of
 research tasks and thousands of source chunks per run; local persistence is the source of truth.
 
@@ -96,11 +104,16 @@ alternatives that would violate the constitution or clarified specification.
 
 1. Streamlit accepts a chat turn, validates its shape, and runs the guardrail. Rejected input is
    displayed without mutating the run.
-2. The Scope node loads prior scoped answers from checkpoint state, asks focused questions for
-   missing or broad fields, and writes `scope/brief_summary.v1.json` only when boundaries are clear.
-   A clear scope edge proceeds automatically to Planning; no brief approval interrupt exists.
-3. Planning invokes the custom `write_todos` tool. A non-empty, valid, durably stored todo list is
-   required before the Research edge is enabled.
+2. `clarify_with_user` adds the current `HumanMessage` to checkpointed conversation history and
+   passes that actual history through `MessagesPlaceholder` to a structured Scope LLM decision. A
+   clarification result appends exactly one focused `AIMessage` and ends the invocation in Scoping.
+3. A clear result appends exactly one concise verification `AIMessage` and routes to
+   `write_research_brief` without user approval. That node makes a
+   second structured call with its own versioned prompt, validates a dedicated single-question
+   `ResearchBrief`,
+   writes `scope/brief_summary.v1.json`, and enters Planning without a brief approval interrupt.
+4. Planning consumes the brief's detailed research question and invokes `write_todos`.
+   A non-empty, valid, durably stored todo list is required before any Research/retrieval edge.
 4. The Supervisor assigns isolated workers. Each worker uses MCP only, starts broad, assesses gaps
    after each call, narrows as needed, and stops early or at the five-call hard limit. Raw source
    captures, excerpts, notes, evidence bundles, and vector-index records are written to the VFS.
@@ -124,7 +137,7 @@ alternatives that would violate the constitution or clarified specification.
 |---|---|---|---|
 | Streamlit UI | Chat, stage/progress display, report/evidence review, approval decision | Renders typed state; never writes authoritative artifacts; displays actionable errors | Graph runner, VFS read API |
 | Input Validator + Guardrail | Validate shape/size and reject prompt injection or disallowed offensive/violent requests | Returns typed `GuardrailDecision`; rejection has no state mutation | Scope entry edge, audit event |
-| Scope Agent | Clarify objective, boundaries, constraints, criteria, format; suggest narrowing | `ScopeResult`; remains Scoping until explicit/testable bounded scope | Model router, checkpoint, brief VFS artifact |
+| Scope Agent | `clarify_with_user` evaluates actual message history; `write_research_brief` creates a dedicated validated `ResearchBrief` after a clear decision | One-question clarification or complete brief; model/validation/persistence failure cannot become clear | LangChain chat model/router, LangGraph thread state, checkpoint, brief VFS artifact |
 | Planner + `write_todos` | Build and durably store non-empty question/status todos | Tool returns typed success/error; failed write blocks Research | VFS, graph state |
 | Research Supervisor | Assign workers, aggregate outcomes, use `think_tool`, assess readiness | `ProgressAssessment`; cannot ResearchComplete until all todos complete and artifacts indexed | Worker pool, VFS, vector store |
 | MCP Research Worker | Search external sources, capture provenance, create evidence | Per-task search budget; MCP failures are task outcomes; isolated context | MCP clients, VFS, vector store, model router |
@@ -135,7 +148,7 @@ alternatives that would violate the constitution or clarified specification.
 | Model Router | Role-specific primary/fallback models and cost-conscious reasoning sandwich | Retries bounded; fallback event traced; final failure is visible | All model-using nodes, Langfuse |
 | Checkpointer | Persist typed graph state and resume points | Atomic checkpoint; invalid latest checkpoint falls back or NEEDS_REVIEW | LangGraph, VFS metadata |
 | Approval/Publisher | Bind approval to artifact hash and atomically publish | Reject/stale/unverified writes nothing permanent | Streamlit interrupt, VFS, output path |
-| Tracing/Evaluation | Trace runs and evaluate faithfulness | Observability failure never fabricates success; optional endpoint failure is surfaced | Langfuse, Ragas dataset |
+| Tracing/Evaluation | Create root execution traces grouped by thread, nested node spans, model generations, validation/fallback events, and evaluate faithfulness | Missing live tracing config blocks execution; export/flush failure is surfaced without exposing credentials | Langfuse v4 SDK and LangChain callback, Ragas dataset |
 
 ## Project Structure
 

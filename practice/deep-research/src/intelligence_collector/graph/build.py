@@ -3,17 +3,29 @@ from collections.abc import Callable
 from intelligence_collector.graph.state import GraphState
 
 
-def node_wrapper(name: str, fn: Callable[[GraphState], GraphState]):
+def node_wrapper(name: str, fn: Callable[[GraphState], GraphState], tracer=None):
     """Normalize node execution so every graph node returns a serializable state update."""
     def wrapped(state: GraphState) -> GraphState:
-        result = fn(state)
+        if tracer is None:
+            result = fn(state)
+        else:
+            with tracer.span(
+                f"graph.{name}",
+                state.get("run_id", ""),
+                state.get("thread_id", ""),
+                input={"stage": state.get("stage"), "request": state.get("request", "")},
+                node=name,
+            ) as span:
+                result = fn(state)
+                span.output = {"stage": result.get("stage"), "status": result.get("status")}
         if not isinstance(result, dict):
             raise TypeError(f"{name} must return a mapping state update")
         return result
     wrapped.__name__ = name
     return wrapped
 
-def build_graph(*, checkpointer=None, with_approval: bool = False):
+
+def build_graph(*, checkpointer=None, with_approval: bool = False, scope_agent=None, vfs=None, tracer=None):
     """Build the typed MVP graph with optional resumable approval interrupt."""
     from langgraph.graph import END, START, StateGraph
 
@@ -24,15 +36,92 @@ def build_graph(*, checkpointer=None, with_approval: bool = False):
 
     def approval(state: GraphState) -> GraphState:
         from langgraph.types import interrupt
-        decision = interrupt({"kind": "publication_approval", "run_id": state.get("run_id")})
+        decision = interrupt(
+            {"kind": "publication_approval", "run_id": state.get("run_id")})
         return {**state, "approval": decision, "stage": "Published" if decision.get("approved") else "Awaiting Approval"}
 
     graph = StateGraph(GraphState)
-    for name in ("scope", "planning", "researching", "synthesizing", "verifying"):
-        graph.add_node(name, stage(name))
-    graph.add_edge(START, "scope")
-    graph.add_edge("scope", "planning")
-    graph.add_edge("planning", "researching")
+    if scope_agent is not None:
+        from intelligence_collector.agents.planner import plan
+        from intelligence_collector.contracts import ResearchBrief, ScopeDecision, ScopeAssessment
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        def clarify(state: GraphState) -> GraphState:
+            request = state.get("request", "")
+            history = list(state.get("messages", []))
+            assessment = scope_agent.clarify_with_user(
+                request,
+                history,
+                run_id=state.get("run_id", ""),
+                thread_id=state.get("thread_id", ""),
+            )
+            messages = history + [HumanMessage(content=request)]
+            if assessment.decision == ScopeDecision.NEEDS_CLARIFICATION:
+                messages.append(
+                    AIMessage(content=assessment.clarification_question or ""))
+            elif assessment.decision == ScopeDecision.SCOPE_CLEAR:
+                messages.append(AIMessage(content=assessment.verification))
+            return {
+                **state,
+                "stage": "Scoping",
+                "messages": messages,
+                "scope_assessment": assessment.model_dump(mode="json"),
+            }
+
+        def write_brief(state: GraphState) -> GraphState:
+            assessment = ScopeAssessment.model_validate(
+                state["scope_assessment"])
+            brief = scope_agent.write_research_brief(
+                state.get("request", ""),
+                assessment,
+                list(state.get("messages", [])),
+                run_id=state.get("run_id", ""),
+                thread_id=state.get("thread_id", ""),
+                vfs=vfs,
+            )
+            return {
+                **state,
+                "stage": "Planning",
+                "scoped_request": brief.model_dump(mode="json"),
+            }
+
+        def planning(state: GraphState) -> GraphState:
+            if vfs is None:
+                raise RuntimeError("Scope Planning requires an injected VFS")
+            brief = ResearchBrief.model_validate(state["scoped_request"])
+            todos = plan(vfs, state["run_id"], [brief.research_question])
+            return {
+                **state,
+                "stage": "Planning",
+                "todos": [todo.model_dump(mode="json") for todo in todos],
+            }
+
+        def scope_route(state: GraphState):
+            decision = state.get("scope_assessment", {}).get("decision")
+            return "write_research_brief" if decision == ScopeDecision.SCOPE_CLEAR.value else "__end__"
+
+        graph.add_node("clarify_with_user", node_wrapper(
+            "clarify_with_user", clarify, tracer))
+        graph.add_node("write_research_brief", node_wrapper(
+            "write_research_brief", write_brief, tracer))
+        graph.add_node("planning", node_wrapper("planning", planning, tracer))
+        graph.add_edge(START, "clarify_with_user")
+        graph.add_conditional_edges("clarify_with_user", scope_route, {
+            "write_research_brief": "write_research_brief", "__end__": END,
+        })
+        graph.add_edge("write_research_brief", "planning")
+        graph.add_edge("planning", END)
+    else:
+        graph.add_edge(START, "scope")
+    stage_names = ("scope", "researching", "synthesizing", "verifying")
+    if scope_agent is None:
+        stage_names = ("scope", "planning", "researching", "synthesizing", "verifying")
+    for name in stage_names:
+        graph.add_node(name, node_wrapper(name, stage(name), tracer))
+    if scope_agent is None:
+        graph.add_edge("scope", "planning")
+    if scope_agent is None:
+        graph.add_edge("planning", "researching")
     graph.add_edge("researching", "synthesizing")
     graph.add_edge("synthesizing", "verifying")
     if with_approval:

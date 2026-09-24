@@ -21,6 +21,7 @@ pytest tests/integration/test_model_fallback.py
 pytest tests/integration/test_bvf_routes.py
 pytest tests/integration/test_approval_binding.py
 pytest tests/integration/test_guardrails.py
+pytest tests/integration/test_langchain_scope.py tests/integration/test_scope_checkpoint.py
 pytest tests/evaluation/test_ragas_faithfulness.py
 streamlit run src/intelligence_collector/app.py
 ```
@@ -31,7 +32,13 @@ streamlit run src/intelligence_collector/app.py
   `ResearchComplete` → Synthesis → Verification → Awaiting Approval. Assert `todos.v1.json` exists
   before any MCP call, raw captures are indexed, claims link to evidence, and the UI shows progress.
 - **Ambiguous scope**: submit a broad request; assert narrowing questions and no `write_todos` or MCP
-  call until boundaries are explicit; verify automatic Planning afterward without brief approval.
+  call until boundaries are explicit; verify multiple turns append one question each, then a separate
+  brief call automatically enters Planning and persists todos without brief approval.
+- **Scope model failures**: force malformed output, primary failure with fallback success, and total
+  primary/fallback failure; assert only validated outputs route and no failure is treated as clear.
+- **Langfuse hierarchy**: enable Langfuse, run one clear request and one clarification turn, then
+  verify each submission has a root execution trace grouped under the same thread/session, graph-node
+  child spans, nested model generations, prompt/model/attempt metadata, final stage, and no secrets.
 - **Resume**: interrupt after a research artifact and checkpoint; restart with the same `thread_id`;
   assert artifacts and task status restore and completed MCP work is not repeated.
 - **Model fallback**: force a primary model timeout; assert bounded retry, fallback selection,

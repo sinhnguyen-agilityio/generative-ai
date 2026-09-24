@@ -25,6 +25,16 @@ Only graph nodes may change workflow fields; UI reads snapshots.
 `clarification_turn_ids`, `scope_hash`. Planning requires all fields explicit, consistent, and
 testable.
 
+### ScopeAssessment and ResearchBrief
+
+`ScopeAssessment` is the routing decision from `clarify_with_user`. A clarification decision has
+exactly one non-empty question; a clear decision has all five scope fields and no question.
+`ResearchBrief` is the separate output of `write_research_brief` and contains exactly one non-empty
+`research_question`. The detailed first-person question consolidates the objective, boundaries,
+explicit constraints, success criteria, desired deliverable, source preferences, and any genuinely
+necessary open considerations from the conversation. It is stored in graph state and the VFS, not
+appended as an assistant conversation turn. Unstated preferences and constraints must not be inferred.
+
 ### ResearchTodo
 
 `todo_id`, `run_id`, `research_question`, `status` (`planned`, `assigned`, `in_progress`,

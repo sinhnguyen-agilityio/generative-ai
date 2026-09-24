@@ -155,11 +155,12 @@ plan, constitution, and existing tasks. These tasks are append-only remediation 
   variables for Scope, Planner, Supervisor, Worker, Synthesizer, Verifier, and Fixer in
   `src/intelligence_collector/agents/prompts.py`; completion means no role prompt is embedded in UI
   callbacks or graph routing and user/evidence text is passed as data (FR-035).
-- [ ] T071 Integrate LangChain `SystemMessage`, `HumanMessage`, and `AIMessage` history into Scope
-  state and `ScopeAgent` in `src/intelligence_collector/agents/scope.py` and
-  `src/intelligence_collector/graph/state.py`; completion means ambiguous input pauses with one
-  focused question, a clarification resumes the same thread, and clear scope automatically edges to
-  Planning (FR-033–FR-035).
+- [X] T071 Integrate LangChain `SystemMessage`, `HumanMessage`, and `AIMessage` history into the
+  two-node Scope flow (`clarify_with_user` and `write_research_brief`) in
+  `src/intelligence_collector/agents/scope.py`, `src/intelligence_collector/graph/state.py`, and
+  `src/intelligence_collector/graph/build.py`; completion means ambiguous input pauses with one
+  focused question, a clarification resumes the same thread, the brief is created by a second
+  structured call, and clear scope automatically edges to Planning (FR-033–FR-035).
 - [X] T072 Add bounded structured-output parsing/retry/error handling for every semantic role in
   `src/intelligence_collector/models/router.py` and `src/intelligence_collector/agents/llm_roles.py`;
   completion means invalid output cannot become `SCOPE_CLEAR` or `VERIFIED` and produces a traced
@@ -203,3 +204,103 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
 5. Add fallback, Langfuse, Ragas, and the opt-in live MCP run only after controlled acceptance passes.
 6. Reuse fixtures, ports, contracts, and persisted artifact helpers at every later phase; do not add
    parallel workers or optimization until the single-worker flow is proven.
+
+## Phase 12: Convergence
+
+- [X] T074 Route Planner, Supervisor, Worker, Synthesizer, Verifier, and Fixer through their
+  versioned `ChatPromptTemplate` objects and `MessagesPlaceholder`/data variables in
+  `src/intelligence_collector/agents/llm_roles.py`; completion means each role renders its prompt,
+  invokes the LangChain message path, and validates its typed output (FR-035; partial/HIGH).
+- [X] T075 Add bounded structured-output parse retries and secret-safe validation-error tracing in
+  `src/intelligence_collector/models/router.py`; completion means malformed live responses are
+  retried within the configured budget, recorded with role/prompt/model metadata, and never become
+  a successful workflow decision (FR-036; partial/HIGH).
+- [X] T076 Integrate the Scope Agent graph and same-thread conversation state into
+  `src/intelligence_collector/app.py`; completion means Streamlit submits validated turns to the
+  LangGraph thread, displays the focused clarification, and automatically enters Planning after a
+  clear brief instead of using deterministic scope-only logic (FR-001, FR-033; missing/HIGH).
+- [X] T077 Declare the `langchain` runtime dependency required by
+  `langchain.chat_models.init_chat_model` in `pyproject.toml`; completion means a clean environment
+  can import the configured model factory without relying on an undeclared transitive package
+  (FR-034; partial/HIGH).
+- [X] T078 Add a checkpoint-backed Scope clarification resume test using the same LangGraph
+  `thread_id` and persisted `SystemMessage`/`HumanMessage`/`AIMessage` turns; completion means an
+  interrupted clarification resumes without losing prior turns or repeating completed decisions
+  (FR-021, FR-033; partial/MEDIUM).
+- [X] T079 Inject the run-scoped VFS into the Scope graph's `write_research_brief` node and persist
+  `scope/brief_summary.v1.json`; completion means a clear Scope edge cannot reach Planning unless the
+  brief artifact is durably written (FR-010b, FR-033a; partial/MEDIUM).
+- [X] T080 Replace the unconditional skip in `tests/integration/test_scope_live_smoke.py` with an
+  explicit opt-in test that constructs the configured model through `init_chat_model`, invokes the
+  Scope prompt, and asserts validated output and graph routing; completion means it skips only when
+  live configuration is absent and otherwise exercises a real request (FR-031–FR-033; partial/MEDIUM).
+
+## Phase 13: Two-Stage Scope Completion
+
+- [X] T081 [P] [US2] Define and validate a dedicated `ResearchBrief` contract plus decision-specific
+  `ScopeAssessment` validation in `src/intelligence_collector/contracts.py`; completion means malformed
+  clarification/clear results and empty brief fields cannot route the graph (FR-033b, FR-036).
+- [X] T082 [P] [US2] Refine the versioned Scope prompt templates in
+  `src/intelligence_collector/agents/prompts.py` and `src/intelligence_collector/agents/scope.py`;
+  completion means actual Human/AI history is passed once through `MessagesPlaceholder`, brief output
+  uses `ResearchBrief`, and constraints are never invented (FR-033a–FR-033c).
+- [X] T083 [US2] Implement the conditional clarification, brief, and Planning nodes in
+  `src/intelligence_collector/graph/build.py`; completion means clarification ends with exactly one
+  AI question, clear scope writes the brief, Planning consumes it and calls `write_todos`, and no
+  retrieval edge is enabled before the todo artifact exists (FR-006, FR-033a–FR-037).
+- [X] T084 [US4] Configure durable Scope graph checkpoint/VFS dependencies in
+  `src/intelligence_collector/app.py` and `pyproject.toml`; completion means a recreated graph can
+  resume the same thread and authoritative brief/todo artifacts survive process restart (FR-021).
+- [X] T085 [P] [US2] Add clear, multi-turn, automatic-transition, fallback, malformed-output, and
+  total-model-failure coverage in `tests/integration/test_langchain_scope.py`; completion means model
+  calls, prompts, state updates, edges, and failure behavior are asserted (FR-033–FR-037).
+- [X] T086 [P] [US4] Add process-restart Scope resume coverage in
+  `tests/integration/test_scope_checkpoint.py`; completion means a new graph/checkpointer instance
+  resumes the same thread without losing Human/AI turns (FR-021, FR-033c).
+- [X] T087 Run the full test and lint suites and record the completed Phase 13 tasks in
+  `specs/001-verified-research-report/tasks.md`; completion means all controlled tests pass and the
+  opt-in live test remains the only credential-dependent Scope test.
+
+## Phase 14: Single-Question Research Brief
+
+- [X] T088 [US2] Replace the multi-field `ResearchBrief` with one validated detailed
+  `research_question` in `src/intelligence_collector/contracts.py` and update the transformation
+  prompt in `src/intelligence_collector/agents/prompts.py` (FR-033b).
+- [X] T089 [US2] Persist and route the single research question through Scope and Planning in
+  `src/intelligence_collector/agents/scope.py` and `src/intelligence_collector/graph/build.py`;
+  completion means `write_todos` receives exactly that question (FR-037).
+- [X] T090 [P] [US2] Update Scope integration fixtures and assertions in
+  `tests/integration/test_langchain_scope.py`, `tests/integration/test_scope_checkpoint.py`, and
+  `tests/integration/test_scope_llm.py` for the single-question contract.
+- [X] T091 Run the full pytest and Ruff suites and mark Phase 14 complete in
+  `specs/001-verified-research-report/tasks.md`.
+
+## Phase 15: Scope Verification Message
+
+- [X] T092 [US2] Add decision-specific `verification` validation to `ScopeAssessment` and document
+  assistant-summary authority rules in `src/intelligence_collector/contracts.py` and
+  `src/intelligence_collector/agents/prompts.py` (FR-033c).
+- [X] T093 [US2] Append exactly one verification `AIMessage` for clear scope while preserving the
+  automatic brief edge in `src/intelligence_collector/graph/build.py` (FR-033a, FR-033c).
+- [X] T094 [P] [US2] Update clear, multi-turn, and checkpoint-resume message-state assertions in
+  `tests/integration/test_langchain_scope.py`, `tests/integration/test_scope_checkpoint.py`, and
+  `tests/integration/test_scope_llm.py`.
+- [X] T095 Run pytest, Ruff, and diff validation and mark Phase 15 complete in
+  `specs/001-verified-research-report/tasks.md`.
+
+## Phase 16: High-Fidelity Langfuse Hierarchy
+
+- [X] T096 [P] [US1] Add required live Langfuse configuration and secret-safe defaults in
+  `src/intelligence_collector/config.py` and `.env.example` (FR-038).
+- [X] T097 [US1] Implement root execution traces, thread/session propagation, graph-node spans,
+  router validation events, LangChain generation callbacks, and flush handling in
+  `src/intelligence_collector/observability/tracing.py`, `src/intelligence_collector/models/router.py`,
+  and `src/intelligence_collector/graph/build.py` (FR-038).
+- [X] T098 [US1] Wire required tracing around every Streamlit research submission in
+  `src/intelligence_collector/app.py`; completion means missing configuration fails before model use
+  and every result/error flushes one correlated trace (FR-038).
+- [X] T099 [P] [US1] Add credential-free hierarchy, correlation, callback, flush, failure, and secret
+  redaction tests in `tests/contract/test_observability_contract.py` and
+  `tests/integration/test_langfuse_tracing.py` (FR-038).
+- [X] T100 Update `docs/deep-research-runbook.md`, run offline pytest/Ruff/diff validation, and mark
+  Phase 16 complete in `specs/001-verified-research-report/tasks.md`.

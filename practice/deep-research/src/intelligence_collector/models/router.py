@@ -10,61 +10,139 @@ from langchain_core.messages import BaseMessage
 class FallbackEvent:
     role: str
     reason: str
+    selected_model: str = ""
 
 T = TypeVar("T", bound=BaseModel)
 
 
 class ModelRouter:
-    def __init__(self, primary=None, fallback=None, *, max_attempts: int = 2, on_fallback=None, mode: str = "live", trace=None):
+    def __init__(self, primary=None, fallback=None, *, max_attempts: int = 2, on_fallback=None, mode: str = "live", trace=None, callbacks=None):
         self.primary, self.fallback = primary, fallback
         self.max_attempts = max_attempts
         self.on_fallback = on_fallback
         self.events: list[FallbackEvent] = []
         self.mode = mode
         self.trace = trace
+        self.callbacks = list(callbacks or [])
+        self.last_model = ""
+        self.fallback_used = False
 
-    def invoke(self, role, prompt):
+    @staticmethod
+    def _model_name(model) -> str:
+        if model is None:
+            return ""
+        return str(getattr(model, "model_name", None) or getattr(model, "model", None) or type(model).__name__)
+
+    @staticmethod
+    def _invoke_model(model, role: str, prompt, config=None):
+        if hasattr(model, "invoke"):
+            return model.invoke(prompt, config=config) if config else model.invoke(prompt)
+        if callable(model):
+            return model(role, prompt)
+        raise TypeError("configured model must be callable or expose invoke()")
+
+    def _trace(self, **event):
+        if not self.trace:
+            return
+        try:
+            self.trace(**event)
+        except TypeError:
+            # Preserve compatibility with simple test tracers while keeping rich metadata
+            # for the production tracing adapter.
+            self.trace(event)
+
+    def _parse(self, role: str, raw, schema: type[T]) -> T:
+        if hasattr(raw, "content"):
+            raw = raw.content
+        if isinstance(raw, schema):
+            return raw
+        if isinstance(raw, dict):
+            return schema.model_validate(raw)
+        if isinstance(raw, str):
+            return schema.model_validate(json.loads(raw))
+        raise TypeError(f"model output for {role} is not structured")
+
+    def invoke(self, role, prompt, *, run_id="", thread_id="", prompt_version=""):
         if self.mode == "live" and self.primary is None:
             raise RuntimeError("live model router requires a configured primary model")
         if self.mode == "fake" and self.primary is None:
             raise RuntimeError("fake model router requires an explicit fake model")
+        self.fallback_used = False
+        config = None
+        if self.callbacks:
+            config = {
+                "callbacks": self.callbacks,
+                "run_name": f"model.{role}",
+                "metadata": {
+                    "langfuse_session_id": thread_id,
+                    "run_id": run_id,
+                    "thread_id": thread_id,
+                    "prompt_version": prompt_version,
+                    "role": role,
+                },
+            }
         try:
-            return self.primary(role, prompt)
+            self.last_model = self._model_name(self.primary)
+            return self._invoke_model(self.primary, role, prompt, config)
         except Exception as exc:
             if self.max_attempts < 2:
                 raise
-            event = FallbackEvent(role=role, reason=str(exc))
+            if self.fallback is None:
+                raise RuntimeError(f"primary model failed for {role} and no fallback is configured") from exc
+            self.fallback_used = True
+            self.last_model = self._model_name(self.fallback)
+            event = FallbackEvent(role=role, reason=str(exc), selected_model=self.last_model)
             self.events.append(event)
             if self.on_fallback:
                 self.on_fallback(event)
-            return self.fallback(role, prompt)
+            return self._invoke_model(self.fallback, role, prompt, config)
 
     def invoke_structured(self, role: str, prompt: str, schema: type[T], *, prompt_version: str, run_id: str = "", thread_id: str = "") -> T:
-        raw = self.invoke(role, prompt)
-        if isinstance(raw, schema):
-            result = raw
-        elif isinstance(raw, dict):
-            result = schema.model_validate(raw)
-        elif isinstance(raw, str):
-            result = schema.model_validate(json.loads(raw))
-        else:
-            raise TypeError(f"model output for {role} is not structured")
-        if self.trace:
-            self.trace(role=role, prompt_version=prompt_version, run_id=run_id, thread_id=thread_id, decision=result.model_dump(mode="json"))
-        return result
+        return self._invoke_and_parse(role, prompt, schema, prompt_version, run_id, thread_id)
 
     def invoke_messages(self, role: str, messages: list[BaseMessage], schema: type[T], *, prompt_version: str, run_id: str = "", thread_id: str = "") -> T:
-        raw = self.invoke(role, messages)
-        if hasattr(raw, "content"):
-            raw = raw.content
-        if isinstance(raw, schema):
-            result = raw
-        elif isinstance(raw, dict):
-            result = schema.model_validate(raw)
-        elif isinstance(raw, str):
-            result = schema.model_validate(json.loads(raw))
-        else:
-            raise TypeError(f"model output for {role} is not structured")
-        if self.trace:
-            self.trace(role=role, prompt_version=prompt_version, run_id=run_id, thread_id=thread_id, decision=result.model_dump(mode="json"))
-        return result
+        return self._invoke_and_parse(role, messages, schema, prompt_version, run_id, thread_id, len(messages))
+
+    def _invoke_and_parse(self, role, prompt, schema, prompt_version, run_id, thread_id, message_count=None):
+        errors = []
+        attempts = max(1, self.max_attempts)
+        for attempt in range(1, attempts + 1):
+            try:
+                result = self._parse(
+                    role,
+                    self.invoke(
+                        role,
+                        prompt,
+                        run_id=run_id,
+                        thread_id=thread_id,
+                        prompt_version=prompt_version,
+                    ),
+                    schema,
+                )
+                event = {
+                    "role": role,
+                    "prompt_version": prompt_version,
+                    "run_id": run_id,
+                    "thread_id": thread_id,
+                    "decision": result.model_dump(mode="json"),
+                    "selected_model": self.last_model,
+                    "fallback_used": self.fallback_used,
+                    "attempt": attempt,
+                }
+                if message_count is not None:
+                    event["message_count"] = message_count
+                self._trace(**event)
+                return result
+            except Exception as exc:
+                errors.append(str(exc))
+                self._trace(
+                    role=role,
+                    prompt_version=prompt_version,
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    selected_model=self.last_model,
+                    fallback_used=self.fallback_used,
+                    attempt=attempt,
+                    validation_error=f"{type(exc).__name__}: invalid structured output",
+                )
+        raise ValueError(f"invalid structured output for {role} after {attempts} attempts: {'; '.join(errors)}")

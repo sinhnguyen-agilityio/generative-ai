@@ -6,7 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 try:
-    from pydantic import BaseModel, ConfigDict, Field
+    from pydantic import BaseModel, ConfigDict, Field, model_validator
 except ImportError:  # pragma: no cover
     BaseModel = object  # type: ignore
     ConfigDict = dict  # type: ignore
@@ -73,9 +73,43 @@ class ScopeAssessment(Model):
     deliverable_format: str = ""
     missing_fields: list[str] = Field(default_factory=list)
     clarification_question: str | None = None
+    verification: str = ""
     narrowing_suggestions: list[str] = Field(default_factory=list)
     question_class: str = "technical_research"
     reason: str = ""
+
+    @model_validator(mode="after")
+    def validate_decision(self):
+        if self.decision == ScopeDecision.NEEDS_CLARIFICATION:
+            if not self.clarification_question or not self.clarification_question.strip():
+                raise ValueError("clarification requires exactly one non-empty question")
+            if self.verification.strip():
+                raise ValueError("clarification cannot contain a verification message")
+        elif self.decision == ScopeDecision.SCOPE_CLEAR:
+            values = (
+                self.objective,
+                self.research_boundaries,
+                self.constraints,
+                self.success_criteria,
+                self.deliverable_format,
+            )
+            if any(not value.strip() for value in values):
+                raise ValueError("clear scope requires every scope field")
+            if self.clarification_question:
+                raise ValueError("clear scope cannot contain a clarification question")
+            if not self.verification.strip():
+                raise ValueError("clear scope requires a non-empty verification message")
+        return self
+
+
+class ResearchBrief(Model):
+    research_question: str = Field(min_length=20)
+
+    @model_validator(mode="after")
+    def reject_blank_fields(self):
+        if not self.research_question.strip():
+            raise ValueError("research brief question must not be blank")
+        return self
 
 
 class ResearchTodo(Model):

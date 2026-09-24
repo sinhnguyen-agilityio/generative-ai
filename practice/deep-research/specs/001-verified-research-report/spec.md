@@ -112,8 +112,9 @@ the required scope fields are clear.
    **Then** the clear decision is recorded and the run automatically advances to
    `write_research_brief` and then Planning without brief approval.
 4. **Given** a clear scope decision, **When** `write_research_brief` runs, **Then** it makes a
-   separate structured LLM call and produces a brief containing the objective, constraints, success
-   criteria, research boundaries, and deliverable format before the Planning transition.
+   separate structured LLM call and produces one detailed research question that consolidates the
+   objective, constraints, success criteria, research boundaries, and deliverable format before the
+   Planning transition.
 5. **Given** malformed, empty, or unsafe input, **When** it is submitted, **Then** the input is
    rejected with an actionable error and no durable run state or external research is initiated.
 6. **Given** a request whose objective is understandable but whose research scope is too broad,
@@ -331,6 +332,16 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   question or emits a clear decision; then `write_research_brief` performs a separate structured LLM
   call to create the brief. The graph MUST invoke `write_research_brief` only after a clear decision
   and MUST transition to Planning automatically after the brief is recorded.
+- **FR-033b**: `write_research_brief` MUST return a dedicated validated `ResearchBrief` containing
+  exactly one non-empty, detailed research question. The question MUST consolidate the objective,
+  boundaries, explicitly stated constraints, success criteria, and deliverable format from the
+  conversation without inferring or inventing user preferences or constraints.
+- **FR-033c**: A clarification graph invocation MUST append exactly one assistant question and end.
+  A clear decision MUST append exactly one concise assistant verification message that acknowledges
+  sufficient information, summarizes the understood request, and confirms research will begin. The
+  graph MUST then route automatically to brief generation without asking the user to approve it.
+  Assistant verification is explanatory context and MUST NOT become authoritative evidence of a
+  user preference or constraint unless that information also appears in a user message.
 - **FR-034**: All LLM-powered roles MUST use LangChain chat models initialized through
   `langchain.chat_models.init_chat_model` via the central model factory/router. LangGraph remains the
   workflow orchestrator; the Deep Agents SDK is prohibited.
@@ -340,6 +351,17 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-036**: Every model output that can change workflow state MUST be parsed into its Pydantic schema
   before routing. Invalid output MUST produce a recorded error or bounded retry and MUST NOT silently
   become `SCOPE_CLEAR` or `VERIFIED`.
+- **FR-037**: The Planning node MUST consume the validated `ResearchBrief`, create at least one
+  planned research todo, and successfully persist it through `write_todos` before any edge can enter
+  Researching or invoke external retrieval. Brief or todo persistence failure MUST end the current
+  invocation visibly without enabling retrieval.
+- **FR-038**: Every live workflow execution MUST emit one complete Langfuse trace before it may be
+  treated as successfully observed. Each execution trace MUST be grouped under the LangGraph
+  `thread_id`, correlated with `run_id`, and contain a root execution observation, child graph-node
+  spans, and nested LangChain model-generation observations including model identity, prompt version,
+  attempts, fallback status, validated result or safe error metadata, and final stage. Missing or
+  invalid tracing configuration MUST fail a live execution before any model call. Credentials and
+  secret values MUST never appear in trace inputs, outputs, metadata, errors, or logs.
 
 ### Key Entities *(include if feature involves data)*
 
