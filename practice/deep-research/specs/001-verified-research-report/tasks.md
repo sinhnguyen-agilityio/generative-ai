@@ -91,9 +91,9 @@ references. Tests are included because the specification and request explicitly 
 
 **Independent Test**: `tests/integration/test_resume.py` interrupts at each major stage, reloads the same thread, and asserts valid checkpoint restoration, intact artifacts, and no duplicate completed MCP calls (US4; FR-021–FR-022, SC-007).
 
-- [ ] T038 [P] [US4] Add interruption/resume integration tests in `tests/integration/test_resume.py`; completion means Scope, Planning, Researching, Synthesis, and Verifying interruption points restore expected state and invalid checkpoints produce the documented recoverable error or `NEEDS_REVIEW` (US4 scenarios 1–3).
+- [X] T038 [P] [US4] Add interruption/resume integration tests in `tests/integration/test_resume.py`; completion means Scope, Planning, Researching, Synthesis, and Verifying interruption points restore expected state and invalid checkpoints produce the documented recoverable error or `NEEDS_REVIEW` (US4 scenarios 1–3).
 - [ ] T039 [US4] Integrate checkpoint save/load boundaries into every graph node in `src/intelligence_collector/graph/build.py` and `src/intelligence_collector/storage/checkpoints.py`; completion means state includes scope, todos, artifacts, assessments, drafts, verification history, counters, and publication state (FR-021).
-- [ ] T040 [US4] Add idempotent task/artifact resume guards in `src/intelligence_collector/agents/worker.py` and `src/intelligence_collector/storage/artifacts.py`; completion means completed retrieval is skipped unless incomplete, invalidated, or explicitly repaired (FR-022, SC-007).
+- [X] T040 [US4] Add idempotent task/artifact resume guards in `src/intelligence_collector/agents/worker.py` and `src/intelligence_collector/storage/artifacts.py`; completion means completed retrieval is skipped unless incomplete, invalidated, or explicitly repaired (FR-022, SC-007).
 
 ## Phase 7: User Story 5 - Control Publication (Priority: P2)
 

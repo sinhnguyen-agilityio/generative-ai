@@ -6,6 +6,13 @@ class ControlledMCP:
         self.calls += 1
         return self.sources
 def run_worker(vfs, index, run_id, todo: ResearchTodo, mcp: ControlledMCP):
+    existing = f"research/{todo.todo_id}/evidence/result.json"
+    try:
+        vfs.read(run_id, existing)
+        todo.status = TodoStatus.COMPLETED
+        return todo, [], []
+    except FileNotFoundError:
+        pass
     result = mcp.search(todo.research_question)
     if not result: raise RuntimeError("MCP returned no sources")
     chunks=[]; refs=[]

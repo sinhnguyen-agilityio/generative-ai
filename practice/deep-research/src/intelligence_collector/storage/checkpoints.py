@@ -19,6 +19,12 @@ class Checkpoints:
         finally:
             if os.path.exists(temporary): os.unlink(temporary)
     def load(self, thread_id: str) -> dict[str, Any] | None: return self.load_all().get(thread_id)
+    def save_state(self, state) -> None:
+        payload = state.model_dump(mode="json") if hasattr(state, "model_dump") else state
+        self.save(state.thread_id, payload)
+    def load_state(self, thread_id: str, model=None):
+        payload = self.load(thread_id)
+        return model.model_validate(payload) if payload and model else payload
     def load_all(self) -> dict[str, Any]:
         if not self.path.exists(): return {}
         try:
