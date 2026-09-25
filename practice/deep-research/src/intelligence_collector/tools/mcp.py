@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Protocol
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import anyio
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+
+
+def redact_mcp_error(exc: BaseException) -> str:
+    """Describe an MCP failure without leaking the Tavily key embedded in the endpoint URL."""
+    message = re.sub(r"(?i)(tavilyApiKey=)[^&\s'\"]+", r"\1[REDACTED]", str(exc))
+    return f"{type(exc).__name__}: {message}"
 
 
 class MCPResearchPort(Protocol):
@@ -115,7 +122,6 @@ class TavilyMCP:
                 "content": str(content),
                 "title": str(row.get("title", "")),
                 "score": row.get("score"),
-                "sufficient": True,
             })
         return normalized
 

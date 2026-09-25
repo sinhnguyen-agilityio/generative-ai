@@ -116,11 +116,17 @@ alternatives that would violate the constitution or clarified specification.
    research question into 1–5 standalone, non-overlapping research questions (`TodoPlan.questions`).
    The system turns each question into a `planned` todo and persists the list via `write_todos`.
    A non-empty, valid, durably stored todo list is required before any Research/retrieval edge.
-5. The Supervisor assigns isolated workers. Each worker uses MCP only, starts broad, assesses gaps
-   after each call, narrows as needed, and stops early or at the five-call hard limit. Raw source
-   captures, excerpts, notes, evidence bundles, and vector-index records are written to the VFS.
-6. `think_tool` creates a progress assessment. The Supervisor may issue `ResearchComplete` only if
-   every todo is completed and all VFS/index prerequisites are present. This ends Research only.
+5. The Research Supervisor delegates each planned todo to its own research sub-agent, running up to
+   `INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS` (default 3) in parallel. Each sub-agent gets a fresh
+   Tavily MCP client and runs the loop `llm_call` → (`tool_node` → `llm_call`)* →
+   `compress_research`: the LLM (`researcher.v1`) starts broad, assesses gaps after each
+   `tavily_search` result, narrows as needed, and stops with a final note or at the per-task
+   five-call hard limit; compression (`research-compress.v1`) returns cited `ResearchFindings`.
+   After all sub-agents return, the Supervisor writes raw source captures, notes (with findings),
+   excerpts, evidence bundles, and vector-index records to the VFS in plan order.
+6. `think_tool` creates a progress assessment with explicit blockers. The Supervisor may issue
+   `ResearchComplete` only if every todo is completed and all VFS/index prerequisites are present.
+   This ends Research only.
 7. Synthesis retrieves indexed chunks and evidence bundles, writes previous and latest draft
    artifacts, and emits a versioned candidate report.
 8. Verification returns pass or one typed issue: `DRAFT_DEFECT`, `EVIDENCE_GAP`, or `PLAN_GAP`.
@@ -141,8 +147,9 @@ alternatives that would violate the constitution or clarified specification.
 | Input Validator + Guardrail | Validate shape/size and reject prompt injection or disallowed offensive/violent requests | Returns typed `GuardrailDecision`; rejection has no state mutation | Scope entry edge, audit event |
 | Scope Agent | `clarify_with_user` evaluates actual message history; `write_research_brief` creates a dedicated validated `ResearchBrief` after a clear decision | One-question clarification or complete brief; model/validation/persistence failure cannot become clear | LangChain chat model/router, LangGraph thread state, checkpoint, brief VFS artifact |
 | Planner Agent + `write_todos` | `PlannerAgent.define_questions` turns the `ResearchBrief` into a list of research questions; `PlannerAgent.write_todos` converts them to `planned` todos and persists them | `TodoPlan` (questions only, 1–5, non-blank, unique); invalid output or failed write blocks Research | Model router (`planner` role), VFS, graph state |
-| Research Supervisor | Assign workers, aggregate outcomes, use `think_tool`, assess readiness | `ProgressAssessment`; cannot ResearchComplete until all todos complete and artifacts indexed | Worker pool, VFS, vector store |
-| MCP Research Worker | Search external sources, capture provenance, create evidence | Per-task search budget; MCP failures are task outcomes; isolated context | MCP clients, VFS, vector store, model router |
+| Research Supervisor (`agents/supervisor.py`) | Delegate one sub-agent per todo (bounded thread pool), persist outcomes in plan order, use `think_tool`, assess readiness | `ProgressAssessment` with blockers; a failing sub-agent becomes a FAILED task outcome, never cancels siblings; cannot ResearchComplete until all todos complete and artifacts indexed | `ResearchAgent`, VFS, vector store |
+| Research Sub-agent (`agents/researcher.py`) | LangGraph loop: LLM decision → `tavily_search` tool execution → routing → research compression | Fresh MCP client and hard per-task budget (≤5); MCP failures become tool/task outcomes with redacted errors; `ResearchFindings` validated | Model router (`researcher`, `research_compressor` roles, tool calling), Tavily MCP |
+| Research persistence (`agents/worker.py`) | Turn a `ResearchOutcome` into raw captures, notes, excerpts, evidence bundle, and index chunks; idempotent resume guard | COMPLETED with sources + findings (gaps recorded); FAILED writes `outcome.json` | VFS, vector store |
 | VFS Artifact Store | Atomic run-scoped files and immutable versions | Reject path escape/cross-run writes; partial writes are invisible | All nodes, checkpoint metadata |
 | Vector Index | Chunk/index raw source captures and retrieve synthesis context | Index failures block ResearchComplete; retrieval records source IDs | Worker, synthesis, verifier |
 | Synthesizer | Draft report from indexed evidence and scope | Missing evidence is a draft/verification issue, not invented content | Model router, VFS, vector store |
@@ -168,8 +175,9 @@ src/intelligence_collector/
 ├── agents/
 │   ├── scope.py
 │   ├── planner.py
-│   ├── supervisor.py
-│   ├── worker.py
+│   ├── supervisor.py       # ResearchSupervisor: delegation + ResearchComplete gate
+│   ├── researcher.py       # ResearchAgent sub-agent (LLM ↔ tavily_search loop + compression)
+│   ├── worker.py           # persist a sub-agent outcome to VFS + vector index
 │   ├── synthesis.py
 │   └── verification.py
 ├── tools/
@@ -205,7 +213,8 @@ tested independently and no UI path can bypass workflow gates.
 - `graph/nodes.py` owns the `Node` name constants (single source for wiring, `app.py` activity
   labels, and `graph.<node>` trace spans) and all node logic. Collaborator-dependent nodes are
   grouped into injected classes: `ScopeNodes(scope_agent, vfs)`, `PlannerNodes(planner_agent, vfs)`,
-  and `ResearchNodes(vfs, index, mcp)`. `build_graph(planner_agent=...)` defaults to a
+  and `ResearchNodes(vfs, index, researcher, max_concurrent_researchers=3)`, which owns a
+  `ResearchSupervisor`. `build_graph(planner_agent=...)` defaults to a
   `PlannerAgent` sharing the scope agent's model router.
 - `graph/routing.py` holds named routers for every conditional edge: `route_after_clarify`
   (END when clarification is needed, else `write_research_brief`) and `route_after_verify`

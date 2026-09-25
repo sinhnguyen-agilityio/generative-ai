@@ -26,7 +26,7 @@ def test_tavily_adapter_normalizes_results_without_exposing_key(monkeypatch):
     results = adapter.search("Python 3.13 release")
 
     assert results[0]["url"].startswith("https://docs.python.org/")
-    assert results[0]["sufficient"] is True
+    assert "sufficient" not in results[0]  # sufficiency is the research agent's LLM decision
     assert adapter.requests == [{
         "query": "Python 3.13 release",
         "server": "tavily",

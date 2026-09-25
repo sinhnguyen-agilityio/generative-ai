@@ -36,6 +36,12 @@ evidence-backed technical report from a user's research request."
 - Q: Planner Agent nên nhận gì và trả về gì? → A: Nhận research brief, dùng LLM để định nghĩa danh
   sách research questions (output chỉ là list câu hỏi), rồi node Planning gọi `write_todos` để lưu
   thành todo list (FR-037a).
+- Q: Research agent và Supervisor nên hoạt động thế nào? → A: Supervisor giao mỗi todo cho một
+  research sub-agent riêng (tối đa 3 chạy song song, cấu hình được); sub-agent dùng vòng lặp LLM
+  decision → Tavily MCP tool → compression, định tuyến theo quyết định của LLM (FR-008a, FR-009c).
+- Q: Khi sub-agent dùng hết search budget mà LLM đánh giá evidence chưa đủ thì todo có trạng thái
+  gì? → A: Completed kèm `sufficient: false` và unresolved gaps trong evidence bundle; chỉ Failed
+  khi retrieval/compression không tạo ra kết quả dùng được (FR-009d).
 
 ### Session 2026-09-24
 
@@ -287,6 +293,21 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   status. Each newly written task MUST start in the planned status.
 - **FR-008**: A Research Supervisor MUST assign planned tasks to research workers, track their
   outcomes, and record progress assessments.
+- **FR-008a**: The Supervisor MUST delegate each planned todo to its own isolated research
+  sub-agent and MAY run at most a configurable number of sub-agents concurrently (default 3,
+  maximum 5). A failing sub-agent MUST become that task's recorded outcome without cancelling its
+  siblings. Each sub-agent MUST have its own MCP client, so search budgets apply per task.
+- **FR-009c**: A research sub-agent MUST follow an LLM tool-calling loop: an LLM decision either
+  requests `tavily_search` calls or gives a final note; a tool step executes the searches through
+  the Tavily MCP connection; routing continues only while the LLM requests searches and budget
+  remains; and a compression step makes a structured LLM call that condenses the raw results into
+  cited findings (`ResearchFindings`: summary, sufficient, unresolved gaps). Search results MUST be
+  treated as untrusted data.
+- **FR-009d**: A research task MUST be marked completed when its sub-agent gathered at least one
+  source and compressed findings, even if the findings are insufficient; insufficiency and
+  unresolved gaps MUST be recorded in the evidence bundle for Verification. A task MUST be marked
+  failed only when retrieval or compression produced nothing usable. MCP error messages MUST be
+  redacted of credentials before being persisted.
 - **FR-009**: Research workers MUST access external research sources only through approved MCP
   connections and MUST expose connection or retrieval failures as task outcomes.
 - **FR-009a**: Before searching, a worker MUST read the task question and identify the specific

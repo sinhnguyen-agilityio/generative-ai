@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from intelligence_collector.agents.supervisor import assess
+from intelligence_collector.agents.supervisor import (
+    DEFAULT_MAX_CONCURRENT_RESEARCHERS,
+    ResearchSupervisor,
+)
 from intelligence_collector.agents.synthesis import synthesize
 from intelligence_collector.agents.verification import verify
-from intelligence_collector.agents.worker import run_worker
 from intelligence_collector.contracts import (
     ResearchBrief,
     ResearchTodo,
@@ -145,27 +147,36 @@ class PlannerNodes:
 class ResearchNodes:
     """Concrete, dependency-injected nodes for the post-Planning workflow."""
 
-    def __init__(self, vfs, index, mcp):
+    def __init__(
+        self,
+        vfs,
+        index,
+        researcher,
+        *,
+        max_concurrent_researchers: int = DEFAULT_MAX_CONCURRENT_RESEARCHERS,
+    ):
         self.vfs = vfs
         self.index = index
-        self.mcp = mcp
+        self.supervisor = ResearchSupervisor(
+            researcher,
+            vfs,
+            index,
+            max_concurrent_researchers=max_concurrent_researchers,
+        )
 
     def researching(self, state):
+        """Supervisor delegates each planned question to its own research sub-agent."""
         todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
         if not todos:
             raise ValueError("Research requires a persisted non-empty todo plan")
+        results = self.supervisor.delegate(
+            state["run_id"], todos, thread_id=state.get("thread_id", "")
+        )
         artifacts = list(state.get("artifacts", []))
         evidence = list(state.get("evidence", []))
         index_refs = list(state.get("index_refs", []))
         completed = []
-        for todo in todos:
-            todo, refs, chunks = run_worker(
-                self.vfs,
-                self.index,
-                state["run_id"],
-                todo,
-                self.mcp,
-            )
+        for todo, refs, chunks in results:
             completed.append(todo.model_dump(mode="json"))
             artifacts.extend(ref.model_dump(mode="json") for ref in refs)
             evidence.extend(
@@ -174,11 +185,12 @@ class ResearchNodes:
                 if ref.kind == "evidence_bundle"
             )
             index_refs.extend(chunk.chunk_id for chunk in chunks)
+        done = sum(todo["status"] == "completed" for todo in completed)
         return {
             **state,
             "stage": Stage.RESEARCHING.value,
-            "current_action": "Research tasks completed",
-            "activity": _activity(state, "Calling MCP research tools"),
+            "current_action": f"Research sub-agents finished {done}/{len(completed)} tasks",
+            "activity": _activity(state, "Delegating research to sub-agents"),
             "todos": completed,
             "todo_ids": [todo["todo_id"] for todo in completed],
             "artifacts": artifacts,
@@ -188,7 +200,7 @@ class ResearchNodes:
 
     def research_complete(self, state):
         todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
-        assessment = assess(
+        assessment = self.supervisor.assess(
             todos,
             state.get("artifacts", []),
             state.get("index_refs", []),
@@ -200,7 +212,10 @@ class ResearchNodes:
             "progress_assessment",
         )
         if not assessment.ready_for_synthesis:
-            raise RuntimeError("ResearchComplete denied: " + assessment.next_action)
+            raise RuntimeError(
+                "ResearchComplete denied: "
+                + ("; ".join(assessment.blockers) or assessment.next_action)
+            )
         return {
             **state,
             "stage": Stage.SYNTHESIZING.value,

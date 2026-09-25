@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 MAX_SEARCH_CALLS = 5
 MAX_RECOVERY_ATTEMPTS = 10
+MAX_CONCURRENT_RESEARCHERS = 5
 
 
 def _bounded_int(name: str, default: int, maximum: int) -> int:
@@ -35,6 +36,7 @@ class Settings:
     vector_path: str = ".data/vector-index.json"
     output_dir: str = "exports"
     max_search_calls: int = 5
+    max_concurrent_researchers: int = 3
     recovery_attempts: int = 3
 
     @classmethod
@@ -45,6 +47,9 @@ class Settings:
             vector_path=os.getenv("INTELLIGENCE_VECTOR_PATH", cls.vector_path),
             output_dir=os.getenv("INTELLIGENCE_OUTPUT_DIR", cls.output_dir),
             max_search_calls=_bounded_int("INTELLIGENCE_MAX_SEARCH_CALLS", 5, MAX_SEARCH_CALLS),
+            max_concurrent_researchers=_bounded_int(
+                "INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS", 3, MAX_CONCURRENT_RESEARCHERS
+            ),
             recovery_attempts=_bounded_int(
                 "INTELLIGENCE_RECOVERY_ATTEMPTS", 3, MAX_RECOVERY_ATTEMPTS
             ),

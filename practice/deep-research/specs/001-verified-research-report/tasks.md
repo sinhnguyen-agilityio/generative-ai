@@ -362,3 +362,21 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   `model.validation.planner` event, covered in `tests/integration/test_langchain_scope.py`,
   `tests/integration/test_langfuse_tracing.py`, and
   `tests/contract/test_semantic_decision_contracts.py` (FR-006, FR-031, FR-037, FR-037a).
+- [X] T110 [US1] Refactor research into an LLM tool-calling sub-agent and a delegating Supervisor:
+  add `ResearchAgent` (LangGraph `llm_call` → `tool_node` → `compress_research` with
+  `route_after_llm`, `tavily_search` tool, `researcher.v1`/`research-compress.v1` prompts, fresh MCP
+  client and hard per-task budget per sub-agent) in `src/intelligence_collector/agents/researcher.py`;
+  add `ResearchFindings` in `src/intelligence_collector/contracts.py`; add
+  `ModelRouter.invoke_with_tools` with thread-local call metadata in
+  `src/intelligence_collector/models/router.py`; replace the rule-based search loop with
+  `persist_research`/`run_worker(…, researcher)` in `src/intelligence_collector/agents/worker.py`; add
+  `ResearchSupervisor` (bounded parallel delegation, plan-order persistence, sibling-safe failures)
+  in `src/intelligence_collector/agents/supervisor.py`; add `think_tool` blockers; remove the
+  hard-coded Tavily `sufficient` flag and redact MCP errors in
+  `src/intelligence_collector/tools/mcp.py`; add `INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS` in
+  `src/intelligence_collector/config.py`; wire `ResearchNodes(vfs, index, researcher)` in
+  `src/intelligence_collector/graph/nodes.py` and `src/intelligence_collector/app.py`. Completion
+  means per-task budgets no longer share one global MCP counter, insufficient findings complete the
+  task with recorded gaps, and `tests/integration/test_worker_mcp.py` covers broad→narrow search,
+  early stop, hard budget, redacted MCP failure, parallel delegation, and sibling-safe failure
+  (FR-008, FR-008a, FR-009–FR-009d, FR-010, FR-010a, FR-011, FR-031).

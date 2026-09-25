@@ -3,11 +3,13 @@ import json
 from langchain_core.messages import AIMessage
 
 from intelligence_collector.agents.scope import ScopeAgent
-from intelligence_collector.agents.worker import ControlledMCP
+from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.storage.vfs import VFS
+from intelligence_collector.tools.mcp import ControlledMCP
+from tests.fixtures.fake_models import FakeResearchModel
 
 
 class SequencedModel:
@@ -39,12 +41,12 @@ def test_full_graph_executes_guarded_research_to_approval_ready(stores):
     mcp = ControlledMCP([{
         "url": "https://controlled.test/cache",
         "content": "A cache stores reusable data for later access.",
-        "sufficient": True,
     }])
+    researcher = ResearchAgent(ModelRouter(FakeResearchModel(), mode="fake"), lambda: mcp)
     graph = build_graph(
         scope_agent=ScopeAgent(ModelRouter(model, mode="fake")),
         vfs=vfs,
-        research_nodes=ResearchNodes(vfs, index, mcp),
+        research_nodes=ResearchNodes(vfs, index, researcher),
     )
 
     result = graph.invoke({
@@ -59,5 +61,6 @@ def test_full_graph_executes_guarded_research_to_approval_ready(stores):
     assert result["todos"][0]["status"] == "completed"
     assert result["evidence"] and result["index_refs"]
     assert vfs.read("full-graph", "planning/todos.v1.json")
+    assert mcp.requests[0]["query"] == "How does a local software cache store and reuse data?"
     assert vfs.read("full-graph", "supervisor/progress/latest.json")
     assert vfs.read("full-graph", "reports/latest.md")

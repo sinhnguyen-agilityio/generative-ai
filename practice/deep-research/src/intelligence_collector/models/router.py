@@ -1,10 +1,11 @@
 from dataclasses import dataclass
 import json
 import re
+import threading
 from typing import TypeVar
 
 from pydantic import BaseModel
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage
 
 
 @dataclass(frozen=True)
@@ -52,13 +53,36 @@ class ModelRouter:
         self.mode = mode
         self.trace = trace
         self.callbacks = list(callbacks or [])
-        self.last_model = ""
-        self.fallback_used = False
+        # Per-thread call metadata: parallel research sub-agents share one router.
+        self._local = threading.local()
+
+    @property
+    def last_model(self) -> str:
+        return getattr(self._local, "last_model", "")
+
+    @last_model.setter
+    def last_model(self, value: str) -> None:
+        self._local.last_model = value
+
+    @property
+    def fallback_used(self) -> bool:
+        return getattr(self._local, "fallback_used", False)
+
+    @fallback_used.setter
+    def fallback_used(self, value: bool) -> None:
+        self._local.fallback_used = value
+
+    @staticmethod
+    def _bind_tools(model, tools):
+        if model is None or not hasattr(model, "bind_tools"):
+            return model
+        return model.bind_tools(tools)
 
     @staticmethod
     def _model_name(model) -> str:
         if model is None:
             return ""
+        model = getattr(model, "bound", model)  # unwrap bind_tools() bindings
         return str(getattr(model, "model_name", None) or getattr(model, "model", None) or type(model).__name__)
 
     @staticmethod
@@ -112,9 +136,63 @@ class ModelRouter:
         return _redact_text(value)
 
     def invoke(self, role, prompt, *, run_id="", thread_id="", prompt_version=""):
-        if self.mode == "live" and self.primary is None:
+        return self._invoke_with(
+            self.primary,
+            self.fallback,
+            role,
+            prompt,
+            run_id=run_id,
+            thread_id=thread_id,
+            prompt_version=prompt_version,
+        )
+
+    def invoke_with_tools(
+        self,
+        role: str,
+        messages: list[BaseMessage],
+        tools: list,
+        *,
+        prompt_version: str,
+        run_id: str = "",
+        thread_id: str = "",
+    ) -> AIMessage:
+        """Tool-calling decision: the returned AIMessage carries a final answer or tool calls."""
+        raw = self._invoke_with(
+            self._bind_tools(self.primary, tools),
+            self._bind_tools(self.fallback, tools),
+            role,
+            messages,
+            run_id=run_id,
+            thread_id=thread_id,
+            prompt_version=prompt_version,
+        )
+        if not isinstance(raw, AIMessage):
+            raise TypeError(f"tool-calling model output for {role} must be an AIMessage")
+        decision = {
+            "content": raw.content,
+            "tool_calls": [
+                {"name": call["name"], "args": call["args"]} for call in raw.tool_calls
+            ],
+        }
+        self._trace(
+            role=role,
+            prompt_version=prompt_version,
+            run_id=run_id,
+            thread_id=thread_id,
+            decision=_redact_value(decision),
+            selected_model=self.last_model,
+            fallback_used=self.fallback_used,
+            attempt=1,
+            input_text=self._prompt_text(messages),
+            output_text=self._output_text(decision),
+            message_count=len(messages),
+        )
+        return raw
+
+    def _invoke_with(self, primary, fallback, role, prompt, *, run_id="", thread_id="", prompt_version=""):
+        if self.mode == "live" and primary is None:
             raise RuntimeError("live model router requires a configured primary model")
-        if self.mode == "fake" and self.primary is None:
+        if self.mode == "fake" and primary is None:
             raise RuntimeError("fake model router requires an explicit fake model")
         self.fallback_used = False
         config = None
@@ -131,15 +209,15 @@ class ModelRouter:
                 },
             }
         try:
-            self.last_model = self._model_name(self.primary)
-            return self._invoke_model(self.primary, role, prompt, config)
+            self.last_model = self._model_name(primary)
+            return self._invoke_model(primary, role, prompt, config)
         except Exception as exc:
             if self.max_attempts < 2:
                 raise
-            if self.fallback is None:
+            if fallback is None:
                 raise RuntimeError(f"primary model failed for {role} and no fallback is configured") from exc
             self.fallback_used = True
-            self.last_model = self._model_name(self.fallback)
+            self.last_model = self._model_name(fallback)
             event = FallbackEvent(
                 role=role,
                 reason=_redact_text(exc),
@@ -148,7 +226,7 @@ class ModelRouter:
             self.events.append(event)
             if self.on_fallback:
                 self.on_fallback(event)
-            return self._invoke_model(self.fallback, role, prompt, config)
+            return self._invoke_model(fallback, role, prompt, config)
 
     def invoke_structured(self, role: str, prompt: str, schema: type[T], *, prompt_version: str, run_id: str = "", thread_id: str = "") -> T:
         return self._invoke_and_parse(role, prompt, schema, prompt_version, run_id, thread_id)

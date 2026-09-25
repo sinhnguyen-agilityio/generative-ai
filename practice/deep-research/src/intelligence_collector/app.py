@@ -5,6 +5,7 @@ import sqlite3
 import time
 from pathlib import Path
 from uuid import uuid4
+from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.scope import ScopeAgent
 from intelligence_collector.config import Settings, load_local_env
 from intelligence_collector.contracts import VerificationResult
@@ -72,14 +73,21 @@ def _get_scope_graph(st, agent, tracer):
     tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
     tavily_url = os.getenv("TAVILY_MCP_URL", "").strip()
     if tavily_key and tavily_url:
-        research_nodes = ResearchNodes(
-            vfs,
-            LocalVectorIndex(settings.vector_path),
-            TavilyMCP(
+        researcher = ResearchAgent(
+            agent.router,
+            # Each research sub-agent gets its own MCP client and per-task search budget.
+            mcp_factory=lambda: TavilyMCP(
                 tavily_url,
                 tavily_key,
                 max_calls=settings.max_search_calls,
             ),
+            max_search_calls=settings.max_search_calls,
+        )
+        research_nodes = ResearchNodes(
+            vfs,
+            LocalVectorIndex(settings.vector_path),
+            researcher,
+            max_concurrent_researchers=settings.max_concurrent_researchers,
         )
     graph = build_graph(
         scope_agent=agent,
@@ -237,8 +245,8 @@ _NODE_ACTIVITY = {
     Node.CLARIFY: ("Evaluating scope", "Scope Agent", None),
     Node.WRITE_BRIEF: ("Generating research brief", "Scope Agent", None),
     Node.PLAN: ("Calling write_todos", "Planner", "write_todos"),
-    Node.RESEARCH: ("Calling research tools", "Research Worker", "MCP search"),
-    Node.ASSESS_RESEARCH: ("Assessing research completeness", "Supervisor", "think_tool"),
+    Node.RESEARCH: ("Delegating research to sub-agents", "Research Supervisor", "tavily_search"),
+    Node.ASSESS_RESEARCH: ("Assessing research completeness", "Research Supervisor", "think_tool"),
     Node.SYNTHESIZE: ("Synthesizing report", "Synthesizer", None),
     Node.VERIFY: ("Verifying report", "Verifier", None),
     Node.APPROVE: ("Waiting for publication decision", "Publisher", None),

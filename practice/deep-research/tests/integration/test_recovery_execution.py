@@ -1,7 +1,11 @@
 from intelligence_collector.agents.recovery import apply_repair, persist_review_artifact
 from intelligence_collector.agents.planner import replan_affected_node
 from intelligence_collector.agents.synthesis import revise_draft_node
-from intelligence_collector.agents.worker import ControlledMCP, targeted_research_node
+from intelligence_collector.agents.researcher import ResearchAgent
+from intelligence_collector.agents.worker import targeted_research_node
+from intelligence_collector.models.router import ModelRouter
+from intelligence_collector.tools.mcp import ControlledMCP
+from tests.fixtures.fake_models import FakeResearchModel
 from intelligence_collector.contracts import (
     IndexedChunk,
     IssueType,
@@ -73,8 +77,9 @@ def test_targeted_gap_research_preserves_prior_evidence(stores):
         verification=failed_verification(),
     )
     mcp = ControlledMCP([{"url": "https://fixture", "content": "target evidence"}])
+    researcher = ResearchAgent(ModelRouter(FakeResearchModel(), mode="fake"), lambda: mcp)
 
-    updated = targeted_research_node(state, vfs, index, "target gap", mcp)
+    updated = targeted_research_node(state, vfs, index, "target gap", researcher)
 
     assert updated.stage == Stage.SYNTHESIZING
     assert updated.verification is None

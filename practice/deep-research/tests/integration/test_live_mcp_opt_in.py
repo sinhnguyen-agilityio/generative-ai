@@ -4,8 +4,11 @@ import os
 import pytest
 from dotenv import load_dotenv
 
+from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.worker import run_worker
 from intelligence_collector.contracts import ResearchTodo, TodoStatus
+from intelligence_collector.models.factory import ModelConfig, ModelFactory
+from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.tools.mcp import TavilyMCP
 
 
@@ -15,27 +18,25 @@ def _live_tavily_configuration():
         pytest.skip("set RUN_LIVE_MCP=1 to run the live Tavily MCP acceptance test")
     endpoint = os.getenv("TAVILY_MCP_URL", "").strip()
     api_key = os.getenv("TAVILY_API_KEY", "").strip()
-    if not endpoint or not api_key:
-        pytest.skip("TAVILY_MCP_URL and TAVILY_API_KEY are required for live MCP")
-    return endpoint, api_key
+    model_name = os.getenv("SCOPE_MODEL", "").strip()
+    if not endpoint or not api_key or not model_name:
+        pytest.skip("TAVILY_MCP_URL, TAVILY_API_KEY, and SCOPE_MODEL are required for live MCP")
+    return endpoint, api_key, model_name
 
 
 def test_live_tavily_mcp_preserves_provenance_artifacts_and_index(stores):
-    endpoint, api_key = _live_tavily_configuration()
+    endpoint, api_key, model_name = _live_tavily_configuration()
     vfs, index = stores
     mcp = TavilyMCP(endpoint, api_key, max_calls=5)
+    model = ModelFactory().create(
+        ModelConfig(model_name, provider=os.getenv("SCOPE_PROVIDER") or None, timeout=45)
+    )
+    researcher = ResearchAgent(ModelRouter(model, mode="live"), lambda: mcp)
     todo = ResearchTodo(
         research_question="What is the official Python 3.13 release date?"
     )
 
-    completed, refs, chunks = run_worker(
-        vfs,
-        index,
-        "live-tavily",
-        todo,
-        mcp,
-        complexity="complex",
-    )
+    completed, refs, chunks = run_worker(vfs, index, "live-tavily", todo, researcher)
 
     assert completed.status == TodoStatus.COMPLETED
     assert 1 <= mcp.calls <= 5

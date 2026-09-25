@@ -1,7 +1,12 @@
+"""Research task execution: run one research sub-agent and persist what it gathered.
+
+The sub-agent (``researcher.py``) only searches and compresses. This module turns its
+``ResearchOutcome`` into durable, run-scoped VFS artifacts and vector-index records.
+"""
+
 from __future__ import annotations
 
-from typing import Any
-
+from intelligence_collector.agents.researcher import ResearchAgent, ResearchOutcome
 from intelligence_collector.contracts import (
     IndexedChunk,
     ResearchGraphState,
@@ -10,31 +15,19 @@ from intelligence_collector.contracts import (
     Stage,
     TodoStatus,
 )
-from intelligence_collector.tools.mcp import ControlledMCP, MCPResearchPort
 
 
-def _remaining_gaps(results: list[dict[str, Any]]) -> list[str]:
-    gaps: list[str] = []
-    for source in results:
-        value = source.get("remaining_gaps", [])
-        gaps.extend([value] if isinstance(value, str) else value)
-    return [str(gap).strip() for gap in gaps if str(gap).strip()]
+def _evidence_path(todo: ResearchTodo) -> str:
+    return f"research/{todo.todo_id}/evidence/result.json"
 
 
-def _sufficient(results: list[dict[str, Any]]) -> bool:
-    if not results:
+def already_researched(vfs, run_id: str, todo: ResearchTodo) -> bool:
+    """Idempotent resume guard: an evidence bundle means the task finished earlier."""
+    try:
+        vfs.read(run_id, _evidence_path(todo))
+    except FileNotFoundError:
         return False
-    explicit = [source.get("sufficient") for source in results if "sufficient" in source]
-    if explicit:
-        return any(explicit)
-    return any(str(source.get("content", "")).strip() for source in results)
-
-
-def _next_query(question: str, results: list[dict[str, Any]], gaps: list[str]) -> str:
-    for source in results:
-        if str(source.get("next_query", "")).strip():
-            return str(source["next_query"]).strip()
-    return f"{question} {'; '.join(gaps)}" if gaps else f"{question} primary source details"
+    return True
 
 
 def _write_failure(vfs, run_id: str, todo: ResearchTodo, message: str):
@@ -47,99 +40,75 @@ def _write_failure(vfs, run_id: str, todo: ResearchTodo, message: str):
     )
 
 
-def run_worker(
-    vfs,
-    index,
-    run_id,
-    todo: ResearchTodo,
-    mcp: MCPResearchPort,
-    *,
-    complexity: str = "simple",
-):
-    existing = f"research/{todo.todo_id}/evidence/result.json"
-    try:
-        vfs.read(run_id, existing)
-        todo.status = TodoStatus.COMPLETED
-        return todo, [], []
-    except FileNotFoundError:
-        pass
-    budget = min(5 if complexity == "complex" else 3, mcp.max_calls, 5)
-    server_name = getattr(mcp, "server_name", "controlled")
-    tool_name = getattr(mcp, "tool_name", "search")
-    query = todo.research_question.strip()
-    collected: list[dict[str, Any]] = []
-    gaps: list[str] = []
-    sufficient = False
-    try:
-        for _ in range(budget):
-            result = mcp.search(query, server=server_name, tool=tool_name)
-            collected.extend({**source, "_query": query} for source in result)
-            gaps = _remaining_gaps(result)
-            sufficient = _sufficient(result)
-            if sufficient:
-                break
-            query = _next_query(todo.research_question, result, gaps)
-    except Exception as exc:
-        todo.status = TodoStatus.FAILED
-        _write_failure(vfs, run_id, todo, f"{type(exc).__name__}: {exc}")
-        raise RuntimeError(f"MCP retrieval failed for task {todo.todo_id}") from exc
+def failed_outcome(todo: ResearchTodo, error: str) -> ResearchOutcome:
+    """Outcome for a sub-agent that crashed before returning (e.g. model unavailable)."""
+    return ResearchOutcome(
+        question=todo.research_question,
+        search_budget=0,
+        mcp_server="",
+        mcp_tool="",
+        errors=[error],
+    )
 
-    unique_sources = []
-    seen = set()
-    for source in collected:
-        identity = (source.get("url"), source.get("content"))
-        if identity not in seen:
-            seen.add(identity)
-            unique_sources.append(source)
-    if not unique_sources:
-        todo.status = TodoStatus.FAILED
-        _write_failure(vfs, run_id, todo, "MCP returned no sources")
-        raise RuntimeError("MCP returned no sources")
 
-    chunks = []
-    refs = []
-    evidence_sources = []
-    for i, source in enumerate(unique_sources):
-        source_payload = {key: value for key, value in source.items() if key != "_query"}
-        src = SourceRecord(
+def persist_research(vfs, index, run_id: str, todo: ResearchTodo, outcome: ResearchOutcome):
+    """Write raw captures, notes, excerpts, and the evidence bundle; index raw content.
+
+    A task is COMPLETED when it gathered sources and compressed findings, even if the findings
+    report unresolved gaps (recorded in the evidence bundle for Verification). It is FAILED only
+    when retrieval or compression produced nothing usable.
+    """
+    sources = outcome.unique_sources
+    if not sources or outcome.findings is None:
+        todo.status = TodoStatus.FAILED
+        reason = "; ".join(outcome.errors) or "Research returned no sources"
+        return todo, [_write_failure(vfs, run_id, todo, reason)], []
+
+    refs, chunks, evidence_sources = [], [], []
+    for i, source in enumerate(sources):
+        payload = {key: value for key, value in source.items() if key != "_query"}
+        record = SourceRecord(
             locator=source["url"],
-            mcp_server=server_name,
-            mcp_tool=tool_name,
-            provenance={"query": source.get("_query", query), **source_payload},
+            mcp_server=outcome.mcp_server,
+            mcp_tool=outcome.mcp_tool,
+            provenance={"query": source.get("_query", ""), **payload},
         )
         raw = source.get("content", "")
         ref = vfs.write_json(
             run_id,
             f"research/{todo.todo_id}/raw/{i}.json",
-            {"source": src.model_dump(mode="json"), "content": raw},
+            {"source": record.model_dump(mode="json"), "content": raw},
             "raw_capture",
             task_id=todo.todo_id,
         )
         refs.append(ref)
         chunks.append(IndexedChunk(
-            source_id=src.source_id,
+            source_id=record.source_id,
             artifact_id=ref.artifact_id,
             text=raw,
-            metadata={"run_id": run_id, "todo_id": todo.todo_id, "locator": src.locator},
+            metadata={"run_id": run_id, "todo_id": todo.todo_id, "locator": record.locator},
         ))
         evidence_sources.append({
-            "source_id": src.source_id,
-            "locator": src.locator,
-            "retrieved_at": src.retrieved_at.isoformat(),
-            "mcp_server": src.mcp_server,
-            "mcp_tool": src.mcp_tool,
-            "provenance": src.provenance,
+            "source_id": record.source_id,
+            "locator": record.locator,
+            "retrieved_at": record.retrieved_at.isoformat(),
+            "mcp_server": record.mcp_server,
+            "mcp_tool": record.mcp_tool,
+            "provenance": record.provenance,
             "artifact_id": ref.artifact_id,
             "content_hash": ref.content_hash,
             "excerpt": raw,
         })
     index.index(chunks)
-    todo.status = TodoStatus.COMPLETED if sufficient else TodoStatus.FAILED
+
+    findings = outcome.findings
+    todo.status = TodoStatus.COMPLETED
     refs.append(vfs.write(
         run_id,
         f"research/{todo.todo_id}/notes/result.md",
         f"# Research notes\n\nQuestion: {todo.research_question}\n\n"
-        f"Search calls: {mcp.calls}/{budget}\n\nSources: {len(unique_sources)}\n",
+        f"Search calls: {outcome.search_calls}/{outcome.search_budget}\n\n"
+        f"Sources: {len(sources)}\n\n## Findings\n\n{findings.summary}\n",
         "notes",
         task_id=todo.todo_id,
     ))
@@ -152,14 +121,16 @@ def run_worker(
     ))
     refs.append(vfs.write_json(
         run_id,
-        f"research/{todo.todo_id}/evidence/result.json",
+        _evidence_path(todo),
         {
             "task_id": todo.todo_id,
             "question": todo.research_question,
+            "summary": findings.summary,
             "sources": evidence_sources,
-            "search_calls": mcp.calls,
-            "sufficient": sufficient,
-            "unresolved_gaps": [] if sufficient else (gaps or ["Evidence remained insufficient"]),
+            "search_calls": outcome.search_calls,
+            "search_budget": outcome.search_budget,
+            "sufficient": findings.sufficient,
+            "unresolved_gaps": findings.unresolved_gaps,
         },
         "evidence_bundle",
         task_id=todo.todo_id,
@@ -167,9 +138,18 @@ def run_worker(
     return todo, refs, chunks
 
 
-def targeted_research(vfs, index, run_id, question, mcp):
+def run_worker(vfs, index, run_id, todo: ResearchTodo, researcher: ResearchAgent, *, thread_id=""):
+    """Research one todo with its own sub-agent and persist the outcome."""
+    if already_researched(vfs, run_id, todo):
+        todo.status = TodoStatus.COMPLETED
+        return todo, [], []
+    outcome = researcher.research(todo.research_question, run_id=run_id, thread_id=thread_id)
+    return persist_research(vfs, index, run_id, todo, outcome)
+
+
+def targeted_research(vfs, index, run_id, question, researcher: ResearchAgent):
     todo = ResearchTodo(research_question=question)
-    return run_worker(vfs, index, run_id, todo, mcp)
+    return run_worker(vfs, index, run_id, todo, researcher)
 
 
 def targeted_research_node(
@@ -177,12 +157,12 @@ def targeted_research_node(
     vfs,
     index,
     question: str,
-    mcp: MCPResearchPort,
+    researcher: ResearchAgent,
 ) -> ResearchGraphState:
     """Research only the identified gap while retaining prior valid evidence."""
     if not question.strip():
         raise ValueError("targeted research requires a non-empty gap question")
-    todo, refs, chunks = targeted_research(vfs, index, state.run_id, question, mcp)
+    todo, refs, chunks = targeted_research(vfs, index, state.run_id, question, researcher)
     evidence_refs = [ref for ref in refs if ref.kind == "evidence_bundle"]
     return state.model_copy(update={
         "stage": Stage.SYNTHESIZING,

@@ -132,6 +132,23 @@ class WorkerSearchPlan(Model):
         return self
 
 
+class ResearchFindings(Model):
+    """Compressed output of one research sub-agent for one research question."""
+
+    summary: str = Field(min_length=1)
+    sufficient: bool
+    unresolved_gaps: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_findings(self):
+        if not self.summary.strip():
+            raise ValueError("research findings summary must not be blank")
+        self.unresolved_gaps = [gap.strip() for gap in self.unresolved_gaps if gap.strip()]
+        if not self.sufficient and not self.unresolved_gaps:
+            raise ValueError("insufficient research must name at least one unresolved gap")
+        return self
+
+
 class VerificationAssessment(Model):
     passed: bool
     issue_type: IssueType | None = None
