@@ -101,8 +101,22 @@ class ResearchTodo(Model):
         return self
 
 
+MAX_PLANNED_QUESTIONS = 5
+
+
 class TodoPlan(Model):
-    todos: list[ResearchTodo] = Field(min_length=1)
+    """Planner LLM output: only research questions; ids and status are system-owned."""
+
+    questions: list[str] = Field(min_length=1, max_length=MAX_PLANNED_QUESTIONS)
+
+    @model_validator(mode="after")
+    def validate_questions(self):
+        self.questions = [question.strip() for question in self.questions]
+        if any(not question for question in self.questions):
+            raise ValueError("planned research questions must not be blank")
+        if len({question.casefold() for question in self.questions}) != len(self.questions):
+            raise ValueError("planned research questions must not repeat")
+        return self
 
 
 class WorkerSearchPlan(Model):

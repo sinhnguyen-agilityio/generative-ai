@@ -10,7 +10,7 @@ from intelligence_collector.config import Settings, load_local_env
 from intelligence_collector.contracts import VerificationResult
 from intelligence_collector.guardrails import validate_request
 from intelligence_collector.graph.build import build_graph
-from intelligence_collector.graph.nodes import ResearchNodes
+from intelligence_collector.graph.nodes import Node, ResearchNodes
 from intelligence_collector.models.factory import ModelConfig, ModelFactory
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.observability.tracing import Tracer
@@ -234,14 +234,14 @@ def _render_transcript(st, snapshot):
 
 
 _NODE_ACTIVITY = {
-    "clarify_with_user": ("Evaluating scope", "Scope Agent", None),
-    "write_research_brief": ("Generating research brief", "Scope Agent", None),
-    "planning": ("Calling write_todos", "Planner", "write_todos"),
-    "researching": ("Calling research tools", "Research Worker", "MCP search"),
-    "research_complete": ("Assessing research completeness", "Supervisor", "think_tool"),
-    "synthesizing": ("Synthesizing report", "Synthesizer", None),
-    "verifying": ("Verifying report", "Verifier", None),
-    "approval": ("Waiting for publication decision", "Publisher", None),
+    Node.CLARIFY: ("Evaluating scope", "Scope Agent", None),
+    Node.WRITE_BRIEF: ("Generating research brief", "Scope Agent", None),
+    Node.PLAN: ("Calling write_todos", "Planner", "write_todos"),
+    Node.RESEARCH: ("Calling research tools", "Research Worker", "MCP search"),
+    Node.ASSESS_RESEARCH: ("Assessing research completeness", "Supervisor", "think_tool"),
+    Node.SYNTHESIZE: ("Synthesizing report", "Synthesizer", None),
+    Node.VERIFY: ("Verifying report", "Verifier", None),
+    Node.APPROVE: ("Waiting for publication decision", "Publisher", None),
 }
 
 

@@ -29,6 +29,13 @@ evidence-backed technical report from a user's research request."
 - Q: Activity feed nên cập nhật vào thời điểm nào trong quá trình Scope, Planning và tool
   execution? → A: Cập nhật realtime theo lifecycle; tạo item khi node hoặc tool bắt đầu rồi cập nhật
   chính item đó thành success hoặc failure khi kết thúc.
+- Q: Graph nodes và edges nên được tổ chức thế nào để dễ đọc và bảo trì? → A: Tách wiring
+  (`build.py`), node logic (`nodes.py`), conditional routers (`routing.py`) và
+  tracing/checkpoint/lifecycle wrapper (`instrumentation.py`); node names dùng chung một nguồn
+  (FR-030a).
+- Q: Planner Agent nên nhận gì và trả về gì? → A: Nhận research brief, dùng LLM để định nghĩa danh
+  sách research questions (output chỉ là list câu hỏi), rồi node Planning gọi `write_todos` để lưu
+  thành todo list (FR-037a).
 
 ### Session 2026-09-24
 
@@ -361,6 +368,10 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   tell the user whether the run can retry, resume, or requires review.
 - **FR-030**: Workflow stage transitions, bounded recovery attempts, resumable checkpoints, and
   approval gates MUST be governed by the project's required workflow orchestration mechanism.
+- **FR-030a**: Workflow nodes MUST be identified by a single shared set of stable node names used by
+  graph wiring, UI progress, and tracing. Every conditional transition MUST be a named routing
+  decision over typed workflow state, and a missing or empty verification result MUST NOT route to
+  Awaiting Approval.
 - **FR-031**: Semantic decisions made by Scope, Planning, Supervision, Research, Synthesis,
   Verification, and Fixer roles MUST use a real LLM call in live mode with a versioned prompt and a
   typed, validated output. Deterministic fakes MAY be selected explicitly for offline tests but MUST
@@ -403,6 +414,11 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   planned research todo, and successfully persist it through `write_todos` before any edge can enter
   Researching or invoke external retrieval. Brief or todo persistence failure MUST end the current
   invocation visibly without enabling retrieval.
+- **FR-037a**: The Planner Agent MUST decompose the `ResearchBrief` with a structured, versioned LLM
+  call whose output is only a list of research questions (`TodoPlan.questions`, 1–5 items). Each
+  question MUST be standalone, non-blank, and not duplicate another (case-insensitive). The LLM MUST
+  NOT set todo IDs or statuses; the system converts each question into a `planned` todo and persists
+  the list through `write_todos`. Invalid planner output MUST NOT write a todo list.
 - **FR-038**: Every live workflow execution MUST emit one complete Langfuse trace before it may be
   treated as successfully observed. Each execution trace MUST be grouped under the LangGraph
   `thread_id`, correlated with `run_id`, and contain a root execution observation, child graph-node

@@ -1,4 +1,4 @@
-from intelligence_collector.agents.planner import plan
+from intelligence_collector.agents.planner import create_todos
 from intelligence_collector.agents.scope import build_scope
 from intelligence_collector.agents.supervisor import assess
 from intelligence_collector.agents.synthesis import synthesize
@@ -8,7 +8,7 @@ from intelligence_collector.agents.worker import ControlledMCP, run_worker
 def test_controlled_end_to_end(stores):
     vfs, index = stores; run_id = "e2e"
     scope = build_scope({k: k for k in ("objective", "research_boundaries", "constraints", "success_criteria", "deliverable_format")})
-    todos = plan(vfs, run_id, ["What is a cache?"])
+    todos = create_todos(vfs, run_id, ["What is a cache?"])
     calls = []
     mcp = ControlledMCP([{"url": "https://controlled.test/cache", "content": "A cache stores reusable data."}])
     original = mcp.search

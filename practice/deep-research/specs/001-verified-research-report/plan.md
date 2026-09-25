@@ -112,23 +112,25 @@ alternatives that would violate the constitution or clarified specification.
    second structured call with its own versioned prompt, validates a dedicated single-question
    `ResearchBrief`,
    writes `scope/brief_summary.v1.json`, and enters Planning without a brief approval interrupt.
-4. Planning consumes the brief's detailed research question and invokes `write_todos`.
+4. Planning runs the Planner Agent: a structured `planner.v2` LLM call decomposes the brief's
+   research question into 1–5 standalone, non-overlapping research questions (`TodoPlan.questions`).
+   The system turns each question into a `planned` todo and persists the list via `write_todos`.
    A non-empty, valid, durably stored todo list is required before any Research/retrieval edge.
-4. The Supervisor assigns isolated workers. Each worker uses MCP only, starts broad, assesses gaps
+5. The Supervisor assigns isolated workers. Each worker uses MCP only, starts broad, assesses gaps
    after each call, narrows as needed, and stops early or at the five-call hard limit. Raw source
    captures, excerpts, notes, evidence bundles, and vector-index records are written to the VFS.
-5. `think_tool` creates a progress assessment. The Supervisor may issue `ResearchComplete` only if
+6. `think_tool` creates a progress assessment. The Supervisor may issue `ResearchComplete` only if
    every todo is completed and all VFS/index prerequisites are present. This ends Research only.
-6. Synthesis retrieves indexed chunks and evidence bundles, writes previous and latest draft
+7. Synthesis retrieves indexed chunks and evidence bundles, writes previous and latest draft
    artifacts, and emits a versioned candidate report.
-7. Verification returns pass or one typed issue: `DRAFT_DEFECT`, `EVIDENCE_GAP`, or `PLAN_GAP`.
+8. Verification returns pass or one typed issue: `DRAFT_DEFECT`, `EVIDENCE_GAP`, or `PLAN_GAP`.
    BVF routing sends each issue to draft revision, targeted research, or re-planning respectively;
    valid evidence is retained and a progress fingerprint prevents no-op loops.
-8. A finite recovery counter is decremented for each repair. Exhaustion produces `NEEDS_REVIEW`.
-9. A passing result enters `Awaiting Approval` and LangGraph interrupts. The user approves or
-   rejects the exact artifact hash. Approval resumes the graph; rejection records the decision and
-   leaves permanent output unchanged.
-10. Publication verifies the artifact hash and verification status, writes the permanent artifact
+9. A finite recovery counter is decremented for each repair. Exhaustion produces `NEEDS_REVIEW`.
+10. A passing result enters `Awaiting Approval` and LangGraph interrupts. The user approves or
+    rejects the exact artifact hash. Approval resumes the graph; rejection records the decision and
+    leaves permanent output unchanged.
+11. Publication verifies the artifact hash and verification status, writes the permanent artifact
     atomically, records a Publication Record, and transitions to Published.
 
 ## Component Responsibilities and Boundaries
@@ -138,7 +140,7 @@ alternatives that would violate the constitution or clarified specification.
 | Streamlit UI | Chat, stage/progress display, report/evidence review, approval decision | Renders typed state; never writes authoritative artifacts; displays actionable errors | Graph runner, VFS read API |
 | Input Validator + Guardrail | Validate shape/size and reject prompt injection or disallowed offensive/violent requests | Returns typed `GuardrailDecision`; rejection has no state mutation | Scope entry edge, audit event |
 | Scope Agent | `clarify_with_user` evaluates actual message history; `write_research_brief` creates a dedicated validated `ResearchBrief` after a clear decision | One-question clarification or complete brief; model/validation/persistence failure cannot become clear | LangChain chat model/router, LangGraph thread state, checkpoint, brief VFS artifact |
-| Planner + `write_todos` | Build and durably store non-empty question/status todos | Tool returns typed success/error; failed write blocks Research | VFS, graph state |
+| Planner Agent + `write_todos` | `PlannerAgent.define_questions` turns the `ResearchBrief` into a list of research questions; `PlannerAgent.write_todos` converts them to `planned` todos and persists them | `TodoPlan` (questions only, 1–5, non-blank, unique); invalid output or failed write blocks Research | Model router (`planner` role), VFS, graph state |
 | Research Supervisor | Assign workers, aggregate outcomes, use `think_tool`, assess readiness | `ProgressAssessment`; cannot ResearchComplete until all todos complete and artifacts indexed | Worker pool, VFS, vector store |
 | MCP Research Worker | Search external sources, capture provenance, create evidence | Per-task search budget; MCP failures are task outcomes; isolated context | MCP clients, VFS, vector store, model router |
 | VFS Artifact Store | Atomic run-scoped files and immutable versions | Reject path escape/cross-run writes; partial writes are invisible | All nodes, checkpoint metadata |
@@ -159,9 +161,10 @@ src/intelligence_collector/
 ├── contracts.py
 ├── graph/
 │   ├── state.py
-│   ├── build.py
-│   ├── nodes.py
-│   └── routing.py
+│   ├── build.py            # wiring only: nodes + edges per topology
+│   ├── nodes.py            # Node names, ScopeNodes, PlannerNodes, ResearchNodes, approval, stubs
+│   ├── routing.py          # named conditional-edge routers + BVF routing
+│   └── instrumentation.py  # node_wrapper: lifecycle, checkpoint, tracing
 ├── agents/
 │   ├── scope.py
 │   ├── planner.py
@@ -196,6 +199,27 @@ tests/
 **Structure Decision**: A single local Python application keeps the first implementation simple;
 domain services are separated from graph wiring, storage, integrations, and UI so contracts can be
 tested independently and no UI path can bypass workflow gates.
+
+### Graph Module Organization (FR-030a)
+
+- `graph/nodes.py` owns the `Node` name constants (single source for wiring, `app.py` activity
+  labels, and `graph.<node>` trace spans) and all node logic. Collaborator-dependent nodes are
+  grouped into injected classes: `ScopeNodes(scope_agent, vfs)`, `PlannerNodes(planner_agent, vfs)`,
+  and `ResearchNodes(vfs, index, mcp)`. `build_graph(planner_agent=...)` defaults to a
+  `PlannerAgent` sharing the scope agent's model router.
+- `graph/routing.py` holds named routers for every conditional edge: `route_after_clarify`
+  (END when clarification is needed, else `write_research_brief`) and `route_after_verify`
+  (`approval` only when `verification.passed`; a `None`/missing result ends the run).
+- `graph/instrumentation.py` provides `node_wrapper`, applied uniformly to every node for lifecycle
+  events, checkpoint load/save, and Langfuse spans.
+- `graph/build.py` contains only wiring. `build_graph` supports three topologies selected by
+  injected collaborators:
+  - Full (`scope_agent` + `research_nodes`): `clarify_with_user` → (END | `write_research_brief`) →
+    `planning` → `researching` → `research_complete` → `synthesizing` → `verifying` →
+    (`approval` when passed and `with_approval` | END).
+  - Scope only (`scope_agent`): … → `planning` → END.
+  - Stage-only stubs (neither): `scope` → `planning` → `researching` → `synthesizing` →
+    `verifying` → [`approval`] → END, used by contract tests.
 
 ## Constitution Check (Post-Design)
 

@@ -1,4 +1,13 @@
+"""Graph node implementations.
+
+Every node is a ``state -> state update`` callable. Nodes that need
+collaborators (LLM agents, VFS, index, MCP) are grouped into small classes so
+dependencies are injected once and the wiring in ``build.py`` stays declarative.
+"""
+
 from __future__ import annotations
+
+from langchain_core.messages import AIMessage, HumanMessage
 
 from intelligence_collector.agents.supervisor import assess
 from intelligence_collector.agents.synthesis import synthesize
@@ -7,9 +16,29 @@ from intelligence_collector.agents.worker import run_worker
 from intelligence_collector.contracts import (
     ResearchBrief,
     ResearchTodo,
+    ScopeAssessment,
     ScopedRequest,
     Stage,
 )
+from intelligence_collector.graph.state import GraphState
+
+
+class Node:
+    """Stable node identifiers shared by graph wiring, UI progress, tracing and tests."""
+
+    # Scope and planning
+    CLARIFY = "clarify_with_user"
+    WRITE_BRIEF = "write_research_brief"
+    PLAN = "planning"
+    # Research pipeline
+    RESEARCH = "researching"
+    ASSESS_RESEARCH = "research_complete"
+    SYNTHESIZE = "synthesizing"
+    VERIFY = "verifying"
+    # Publication
+    APPROVE = "approval"
+    # Placeholder used by the stage-only graph when no Scope Agent is injected
+    STUB_SCOPE = "scope"
 
 
 def _activity(state, label: str, status: str = "success"):
@@ -40,6 +69,77 @@ def _scope_from_state(state) -> ScopedRequest:
         success_criteria="",
         deliverable_format="technical report",
     )
+
+
+# ===== SCOPE AND PLANNING =====
+
+
+class ScopeNodes:
+    """Scope clarification and the research brief."""
+
+    def __init__(self, scope_agent, vfs=None):
+        self.scope_agent = scope_agent
+        self.vfs = vfs
+
+    def clarify_with_user(self, state: GraphState) -> GraphState:
+        request = state.get("request", "")
+        history = list(state.get("messages", []))
+        assessment = self.scope_agent.clarify_with_user(
+            request,
+            history,
+            run_id=state.get("run_id", ""),
+            thread_id=state.get("thread_id", ""),
+        )
+        reply = assessment.question if assessment.need_clarification else assessment.verification
+        return {
+            **state,
+            "stage": Stage.SCOPING.value,
+            "messages": [*history, HumanMessage(content=request), AIMessage(content=reply)],
+            "scope_assessment": assessment.model_dump(mode="json"),
+        }
+
+    def write_research_brief(self, state: GraphState) -> GraphState:
+        assessment = ScopeAssessment.model_validate(state["scope_assessment"])
+        brief = self.scope_agent.write_research_brief(
+            state.get("request", ""),
+            assessment,
+            list(state.get("messages", [])),
+            run_id=state.get("run_id", ""),
+            thread_id=state.get("thread_id", ""),
+            vfs=self.vfs,
+        )
+        return {
+            **state,
+            "stage": Stage.PLANNING.value,
+            "scoped_request": brief.model_dump(mode="json"),
+        }
+
+
+class PlannerNodes:
+    """Planning: the Planner Agent turns the brief into questions and calls `write_todos`."""
+
+    def __init__(self, planner_agent, vfs=None):
+        self.planner_agent = planner_agent
+        self.vfs = vfs
+
+    def planning(self, state: GraphState) -> GraphState:
+        if self.vfs is None:
+            raise RuntimeError("Planning requires an injected VFS")
+        brief = ResearchBrief.model_validate(state["scoped_request"])
+        todos = self.planner_agent.write_todos(
+            brief,
+            self.vfs,
+            state["run_id"],
+            thread_id=state.get("thread_id", ""),
+        )
+        return {
+            **state,
+            "stage": Stage.PLANNING.value,
+            "todos": [todo.model_dump(mode="json") for todo in todos],
+        }
+
+
+# ===== RESEARCH PIPELINE =====
 
 
 class ResearchNodes:
@@ -165,3 +265,27 @@ class ResearchNodes:
             "verification_history": history,
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }
+
+
+# ===== APPROVAL =====
+
+
+def approval(state: GraphState) -> GraphState:
+    """Pause the graph until a human resumes it with a publication decision."""
+    from langgraph.types import interrupt
+
+    decision = interrupt({"kind": "publication_approval", "run_id": state.get("run_id")})
+    stage = Stage.PUBLISHED if decision.get("approved") else Stage.AWAITING_APPROVAL
+    return {**state, "approval": decision, "stage": stage.value}
+
+
+# ===== STAGE-ONLY STUBS =====
+
+
+def stage_only(name: str):
+    """Placeholder node that only records its own name as the stage."""
+
+    def advance(state: GraphState) -> GraphState:
+        return {**state, "stage": name}
+
+    return advance

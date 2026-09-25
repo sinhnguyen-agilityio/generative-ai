@@ -44,9 +44,20 @@ def _brief_payload():
     }
 
 
+def _plan_payload():
+    return {
+        "questions": [
+            "How do PostgreSQL and SQLite differ in concurrency and locking for local Python "
+            "applications, according to their official documentation?",
+            "What operational and deployment trade-offs do PostgreSQL and SQLite have for local "
+            "Python applications, according to primary technical sources?",
+        ]
+    }
+
+
 def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch, tmp_path):
     calls = []
-    model = RecordingChatModel([_clear_payload(), _brief_payload()])
+    model = RecordingChatModel([_clear_payload(), _brief_payload(), _plan_payload()])
     monkeypatch.setattr(
         "intelligence_collector.models.factory.init_chat_model",
         lambda *args, **kwargs: calls.append((args, kwargs)) or model,
@@ -62,20 +73,39 @@ def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch,
     assert result["stage"] == "Planning"
     question = result["scoped_request"]["research_question"]
     assert question.startswith("I want to compare PostgreSQL")
-    assert len(model.calls) == 2
+    assert len(model.calls) == 3
     assert all(isinstance(messages[0], SystemMessage) for messages in model.calls)
     assert any(isinstance(message, HumanMessage) for message in model.calls[0])
+    assert question in model.calls[2][-1].content
     assert traces[0]["prompt_version"] == "scope.v1"
     assert traces[1]["prompt_version"] == "scope-brief.v1"
+    assert traces[2]["prompt_version"] == "planner.v2"
+    assert traces[2]["role"] == "planner"
     assert traces[0]["selected_model"] == "fake-live-scope"
     assert len(result["messages"]) == 2
     assert isinstance(result["messages"][0], HumanMessage)
     assert isinstance(result["messages"][1], AIMessage)
     assert result["messages"][1].content == _clear_payload()["verification"]
-    assert result["todos"][0]["status"] == "planned"
-    assert result["todos"][0]["research_question"] == question
+    assert [todo["research_question"] for todo in result["todos"]] == _plan_payload()["questions"]
+    assert all(todo["status"] == "planned" for todo in result["todos"])
+    assert len({todo["todo_id"] for todo in result["todos"]}) == 2
     assert (tmp_path / "run-1" / "scope" / "brief_summary.v1.json").exists()
-    assert (tmp_path / "run-1" / "planning" / "todos.v1.json").exists()
+    persisted = json.loads((tmp_path / "run-1" / "planning" / "todos.v1.json").read_text())
+    assert [todo["research_question"] for todo in persisted] == _plan_payload()["questions"]
+
+
+def test_invalid_planner_output_does_not_write_todos(tmp_path):
+    duplicate = "What are the documented locking differences between PostgreSQL and SQLite?"
+    model = RecordingChatModel([
+        _clear_payload(),
+        _brief_payload(),
+        {"questions": [duplicate, duplicate]},
+        {"questions": []},
+    ])
+    graph = build_graph(scope_agent=ScopeAgent(ModelRouter(model, mode="live")), vfs=VFS(tmp_path))
+    with pytest.raises(ValueError, match="invalid structured output for planner"):
+        graph.invoke({"run_id": "bad-plan", "thread_id": "bad-plan", "request": "Bounded request"})
+    assert not (tmp_path / "bad-plan" / "planning" / "todos.v1.json").exists()
 
 
 def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
@@ -92,6 +122,7 @@ def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
         },
         _clear_payload(),
         _brief_payload(),
+        _plan_payload(),
     ])
     router = ModelRouter(model, mode="live")
     graph = build_graph(scope_agent=ScopeAgent(router), vfs=VFS(tmp_path))
@@ -120,13 +151,13 @@ def test_primary_model_failure_uses_fallback_without_silent_clear(tmp_path):
         def invoke(self, messages):
             raise TimeoutError("primary timed out")
 
-    fallback = RecordingChatModel([_clear_payload(), _brief_payload()])
+    fallback = RecordingChatModel([_clear_payload(), _brief_payload(), _plan_payload()])
     router = ModelRouter(FailingModel(), fallback, mode="live")
     result = build_graph(scope_agent=ScopeAgent(router), vfs=VFS(tmp_path)).invoke(
         {"run_id": "fallback", "thread_id": "fallback", "request": "A fully bounded request"}
     )
     assert result["stage"] == "Planning"
-    assert len(router.events) == 2
+    assert len(router.events) == 3
     assert router.fallback_used
 
 

@@ -6,7 +6,12 @@ from intelligence_collector.agents.scope import ScopeAgent
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.storage.vfs import VFS
-from tests.integration.test_langchain_scope import RecordingChatModel, _brief_payload, _clear_payload
+from tests.integration.test_langchain_scope import (
+    RecordingChatModel,
+    _brief_payload,
+    _clear_payload,
+    _plan_payload,
+)
 
 
 def test_scope_clarification_checkpoint_resumes_after_process_restart(tmp_path):
@@ -18,6 +23,7 @@ def test_scope_clarification_checkpoint_resumes_after_process_restart(tmp_path):
         },
         _clear_payload(),
         _brief_payload(),
+        _plan_payload(),
     ])
     checkpoint_path = tmp_path / "scope.sqlite"
     first_connection = sqlite3.connect(checkpoint_path, check_same_thread=False)

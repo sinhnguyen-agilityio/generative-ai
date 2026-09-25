@@ -6,7 +6,7 @@ from tests.fixtures.fake_models import FakeModel
 
 def _responses():
     return {
-        "planner": {"todos": [{"research_question": "Find primary evidence"}]},
+        "planner": {"questions": ["Find primary evidence"]},
         "supervisor": {
             "coverage_complete": True,
             "research_complete": True,
@@ -32,7 +32,7 @@ def test_all_semantic_roles_use_structured_router():
 
 def test_every_semantic_role_prompt_is_versioned_and_instructive():
     expected = {
-        "planner": "planner.v1",
+        "planner": "planner.v2",
         "supervisor": "supervisor.v1",
         "worker": "worker.v1",
         "synthesizer": "synthesis.v1",

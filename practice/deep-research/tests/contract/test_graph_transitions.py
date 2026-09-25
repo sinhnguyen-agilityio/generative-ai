@@ -76,7 +76,11 @@ def test_failed_todo_write_cannot_traverse_to_research(tmp_path):
                 raise OSError("simulated todo persistence failure")
             return super().write_json(run_id, relative_path, payload, kind, **kwargs)
 
-    model = SequencedModel([_clear_scope(), _brief()])
+    model = SequencedModel([
+        _clear_scope(),
+        _brief(),
+        {"questions": ["Which databases suit local Python applications, per primary sources?"]},
+    ])
     graph = build_graph(
         scope_agent=ScopeAgent(ModelRouter(model, mode="live")),
         vfs=PlanningWriteFailureVFS(tmp_path),

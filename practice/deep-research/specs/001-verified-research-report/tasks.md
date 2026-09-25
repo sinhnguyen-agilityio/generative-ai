@@ -340,3 +340,25 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   generation, ChatGPT-style transcript, one-assistant-message limit, collapsed Details panel,
   realtime lifecycle updates, and static clarification waiting state per SC-004 and SC-004a
   (missing).
+
+## Phase 18: Graph Maintainability
+
+- [X] T108 Refactor graph nodes and edges for readability: move `node_wrapper` to
+  `src/intelligence_collector/graph/instrumentation.py`; add shared `Node` names, `ScopeNodes`,
+  `approval`, and `stage_only` to `src/intelligence_collector/graph/nodes.py`; add named
+  `route_after_clarify` and `route_after_verify` routers (null-safe verification) to
+  `src/intelligence_collector/graph/routing.py`; reduce `src/intelligence_collector/graph/build.py`
+  to documented wiring; and key `_NODE_ACTIVITY` in `src/intelligence_collector/app.py` by `Node`.
+  Completion means the existing suite passes unchanged and `build_graph`/`node_wrapper` imports
+  remain compatible (FR-030, FR-030a).
+- [X] T109 [US1] Implement the LLM-backed Planner Agent: change `TodoPlan` to a questions-only
+  contract (1–5 standalone, non-blank, unique) in `src/intelligence_collector/contracts.py`; add the
+  versioned `planner.v2` prompt in `src/intelligence_collector/agents/prompts.py`; add
+  `PlannerAgent.define_questions`/`write_todos` and rename `plan` to `create_todos` in
+  `src/intelligence_collector/agents/planner.py`; move the Planning node from `ScopeNodes` to
+  `PlannerNodes` and inject `planner_agent` in `src/intelligence_collector/graph/nodes.py` and
+  `src/intelligence_collector/graph/build.py`. Completion means Planning persists one planned todo
+  per LLM-defined question, invalid planner output writes no todo list, and tracing shows a
+  `model.validation.planner` event, covered in `tests/integration/test_langchain_scope.py`,
+  `tests/integration/test_langfuse_tracing.py`, and
+  `tests/contract/test_semantic_decision_contracts.py` (FR-006, FR-031, FR-037, FR-037a).

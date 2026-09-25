@@ -4,7 +4,12 @@ from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.observability.tracing import Tracer
 from intelligence_collector.storage.vfs import VFS
 from tests.contract.test_observability_contract import FakeLangfuseClient, fake_propagation
-from tests.integration.test_langchain_scope import RecordingChatModel, _brief_payload, _clear_payload
+from tests.integration.test_langchain_scope import (
+    RecordingChatModel,
+    _brief_payload,
+    _clear_payload,
+    _plan_payload,
+)
 
 
 class CallbackAwareModel(RecordingChatModel):
@@ -22,7 +27,7 @@ def test_scope_execution_has_root_nodes_model_events_callbacks_and_flush(monkeyp
     client = FakeLangfuseClient()
     callback = object()
     tracer = Tracer(client=client, callback_handler=callback)
-    model = CallbackAwareModel([_clear_payload(), _brief_payload()])
+    model = CallbackAwareModel([_clear_payload(), _brief_payload(), _plan_payload()])
     router = ModelRouter(
         model,
         mode="live",
@@ -49,9 +54,10 @@ def test_scope_execution_has_root_nodes_model_events_callbacks_and_flush(monkeyp
         "graph.write_research_brief",
         "model.validation.scope",
         "graph.planning",
+        "model.validation.planner",
     ]
     assert all(record["parent"] for record in client.records[1:])
-    assert len(model.configs) == 2
+    assert len(model.configs) == 3
     assert all(config["callbacks"] == [callback] for config in model.configs)
     assert all(config["metadata"]["langfuse_session_id"] == "thread" for config in model.configs)
     model_records = [record for record in client.records if record["name"] == "model.validation.scope"]
@@ -60,6 +66,9 @@ def test_scope_execution_has_root_nodes_model_events_callbacks_and_flush(monkeyp
     assert '"need_clarification": false' in model_records[0]["updates"][-1]["output"]
     assert "Translate that conversation into one detailed" in model_records[1]["input"]
     assert '"research_question"' in model_records[1]["updates"][-1]["output"]
+    planner_record = next(r for r in client.records if r["name"] == "model.validation.planner")
+    assert "You are the Planner" in planner_record["input"]
+    assert '"questions"' in planner_record["updates"][-1]["output"]
     assert all(isinstance(record["input"], str) for record in client.records)
     assert all(
         isinstance(record["updates"][-1]["output"], str)
