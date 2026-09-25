@@ -9,7 +9,8 @@ from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.storage.vfs import VFS
 from intelligence_collector.tools.mcp import ControlledMCP
-from tests.fixtures.fake_models import FakeResearchModel
+from intelligence_collector.agents.report_writer import ReportWriter
+from tests.fixtures.fake_models import FakeReportModel, FakeResearchModel, cited_report
 
 
 class SequencedModel:
@@ -43,10 +44,14 @@ def test_full_graph_executes_guarded_research_to_approval_ready(stores):
         "content": "A cache stores reusable data for later access.",
     }])
     researcher = ResearchAgent(ModelRouter(FakeResearchModel(), mode="fake"), lambda: mcp)
+    writer = ReportWriter(ModelRouter(FakeReportModel([cited_report(
+        ["A cache stores reusable data for later access [S1]."],
+        {"S1": "https://controlled.test/cache"},
+    )]), mode="fake"))
     graph = build_graph(
         scope_agent=ScopeAgent(ModelRouter(model, mode="fake")),
         vfs=vfs,
-        research_nodes=ResearchNodes(vfs, index, researcher),
+        research_nodes=ResearchNodes(vfs, index, researcher, report_writer=writer),
     )
 
     result = graph.invoke({

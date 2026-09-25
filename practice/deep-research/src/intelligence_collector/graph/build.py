@@ -15,7 +15,14 @@ from intelligence_collector.graph.nodes import (
     approval,
     stage_only,
 )
-from intelligence_collector.graph.routing import route_after_clarify, route_after_verify
+from intelligence_collector.graph.routing import (
+    FIX,
+    NEEDS_REVIEW,
+    PASSED,
+    route_after_clarify,
+    route_after_fix,
+    route_after_verify,
+)
 from intelligence_collector.graph.state import GraphState
 
 __all__ = ["build_graph", "node_wrapper"]
@@ -47,7 +54,11 @@ def build_graph(
             START -> clarify_with_user --(needs clarification)--> END
                                        \\-> write_research_brief -> planning
                   -> researching -> research_complete -> synthesizing -> verifying
-                  -> approval (only when verification passed and with_approval) -> END
+            verifying --(all checks pass)--> approval (with_approval) | END
+                      --(failed, budget left)--> fixing --(DRAFT_DEFECT)--> synthesizing
+                                                        \\-(EVIDENCE_GAP)-> researching_gaps
+                                                                            -> synthesizing
+                      --(budget exhausted / no progress)--> needs_review -> END
 
         Scope only (scope_agent):
             START -> clarify_with_user -> write_research_brief -> planning -> END
@@ -84,33 +95,55 @@ def build_graph(
 
     # ===== RESEARCH PIPELINE =====
 
-    if research_nodes is not None:
-        add_node(Node.RESEARCH, research_nodes.researching)
-        add_node(Node.ASSESS_RESEARCH, research_nodes.research_complete)
-        add_node(Node.SYNTHESIZE, research_nodes.synthesizing)
-        add_node(Node.VERIFY, research_nodes.verifying)
-        _chain(graph, Node.PLAN, Node.RESEARCH, Node.ASSESS_RESEARCH, Node.SYNTHESIZE, Node.VERIFY)
-    elif scope_agent is not None:
+    if research_nodes is None and scope_agent is not None:
         # Scope-only mode intentionally stops once a durable plan exists.
         graph.add_edge(Node.PLAN, END)
         return graph.compile(checkpointer=checkpointer)
-    else:
+
+    if research_nodes is None:
         for name in (Node.RESEARCH, Node.SYNTHESIZE, Node.VERIFY):
             add_node(name, stage_only(name))
         _chain(graph, Node.PLAN, Node.RESEARCH, Node.SYNTHESIZE, Node.VERIFY)
-
-    # ===== APPROVAL AND COMPLETION =====
-
-    if not with_approval:
-        graph.add_edge(Node.VERIFY, END)
+        if with_approval:
+            # Stub verification produces no result, so it always proceeds to approval.
+            add_node(Node.APPROVE, approval)
+            _chain(graph, Node.VERIFY, Node.APPROVE, END)
+        else:
+            graph.add_edge(Node.VERIFY, END)
         return graph.compile(checkpointer=checkpointer)
 
-    add_node(Node.APPROVE, approval)
-    if research_nodes is not None:
-        graph.add_conditional_edges(Node.VERIFY, route_after_verify, [Node.APPROVE, END])
-    else:
-        # Stub verification produces no result, so it always proceeds to approval.
-        graph.add_edge(Node.VERIFY, Node.APPROVE)
-    graph.add_edge(Node.APPROVE, END)
+    add_node(Node.RESEARCH, research_nodes.researching)
+    add_node(Node.ASSESS_RESEARCH, research_nodes.research_complete)
+    _chain(graph, Node.PLAN, Node.RESEARCH, Node.ASSESS_RESEARCH, Node.SYNTHESIZE)
+
+    # ===== BUILD-VERIFY-FIX LOOP =====
+
+    bvf = research_nodes.bvf
+    add_node(Node.SYNTHESIZE, bvf.synthesizing)
+    add_node(Node.VERIFY, bvf.verifying)
+    add_node(Node.FIX, bvf.fixing)
+    add_node(Node.RESEARCH_GAPS, bvf.researching_gaps)
+    add_node(Node.NEEDS_REVIEW, bvf.needs_review)
+
+    graph.add_edge(Node.SYNTHESIZE, Node.VERIFY)
+    passed_target = Node.APPROVE if with_approval else END
+    graph.add_conditional_edges(
+        Node.VERIFY,
+        route_after_verify,
+        {PASSED: passed_target, FIX: Node.FIX, NEEDS_REVIEW: Node.NEEDS_REVIEW},
+    )
+    graph.add_conditional_edges(
+        Node.FIX,
+        route_after_fix,
+        [Node.SYNTHESIZE, Node.RESEARCH_GAPS, Node.NEEDS_REVIEW],
+    )
+    graph.add_edge(Node.RESEARCH_GAPS, Node.SYNTHESIZE)
+    graph.add_edge(Node.NEEDS_REVIEW, END)
+
+    # ===== APPROVAL =====
+
+    if with_approval:
+        add_node(Node.APPROVE, approval)
+        graph.add_edge(Node.APPROVE, END)
 
     return graph.compile(checkpointer=checkpointer)

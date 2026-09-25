@@ -216,6 +216,16 @@ class IndexedChunk(Model):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class VerificationCheck(Model):
+    """One programmatic source-verification check and, when it fails, why."""
+
+    name: str
+    passed: bool
+    issue_type: IssueType | None = None
+    details: list[str] = Field(default_factory=list)
+    affected_ids: list[str] = Field(default_factory=list)
+
+
 class VerificationResult(Model):
     verification_id: str = Field(default_factory=lambda: str(uuid4()))
     artifact_hash: str
@@ -224,6 +234,22 @@ class VerificationResult(Model):
     issue_type: IssueType | None = None
     affected_ids: list[str] = Field(default_factory=list)
     repair_details: str = ""
+    check_results: list[VerificationCheck] = Field(default_factory=list)
+
+
+class Reflection(Model):
+    """Self-improvement step of the BVF loop: learn from a failed verification before retrying."""
+
+    diagnosis: str = Field(min_length=1)
+    lessons: list[str] = Field(min_length=1, max_length=8)
+    strategy: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_reflection(self):
+        self.lessons = [lesson.strip() for lesson in self.lessons if lesson.strip()]
+        if not self.lessons or not self.diagnosis.strip() or not self.strategy.strip():
+            raise ValueError("reflection requires a diagnosis, lessons, and a strategy")
+        return self
 
 
 class ApprovalDecision(Model):

@@ -51,6 +51,48 @@ class FakeResearchModel:
         return AIMessage(content="I have enough evidence to answer.")
 
 
+class FakeReportModel:
+    """Scripted report writer + BVF reflection fake that records every prompt it receives.
+
+    ``drafts`` and ``reflections`` are consumed in order; the last item repeats once exhausted.
+    """
+
+    model_name = "fake-report-writer"
+
+    def __init__(self, drafts, reflections=None):
+        self.drafts = list(drafts)
+        self.reflections = list(reflections or [{
+            "diagnosis": "A sentence had no citation.",
+            "lessons": ["End every body sentence with a catalog citation such as [S1]."],
+            "strategy": "Add the missing citations and keep wording close to the excerpts.",
+        }])
+        self.calls: list[tuple[str, list]] = []
+
+    @staticmethod
+    def _next(items):
+        return items.pop(0) if len(items) > 1 else items[0]
+
+    def invoke(self, messages, config=None):
+        if "bvf-reflect.v1" in messages[0].content:
+            self.calls.append(("reflect", messages))
+            return AIMessage(content=json.dumps(self._next(self.reflections)))
+        self.calls.append(("write", messages))
+        return AIMessage(content=json.dumps({"report_markdown": self._next(self.drafts)}))
+
+    def prompts(self, kind: str) -> list[str]:
+        return ["\n".join(str(m.content) for m in messages) for k, messages in self.calls if k == kind]
+
+
+def cited_report(claims: list[str], sources: dict[str, str], *, limitations: list[str] = ()) -> str:
+    """Build a report in the source-verification format: claims already carry [S#] markers."""
+    parts = ["# Research report", "", "## Scope", "This report answers the research brief.", "",
+             "## Findings", *claims, ""]
+    if limitations:
+        parts += ["## Limitations", *(f"- {gap}" for gap in limitations), ""]
+    parts += ["## Sources", *(f"- [{sid}] Source - {url}" for sid, url in sources.items())]
+    return "\n".join(parts)
+
+
 class FakeModel:
     """A deterministic role-aware model substitute for tests."""
     def __init__(self, responses=None, error_roles=None):

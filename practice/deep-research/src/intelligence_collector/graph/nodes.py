@@ -9,20 +9,35 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage
 
+from intelligence_collector.agents.report_writer import (
+    ReportWriter,
+    RevisionContext,
+    merge_lessons,
+)
 from intelligence_collector.agents.supervisor import (
     DEFAULT_MAX_CONCURRENT_RESEARCHERS,
     ResearchSupervisor,
 )
-from intelligence_collector.agents.synthesis import synthesize
-from intelligence_collector.agents.verification import verify
+from intelligence_collector.agents.synthesis import persist_report
 from intelligence_collector.contracts import (
+    IssueType,
     ResearchBrief,
     ResearchTodo,
     ScopeAssessment,
-    ScopedRequest,
     Stage,
+    VerificationResult,
 )
 from intelligence_collector.graph.state import GraphState
+from intelligence_collector.source_verification import (
+    failure_fingerprint,
+    load_catalog,
+    save_catalog_state,
+    verify_report,
+)
+
+DEFAULT_RECOVERY_BUDGET = 3
+# Identical failures on this many consecutive re-verifications, despite reflection, ends the loop.
+MAX_STALLED_ATTEMPTS = 2
 
 
 class Node:
@@ -35,8 +50,12 @@ class Node:
     # Research pipeline
     RESEARCH = "researching"
     ASSESS_RESEARCH = "research_complete"
+    # Build-Verify-Fix loop
     SYNTHESIZE = "synthesizing"
     VERIFY = "verifying"
+    FIX = "fixing"
+    RESEARCH_GAPS = "researching_gaps"
+    NEEDS_REVIEW = "needs_review"
     # Publication
     APPROVE = "approval"
     # Placeholder used by the stage-only graph when no Scope Agent is injected
@@ -48,29 +67,6 @@ def _activity(state, label: str, status: str = "success"):
         *state.get("activity", []),
         {"id": f"{len(state.get('activity', [])) + 1}:{label}", "label": label, "status": status},
     ]
-
-
-def _scope_from_state(state) -> ScopedRequest:
-    value = state.get("scoped_request")
-    if value and all(
-        key in value
-        for key in (
-            "objective",
-            "research_boundaries",
-            "constraints",
-            "success_criteria",
-            "deliverable_format",
-        )
-    ):
-        return ScopedRequest.model_validate(value)
-    brief = ResearchBrief.model_validate(value)
-    return ScopedRequest(
-        objective=brief.research_question,
-        research_boundaries="",
-        constraints="",
-        success_criteria="",
-        deliverable_format="technical report",
-    )
 
 
 # ===== SCOPE AND PLANNING =====
@@ -153,7 +149,9 @@ class ResearchNodes:
         index,
         researcher,
         *,
+        report_writer: ReportWriter | None = None,
         max_concurrent_researchers: int = DEFAULT_MAX_CONCURRENT_RESEARCHERS,
+        recovery_budget: int = DEFAULT_RECOVERY_BUDGET,
     ):
         self.vfs = vfs
         self.index = index
@@ -162,6 +160,12 @@ class ResearchNodes:
             vfs,
             index,
             max_concurrent_researchers=max_concurrent_researchers,
+        )
+        self.bvf = BVFNodes(
+            vfs,
+            self.supervisor,
+            report_writer or ReportWriter(researcher.router),
+            recovery_budget=recovery_budget,
         )
 
     def researching(self, state):
@@ -225,59 +229,218 @@ class ResearchNodes:
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }
 
+
+def _merge_research(state, results):
+    """Fold supervisor results into the accumulated todos/artifacts/evidence/index refs."""
+    todos = list(state.get("todos", []))
+    artifacts = list(state.get("artifacts", []))
+    evidence = list(state.get("evidence", []))
+    index_refs = list(state.get("index_refs", []))
+    for todo, refs, chunks in results:
+        todos.append(todo.model_dump(mode="json"))
+        artifacts.extend(ref.model_dump(mode="json") for ref in refs)
+        evidence.extend(ref.model_dump(mode="json") for ref in refs if ref.kind == "evidence_bundle")
+        index_refs.extend(chunk.chunk_id for chunk in chunks)
+    return {"todos": todos, "artifacts": artifacts, "evidence": evidence, "index_refs": index_refs}
+
+
+# ===== BUILD-VERIFY-FIX =====
+
+
+class BVFNodes:
+    """Mandatory Build-Verify-Fix loop around the report.
+
+    Build (``synthesizing``) -> Verify (``verifying``, programmatic source-verification script)
+    -> on failure Fix (``fixing``: record the attempt and reflect to learn lessons) -> either a
+    revised draft (DRAFT_DEFECT) or targeted gap research (EVIDENCE_GAP) -> Build again.
+    Only a report that passes every check leaves the loop normally; exhausting the recovery
+    budget or repeating the same failures ends in ``needs_review``.
+    """
+
+    def __init__(self, vfs, supervisor: ResearchSupervisor, writer: ReportWriter, *, recovery_budget: int):
+        self.vfs = vfs
+        self.supervisor = supervisor
+        self.writer = writer
+        self.recovery_budget = recovery_budget
+
+    def _catalog(self, state):
+        return load_catalog(self.vfs, state["run_id"], state.get("evidence", []))
+
     def synthesizing(self, state):
-        scope = _scope_from_state(state)
-        report = synthesize(
-            scope,
-            vfs=self.vfs,
+        """Build the first draft, or a Fix revision that applies every lesson learned so far."""
+        brief = ResearchBrief.model_validate(state["scoped_request"])
+        previous = state.get("verification")
+        revision = None
+        if previous and not previous.get("passed") and state.get("draft"):
+            revision = RevisionContext(
+                attempt=state.get("recovery_attempt", 0),
+                failures=previous.get("repair_details", ""),
+                previous_draft=state["draft"],
+                lessons=list(state.get("bvf_lessons", [])),
+                strategy=state.get("fix_strategy", ""),
+            )
+        report = self.writer.write(
+            brief,
+            self._catalog(state),
+            revision=revision,
             run_id=state["run_id"],
-            index=self.index,
+            thread_id=state.get("thread_id", ""),
         )
-        ref = self.vfs.write(
-            state["run_id"],
-            "reports/latest.md",
-            report,
-            "latest_report",
-        )
+        version = state.get("recovery_attempt", 0) + 1
+        ref = persist_report(self.vfs, state["run_id"], report, version)
         return {
             **state,
             "stage": Stage.VERIFYING.value,
-            "current_action": "Draft synthesized from indexed evidence",
+            "current_action": (
+                f"Draft v{version} revised with {len(revision.lessons)} lesson(s)"
+                if revision else "First draft built from stored evidence"
+            ),
             "activity": _activity(state, "Synthesizing report"),
             "previous_draft": state.get("draft", ""),
             "draft": report,
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
-            "verification": None,
+            "verification": None,  # a changed artifact never inherits a previous verification
         }
 
     def verifying(self, state):
-        scope = _scope_from_state(state)
-        brief = ResearchBrief.model_validate(state["scoped_request"])
-        chunks = self.index.retrieve(
-            brief.research_question,
-            limit=20,
-            run_id=state["run_id"],
-        )
-        result = verify(state.get("draft", ""), scope, chunks)
+        """Run the programmatic source-verification script over the report text."""
+        catalog = self._catalog(state)
+        researched = list(state.get("researched_gaps", []))
+        result = verify_report(state.get("draft", ""), catalog, researched_gaps=researched)
+        fingerprint = failure_fingerprint(result)
+        stalled = not result.passed and fingerprint == state.get("progress_fingerprint")
+        run_id = state["run_id"]
+        save_catalog_state(self.vfs, run_id, state.get("evidence", []), researched)
         ref = self.vfs.write_json(
-            state["run_id"],
+            run_id,
             f"verification/result.{result.verification_id}.json",
             result.model_dump(mode="json"),
             "verification",
         )
-        history = [*state.get("verification_history", []), result.model_dump(mode="json")]
+        failed = [check.name for check in result.check_results if not check.passed]
+        return {
+            **state,
+            "stage": (Stage.AWAITING_APPROVAL if result.passed else Stage.VERIFYING).value,
+            "status": "paused" if result.passed else "active",
+            "current_action": (
+                f"All {len(result.checks)} source-verification checks passed"
+                if result.passed else f"Verification failed: {', '.join(failed)}"
+            ),
+            "activity": _activity(state, "Verifying report"),
+            "verification": result.model_dump(mode="json"),
+            "verification_history": [
+                *state.get("verification_history", []), result.model_dump(mode="json")
+            ],
+            "progress_fingerprint": fingerprint,
+            "stall_count": state.get("stall_count", 0) + 1 if stalled else 0,
+            "recovery_budget": state.get("recovery_budget", self.recovery_budget),
+            "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
+        }
+
+    def fixing(self, state):
+        """Self-improving retry: record the failure, and for draft defects reflect before fixing."""
+        verification = VerificationResult.model_validate(state["verification"])
+        attempt = state.get("recovery_attempt", 0) + 1
+        budget = state.get("recovery_budget", self.recovery_budget)
+        history = list(state.get("bvf_history", []))
+        lessons = list(state.get("bvf_lessons", []))
+        entry = {
+            "attempt": attempt,
+            "issue_type": verification.issue_type.value if verification.issue_type else None,
+            "failed_checks": [c.name for c in verification.check_results if not c.passed],
+            "fingerprint": state.get("progress_fingerprint", ""),
+            "stalled": state.get("stall_count", 0) > 0,
+        }
+        strategy = ""
+        if verification.issue_type == IssueType.DRAFT_DEFECT:
+            reflection = self.writer.reflect(
+                state.get("draft", ""),
+                verification,
+                history=history,
+                lessons=lessons,
+                stalled=entry["stalled"],
+                run_id=state["run_id"],
+                thread_id=state.get("thread_id", ""),
+            )
+            lessons = merge_lessons(lessons, reflection.lessons)
+            strategy = reflection.strategy
+            entry.update(diagnosis=reflection.diagnosis, lessons=reflection.lessons, strategy=strategy)
+            action = "revising the draft"
+        else:
+            entry["gaps"] = verification.affected_ids
+            action = "researching evidence gaps"
+        history.append(entry)
+        run_id = state["run_id"]
+        refs = [
+            self.vfs.write_json(run_id, "verification/bvf_history.json", history, "bvf_history"),
+            self.vfs.write_json(run_id, "verification/lessons.json", lessons, "bvf_lessons"),
+        ]
         return {
             **state,
             "stage": (
-                Stage.AWAITING_APPROVAL.value
-                if result.passed
-                else Stage.NEEDS_REVIEW.value
-            ),
-            "status": "paused" if result.passed else "needs_review",
-            "current_action": "Awaiting approval" if result.passed else "Verification needs review",
-            "activity": _activity(state, "Verifying report"),
-            "verification": result.model_dump(mode="json"),
-            "verification_history": history,
+                Stage.RESEARCHING if verification.issue_type == IssueType.EVIDENCE_GAP
+                else Stage.SYNTHESIZING
+            ).value,
+            "recovery_attempt": attempt,
+            "current_action": f"BVF fix attempt {attempt}/{budget}: {action}",
+            "activity": _activity(state, f"Fix attempt {attempt}: {action}"),
+            "bvf_history": history,
+            "bvf_lessons": lessons,
+            "fix_strategy": strategy,
+            "artifacts": [*state.get("artifacts", []), *(ref.model_dump(mode="json") for ref in refs)],
+        }
+
+    def researching_gaps(self, state):
+        """EVIDENCE_GAP repair: one targeted research sub-agent per unresearched gap."""
+        catalog = self._catalog(state)
+        researched = list(state.get("researched_gaps", []))
+        gaps = [gap for gap in catalog.gaps if gap.gap_id not in researched]
+        todos = [
+            ResearchTodo(research_question=f"{gap.text} (Context: {gap.question})")
+            for gap in gaps
+        ]
+        results = self.supervisor.delegate(state["run_id"], todos, thread_id=state.get("thread_id", "")) if todos else []
+        merged = {**state, **_merge_research(state, results)}
+        # Each gap gets one targeted research round; whatever remains must be disclosed.
+        researched += [gap.gap_id for gap in gaps]
+        researched += [gap.gap_id for gap in self._catalog(merged).gaps if gap.gap_id not in researched]
+        return {
+            **merged,
+            "stage": Stage.SYNTHESIZING.value,
+            "current_action": f"Researched {len(gaps)} evidence gap(s)",
+            "activity": _activity(state, "Researching evidence gaps"),
+            "todo_ids": [todo["todo_id"] for todo in merged["todos"]],
+            "researched_gaps": researched,
+        }
+
+    def needs_review(self, state):
+        """Recovery budget exhausted or no progress: stop without ever labelling it verified."""
+        verification = state.get("verification") or {}
+        attempts = state.get("recovery_attempt", 0)
+        reason = (
+            "no progress after reflection" if state.get("stall_count", 0) >= MAX_STALLED_ATTEMPTS
+            else f"recovery budget {state.get('recovery_budget', self.recovery_budget)} exhausted"
+        )
+        ref = self.vfs.write_json(
+            state["run_id"],
+            "verification/needs_review.json",
+            {
+                "status": Stage.NEEDS_REVIEW.value,
+                "reason": reason,
+                "attempts": attempts,
+                "unresolved": verification.get("repair_details", ""),
+                "lessons": state.get("bvf_lessons", []),
+                "history": state.get("bvf_history", []),
+            },
+            "needs_review",
+        )
+        return {
+            **state,
+            "stage": Stage.NEEDS_REVIEW.value,
+            "status": "needs_review",
+            "last_error": verification.get("repair_details", ""),
+            "current_action": f"Needs review: {reason} after {attempts} fix attempt(s)",
+            "activity": _activity(state, "Verification needs review", "failure"),
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }
 

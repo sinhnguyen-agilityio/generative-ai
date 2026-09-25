@@ -28,6 +28,12 @@ class GraphState(TypedDict, total=False):
     recovery_attempt: int
     recovery_budget: int
     progress_fingerprint: str
+    # Build-Verify-Fix self-improvement memory
+    stall_count: int
+    bvf_lessons: list[str]
+    bvf_history: list[dict[str, Any]]
+    fix_strategy: str
+    researched_gaps: list[str]
     publication: dict | None
     input_turns: list[str]
     scope_questions: list[str]

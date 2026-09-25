@@ -88,6 +88,7 @@ def _get_scope_graph(st, agent, tracer):
             LocalVectorIndex(settings.vector_path),
             researcher,
             max_concurrent_researchers=settings.max_concurrent_researchers,
+            recovery_budget=settings.recovery_attempts,
         )
     graph = build_graph(
         scope_agent=agent,
@@ -162,6 +163,11 @@ def _render_details_content(st, snapshot):
     if attempt:
         st.subheader("Recovery")
         st.write(f"Recovery attempt: {attempt}/{snapshot.get('recovery_budget', 0)}")
+        lessons = list(snapshot.get("bvf_lessons") or [])
+        if lessons:
+            st.write("Lessons learned from failed verifications:")
+            for lesson in lessons:
+                st.markdown(f"- {lesson}")
 
     todos = list(snapshot.get("todos") or [])
     if todos:
@@ -247,8 +253,11 @@ _NODE_ACTIVITY = {
     Node.PLAN: ("Calling write_todos", "Planner", "write_todos"),
     Node.RESEARCH: ("Delegating research to sub-agents", "Research Supervisor", "tavily_search"),
     Node.ASSESS_RESEARCH: ("Assessing research completeness", "Research Supervisor", "think_tool"),
-    Node.SYNTHESIZE: ("Synthesizing report", "Synthesizer", None),
-    Node.VERIFY: ("Verifying report", "Verifier", None),
+    Node.SYNTHESIZE: ("Synthesizing report", "Report Writer", None),
+    Node.VERIFY: ("Verifying report against sources", "Verifier", "source_verification"),
+    Node.FIX: ("Reflecting on verification failures", "Fix Planner", None),
+    Node.RESEARCH_GAPS: ("Researching evidence gaps", "Research Supervisor", "tavily_search"),
+    Node.NEEDS_REVIEW: ("Escalating for review", "Verifier", None),
     Node.APPROVE: ("Waiting for publication decision", "Publisher", None),
 }
 

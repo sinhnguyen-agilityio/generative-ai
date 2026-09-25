@@ -2,8 +2,15 @@ from langgraph.graph import END
 
 from intelligence_collector.agents.recovery import choose_repair
 from intelligence_collector.contracts import IssueType, Stage
-from intelligence_collector.graph.nodes import Node
+from intelligence_collector.graph.nodes import (
+    DEFAULT_RECOVERY_BUDGET,
+    MAX_STALLED_ATTEMPTS,
+    Node,
+)
 from intelligence_collector.graph.state import GraphState
+
+# Outcomes of route_after_verify; build.py maps "passed" to approval or END.
+PASSED, FIX, NEEDS_REVIEW = "passed", "fix", "needs_review"
 
 # ===== CONDITIONAL EDGE ROUTERS =====
 
@@ -17,9 +24,26 @@ def route_after_clarify(state: GraphState) -> str:
 
 
 def route_after_verify(state: GraphState) -> str:
-    """Only a passed verification may request publication approval."""
+    """BVF gate: only a fully passing report leaves the loop; otherwise fix or escalate."""
     verification = state.get("verification") or {}
-    return Node.APPROVE if verification.get("passed") else END
+    if verification.get("passed"):
+        return PASSED
+    budget = state.get("recovery_budget", DEFAULT_RECOVERY_BUDGET)
+    if state.get("recovery_attempt", 0) >= budget:
+        return NEEDS_REVIEW
+    if state.get("stall_count", 0) >= MAX_STALLED_ATTEMPTS:
+        return NEEDS_REVIEW
+    return FIX
+
+
+def route_after_fix(state: GraphState) -> str:
+    """Send each failure type to its repair: redraft, or research the gaps first."""
+    issue = (state.get("verification") or {}).get("issue_type")
+    if issue == IssueType.DRAFT_DEFECT.value:
+        return Node.SYNTHESIZE
+    if issue == IssueType.EVIDENCE_GAP.value:
+        return Node.RESEARCH_GAPS
+    return Node.NEEDS_REVIEW  # PLAN_GAP is never emitted by the source-verification script
 
 
 # ===== RECOVERY ROUTING =====

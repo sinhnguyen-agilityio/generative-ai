@@ -380,3 +380,28 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   task with recorded gaps, and `tests/integration/test_worker_mcp.py` covers broad→narrow search,
   early stop, hard budget, redacted MCP failure, parallel delegation, and sibling-safe failure
   (FR-008, FR-008a, FR-009–FR-009d, FR-010, FR-010a, FR-011, FR-031).
+
+## Phase 19: Mandatory Build-Verify-Fix Loop
+
+- [X] T111 [US3] Implement the deterministic source-verification script with ten report-vs-evidence
+  checks, stable `[S<n>]` source catalog, failure fingerprint, and standalone CLI in
+  `src/intelligence_collector/source_verification.py`; add `VerificationCheck`, per-check
+  `check_results`, and `Reflection` contracts in `src/intelligence_collector/contracts.py` (FR-014,
+  FR-015, FR-016, FR-016a).
+- [X] T112 [US3] Implement the LLM Report Writer (`report-writer.v1`) for Build and Fix drafts and the
+  BVF reflection (`bvf-reflect.v1`) with accumulating lesson memory in
+  `src/intelligence_collector/agents/report_writer.py` and `src/intelligence_collector/agents/prompts.py`
+  (FR-017b, FR-031).
+- [X] T113 [US3] Wire the BVF loop in `src/intelligence_collector/graph/nodes.py` (`BVFNodes`:
+  `synthesizing`, `verifying`, `fixing`, `researching_gaps`, `needs_review`),
+  `src/intelligence_collector/graph/routing.py` (`route_after_verify`, `route_after_fix`), and
+  `src/intelligence_collector/graph/build.py`; add BVF state to
+  `src/intelligence_collector/graph/state.py`; wire `recovery_budget` and BVF activity/lessons in
+  `src/intelligence_collector/app.py`. Completion means only a fully passing report reaches
+  approval, DRAFT_DEFECT reflects then redrafts, EVIDENCE_GAP researches each gap once then requires
+  disclosure, and budget exhaustion or two no-progress repeats end in `NEEDS_REVIEW` (FR-017,
+  FR-017a, FR-018, FR-019, FR-020).
+- [X] T114 [P] [US3] Add `tests/unit/test_source_verification.py` (every check, primary-issue
+  precedence, fingerprint) and `tests/integration/test_bvf_loop.py` (reflect-and-fix with lessons in
+  the fix prompt, no-progress escalation, budget exhaustion, evidence-gap research and disclosure,
+  standalone script verdict) (SC-005, SC-006).

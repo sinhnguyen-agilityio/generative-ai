@@ -127,12 +127,24 @@ alternatives that would violate the constitution or clarified specification.
 6. `think_tool` creates a progress assessment with explicit blockers. The Supervisor may issue
    `ResearchComplete` only if every todo is completed and all VFS/index prerequisites are present.
    This ends Research only.
-7. Synthesis retrieves indexed chunks and evidence bundles, writes previous and latest draft
-   artifacts, and emits a versioned candidate report.
-8. Verification returns pass or one typed issue: `DRAFT_DEFECT`, `EVIDENCE_GAP`, or `PLAN_GAP`.
-   BVF routing sends each issue to draft revision, targeted research, or re-planning respectively;
-   valid evidence is retained and a progress fingerprint prevents no-op loops.
-9. A finite recovery counter is decremented for each repair. Exhaustion produces `NEEDS_REVIEW`.
+7. **Build**: the Report Writer (`report-writer.v1`, structured LLM call) drafts the report from the
+   stored evidence bundles only, citing a per-run source catalog as `[S<n>]`, and persists
+   `reports/draft.v<n>.md`, `reports/previous.md`, and `reports/latest.md`.
+8. **Verify**: the deterministic source-verification script (`source_verification.py`, also runnable
+   as `python -m intelligence_collector.source_verification --run-id RUN`) runs ten checks on the
+   report text against the stored sources and returns pass or one primary issue: `EVIDENCE_GAP`
+   (no evidence, or unresolved research gaps not yet researched) or `DRAFT_DEFECT` (structure,
+   unknown citation ids, uncited claims, ungrounded numbers/wording, invented URLs, Sources list,
+   uncovered questions, undisclosed gaps). Only a report passing every check leaves the loop.
+9. **Fix** (self-improving): each failure increments the visible attempt counter. For a
+   `DRAFT_DEFECT`, a reflection call (`bvf-reflect.v1`) diagnoses the root cause, adds reusable
+   lessons to an accumulating lesson memory, and plans a strategy; the next Build receives the
+   failed checks, all lessons, the strategy, and the previous draft. For an `EVIDENCE_GAP`, one
+   targeted research sub-agent runs per unresearched gap, then the report is rebuilt and must
+   disclose remaining gaps under `## Limitations`. A failure fingerprint detects no progress: the
+   first repeat tells the reflection to change approach; two consecutive repeats, or reaching
+   `INTELLIGENCE_RECOVERY_ATTEMPTS` (default 3), end in `needs_review` (`NEEDS_REVIEW`). The script
+   never emits `PLAN_GAP`; the router sends it to `needs_review` if it ever occurs.
 10. A passing result enters `Awaiting Approval` and LangGraph interrupts. The user approves or
     rejects the exact artifact hash. Approval resumes the graph; rejection records the decision and
     leaves permanent output unchanged.
@@ -152,8 +164,8 @@ alternatives that would violate the constitution or clarified specification.
 | Research persistence (`agents/worker.py`) | Turn a `ResearchOutcome` into raw captures, notes, excerpts, evidence bundle, and index chunks; idempotent resume guard | COMPLETED with sources + findings (gaps recorded); FAILED writes `outcome.json` | VFS, vector store |
 | VFS Artifact Store | Atomic run-scoped files and immutable versions | Reject path escape/cross-run writes; partial writes are invisible | All nodes, checkpoint metadata |
 | Vector Index | Chunk/index raw source captures and retrieve synthesis context | Index failures block ResearchComplete; retrieval records source IDs | Worker, synthesis, verifier |
-| Synthesizer | Draft report from indexed evidence and scope | Missing evidence is a draft/verification issue, not invented content | Model router, VFS, vector store |
-| Verifier | Scope coverage, claim/evidence links, typed feedback | Exactly one primary issue type on failure; pass enables approval | Evidence store, graph conditional edges |
+| Report Writer (`agents/report_writer.py`) | Build/Fix drafts from stored evidence with `[S<n>]` citations; BVF reflection producing lessons and strategy | `DraftAssessment` / `Reflection` validated; fix attempts must receive failures, lessons, strategy, previous draft | Model router (`synthesizer`, `fixer` roles), VFS |
+| Source Verifier (`source_verification.py`) | Deterministic source-verification script over report text and evidence bundles; standalone CLI | Ten checks; exactly one primary issue type on failure; failure fingerprint for no-progress detection; pass enables approval | Evidence bundles in VFS, `verification/catalog_state.json`, graph conditional edges |
 | Model Router | Role-specific primary/fallback models and cost-conscious reasoning sandwich | Retries bounded; fallback event traced; final failure is visible | All model-using nodes, Langfuse |
 | Checkpointer | Persist typed graph state and resume points | Atomic checkpoint; invalid latest checkpoint falls back or NEEDS_REVIEW | LangGraph, VFS metadata |
 | Approval/Publisher | Bind approval to artifact hash and atomically publish | Reject/stale/unverified writes nothing permanent | Streamlit interrupt, VFS, output path |
@@ -178,7 +190,8 @@ src/intelligence_collector/
 │   ├── supervisor.py       # ResearchSupervisor: delegation + ResearchComplete gate
 │   ├── researcher.py       # ResearchAgent sub-agent (LLM ↔ tavily_search loop + compression)
 │   ├── worker.py           # persist a sub-agent outcome to VFS + vector index
-│   ├── synthesis.py
+│   ├── report_writer.py    # BVF Build/Fix drafts + reflection (lessons, strategy)
+│   ├── synthesis.py        # report version persistence (draft.vN / previous / latest)
 │   └── verification.py
 ├── tools/
 │   ├── write_todos.py
@@ -192,6 +205,7 @@ src/intelligence_collector/
 ├── models/router.py
 ├── guardrails.py
 ├── publication.py
+├── source_verification.py  # BVF "Verify": programmatic report-vs-sources checks + CLI
 └── observability/
     ├── tracing.py
     └── evaluation.py
@@ -224,8 +238,11 @@ tested independently and no UI path can bypass workflow gates.
 - `graph/build.py` contains only wiring. `build_graph` supports three topologies selected by
   injected collaborators:
   - Full (`scope_agent` + `research_nodes`): `clarify_with_user` → (END | `write_research_brief`) →
-    `planning` → `researching` → `research_complete` → `synthesizing` → `verifying` →
-    (`approval` when passed and `with_approval` | END).
+    `planning` → `researching` → `research_complete` → `synthesizing` → `verifying`, then the
+    BVF loop: `verifying` → (`approval` | END) when every check passes; → `fixing` →
+    (`synthesizing` for DRAFT_DEFECT | `researching_gaps` → `synthesizing` for EVIDENCE_GAP) while
+    budget remains and progress is made; → `needs_review` → END otherwise. BVF nodes live in
+    `BVFNodes` (`research_nodes.bvf`); routers are `route_after_verify` and `route_after_fix`.
   - Scope only (`scope_agent`): … → `planning` → END.
   - Stage-only stubs (neither): `scope` → `planning` → `researching` → `synthesizing` →
     `verifying` → [`approval`] → END, used by contract tests.

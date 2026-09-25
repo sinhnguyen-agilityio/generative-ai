@@ -41,7 +41,8 @@ def _compose_report(scope, chunks: list[IndexedChunk]) -> str:
     )
 
 
-def _persist_report(vfs, run_id: str, report: str, version: int) -> None:
+def persist_report(vfs, run_id: str, report: str, version: int):
+    """Keep previous/latest/versioned drafts; returns the latest-report artifact ref."""
     latest_path = "reports/latest.md"
     try:
         previous = vfs.read(run_id, latest_path)
@@ -50,7 +51,7 @@ def _persist_report(vfs, run_id: str, report: str, version: int) -> None:
     if previous is not None:
         vfs.write(run_id, "reports/previous.md", previous, "previous_draft")
     vfs.write(run_id, f"reports/draft.v{version}.md", report, "draft")
-    vfs.write(run_id, latest_path, report, "latest_report")
+    return vfs.write(run_id, latest_path, report, "latest_report")
 
 
 def synthesize(
@@ -65,7 +66,7 @@ def synthesize(
     evidence = _evidence_chunks(scope, chunks, index=index, run_id=run_id)
     report = _compose_report(scope, evidence)
     if vfs is not None and run_id:
-        _persist_report(vfs, run_id, report, version)
+        persist_report(vfs, run_id, report, version)
     return report
 
 
@@ -74,7 +75,7 @@ def revise_draft(scope, chunks, feedback, vfs=None, run_id=None, version=2):
     report = _compose_report(scope, evidence)
     report += f"\n## Revision note\n{feedback}\n"
     if vfs is not None and run_id:
-        _persist_report(vfs, run_id, report, version)
+        persist_report(vfs, run_id, report, version)
     return report
 
 

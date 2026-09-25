@@ -42,6 +42,11 @@ evidence-backed technical report from a user's research request."
 - Q: Khi sub-agent dùng hết search budget mà LLM đánh giá evidence chưa đủ thì todo có trạng thái
   gì? → A: Completed kèm `sufficient: false` và unresolved gaps trong evidence bundle; chỉ Failed
   khi retrieval/compression không tạo ra kết quả dùng được (FR-009d).
+- Q: Vòng Build-Verify-Fix nên kiểm chứng và retry thế nào? → A: Verify bằng script kiểm chứng
+  nguồn có tính lập trình (deterministic) trên nội dung report; agent không được kết thúc bình
+  thường cho đến khi mọi check pass. Retry phải tự cải thiện: reflect để rút ra nguyên nhân, bài học
+  và chiến lược, tích lũy bài học qua các lần thử; lối thoát duy nhất khác là `NEEDS_REVIEW` khi hết
+  budget hoặc không tiến triển (FR-016a, FR-017a, FR-017b, FR-019, FR-020).
 
 ### Session 2026-09-24
 
@@ -341,8 +346,25 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-016**: A failed verification MUST produce structured feedback with exactly one primary failure
   type: `DRAFT_DEFECT`, `EVIDENCE_GAP`, or `PLAN_GAP`; it MUST identify the affected scope item or
   claim, supporting details, and recommended repair path.
+- **FR-016a**: Verification MUST be a mandatory, deterministic source-verification script run over
+  the report text against the stored evidence (no LLM judgement), also runnable standalone with a
+  non-zero exit code on failure. It MUST check report structure, that every cited source id exists,
+  that every body sentence carries a citation, that numbers and key terms of each claim appear in
+  its cited sources, that no URL outside the evidence appears, that a Sources section lists every
+  cited id with its exact URL, that every researched question is cited, and that unresolved
+  evidence gaps are researched and then disclosed. Only a report passing every check MAY leave the
+  Build-Verify-Fix loop toward approval.
 - **FR-017**: The recovery workflow MUST revise the draft for `DRAFT_DEFECT`, research the specific
   gap for `EVIDENCE_GAP`, and re-plan affected tasks for `PLAN_GAP`.
+- **FR-017a**: Each unresolved evidence gap MUST receive one targeted research round; gaps that remain
+  afterwards MUST be disclosed under a `## Limitations` section rather than retried indefinitely.
+- **FR-017b**: Retries in the Build-Verify-Fix loop MUST be self-improving rather than repeated
+  generation: after a failed verification the agent MUST reflect on the failed checks to produce a
+  root-cause diagnosis, reusable lessons, and a strategy; lessons MUST accumulate across attempts
+  and be persisted; and every fix attempt MUST receive the failed checks, all lessons, the strategy,
+  and the previous draft. When a fix reproduces the same failures (same failure fingerprint), the
+  next reflection MUST be told the previous strategy failed and change approach; two consecutive
+  no-progress verifications MUST end the loop in `NEEDS_REVIEW`.
 - **FR-018**: Every repaired candidate artifact MUST pass verification again; prior verification
   MUST NOT carry over to changed artifact content.
 - **FR-019**: Every retry and recovery path MUST have a configured finite limit and visible attempt
