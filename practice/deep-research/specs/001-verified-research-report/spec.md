@@ -13,6 +13,13 @@ evidence-backed technical report from a user's research request."
 
 ### Session 2026-09-25
 
+- Q: Structured output của `clarify_with_user` có nên chỉ gồm đúng ba field
+  `need_clarification`, `question`, và `verification`, còn research scope chi tiết được tạo riêng
+  trong `write_research_brief`? → A: Chỉ ba field clarification.
+- Q: Mỗi lượt xử lý nên hiển thị response của assistant theo format nào trong chat transcript? →
+  A: Một Markdown message mỗi lượt; structured JSON và workflow metadata chỉ nằm trong Details.
+- Q: Trong màn hình mặc định, thông tin agent, progress và tool calls nên xuất hiện như thế nào để
+  chat vẫn đơn giản như ChatGPT? → A: Chat-first với status line và panel Details thu gọn mặc định.
 - Q: Trong lúc workflow đang chạy, Streamlit nên hiển thị mức độ chi tiết nào về Scope,
   Planning và tool calls? → A: Hiển thị stage hiện tại, bước đang chạy và activity feed ngắn như
   “Evaluating scope”, “Generating brief”, hoặc “Calling write_todos”; ẩn tool arguments nhạy cảm.
@@ -98,8 +105,9 @@ links without asking for approval of the research brief.
     each step completes, **Then** its required run-scoped VFS artifact exists: brief summary, todo
     list, scraped website content, and previous/latest report versions respectively.
 11. **Given** a workflow execution is active, **When** Scope, Planning, or an approved tool runs,
-    **Then** the UI shows the current stage, a concise current-action label, and a chronological
-    activity item without exposing credentials or sensitive tool arguments.
+    **Then** the chat-first UI shows a compact status line while agent and tool activity is available
+    in a `Details` panel that is collapsed by default, without exposing credentials or sensitive
+    tool arguments.
 12. **Given** a graph node or tool call starts, **When** its lifecycle changes, **Then** one activity
     item appears immediately as running and that same item changes to success or failure when the
     operation ends, without creating misleading duplicate completion items.
@@ -122,7 +130,8 @@ the required scope fields are clear.
 
 1. **Given** a request with an unclear objective, constraint, success criterion, or deliverable
    format, **When** the `clarify_with_user` Scope node evaluates it, **Then** it returns exactly one
-   focused follow-up question and the run remains in Scoping.
+   focused follow-up question using only the three-field clarification response and the run remains
+   in Scoping.
 2. **Given** an ambiguous request, **When** the user answers only part of the missing information,
    **Then** the same LangGraph thread retains prior LangChain conversation turns and asks only for
    information still needed.
@@ -318,17 +327,23 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   versions, verification history, recovery counters, and publication state.
 - **FR-022**: A resumed run MUST continue from the latest valid checkpoint and MUST NOT repeat
   completed external work unless that work is incomplete, invalidated, or selected for repair.
-- **FR-023**: The UI MUST show the current stage, concise current action, chronological activity feed,
-  task-level research progress, latest verification outcome, recovery status when applicable, and
-  the latest reviewable report. Scope, Planning, and approved tool calls MUST emit user-readable
-  activity items such as “Evaluating scope”, “Generating brief”, and “Calling write_todos”; the UI
-  MUST NOT expose credentials or sensitive tool arguments.
+- **FR-023**: The UI MUST be chat-first: its primary transcript contains only user and assistant
+  messages, matching a simple conversational layout. While work is active, a compact status line
+  MUST show the current stage and action. Agent identity, chronological activity, tool calls,
+  task-level research progress, verification outcome, and recovery details MUST remain available in
+  a `Details` panel that is collapsed by default. The latest reviewable report remains available in
+  the conversation. The UI MUST NOT expose credentials or sensitive tool arguments.
 - **FR-023a**: The UI MUST animate a processing indicator only while backend execution is active. A
   graph paused for clarification MUST show a non-animated “Waiting for your response” state with the
   outstanding question visible and MUST NOT imply that processing continues.
 - **FR-023b**: UI progress MUST update during execution from graph-node and approved-tool lifecycle
   events. Each operation MUST have one stable activity item that transitions from running to success
   or failure and retains chronological ordering.
+- **FR-023c**: Each completed conversational turn MUST add at most one assistant message to the
+  primary transcript. That message MUST be plain Markdown containing only the focused clarification
+  question, a concise research-start acknowledgement, or the reviewable report appropriate to that
+  turn. Structured JSON, internal state, agent metadata, and tool metadata MUST NOT appear in the
+  transcript and MAY appear only in the collapsed `Details` panel.
 - **FR-024**: The system MUST distinguish at least the states Scoping, Planning, Researching,
   Synthesizing, Verifying, Awaiting Approval, Published, Failed, and `NEEDS_REVIEW`.
 - **FR-025**: Only a verified artifact MAY enter Awaiting Approval, and explicit human approval of
@@ -353,15 +368,18 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-032**: The model router MUST centralize primary/fallback models, reasoning settings, timeouts,
   retry limits, prompt versions, selected model, fallback events, errors, and structured decisions in
   run traces without recording secrets.
-- **FR-033**: Scope Agent LLM output MUST be either `NEEDS_CLARIFICATION` with exactly one focused
-  question or `SCOPE_CLEAR` with objective, constraints, success criteria, research boundaries, and
-  deliverable format. `SCOPE_CLEAR` automatically transitions to Planning; clarification pauses the
-  same LangGraph thread for the next Streamlit turn.
+- **FR-033**: The `clarify_with_user` LLM output MUST contain exactly three fields:
+  `need_clarification` (boolean), `question` (string), and `verification` (string). When clarification
+  is needed, `question` MUST contain exactly one focused question and `verification` MUST be empty.
+  When scope is clear, `question` MUST be empty and `verification` MUST contain a concise
+  acknowledgement. A clear result automatically transitions to brief generation; clarification
+  pauses the same LangGraph thread for the next Streamlit turn.
 - **FR-033a**: Scope clarification MUST use two sequential decisions: a `clarify_with_user` node
   evaluates the initial request plus prior LangChain conversation and either pauses with one focused
-  question or emits a clear decision; then `write_research_brief` performs a separate structured LLM
-  call to create the brief. The graph MUST invoke `write_research_brief` only after a clear decision
-  and MUST transition to Planning automatically after the brief is recorded.
+  question or emits a clear three-field decision; then `write_research_brief` performs a separate
+  structured LLM call to derive the detailed scope from authoritative user turns and create the
+  brief. The graph MUST invoke `write_research_brief` only after a clear decision and MUST transition
+  to Planning automatically after the brief is recorded.
 - **FR-033b**: `write_research_brief` MUST return a dedicated validated `ResearchBrief` containing
   exactly one non-empty, detailed research question. The question MUST consolidate the objective,
   boundaries, explicitly stated constraints, success criteria, and deliverable format from the
@@ -440,7 +458,11 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **SC-003**: In 100% of artifacts labeled verified, every scoped requirement has an explicit
   verification result and every factual claim has at least one reviewable evidence link.
 - **SC-004**: A user can determine the run's current stage, completed and remaining research work,
-  latest verification outcome, and report availability from a single UI view within 10 seconds.
+  latest verification outcome, and report availability within 10 seconds using the compact status
+  line and, when needed, the collapsed-by-default `Details` panel.
+- **SC-004a**: In 100% of tested chat turns, the primary transcript adds no more than one assistant
+  Markdown message and contains no structured decision JSON, internal state payload, or tool
+  metadata.
 - **SC-005**: In the defined failed-verification acceptance test, the system records the defect,
   performs the targeted repair, and re-verifies the changed artifact before assigning verified
   status.

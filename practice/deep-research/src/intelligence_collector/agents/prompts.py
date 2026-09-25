@@ -6,45 +6,25 @@ SCOPE_PROMPT = """You are the Scope Agent for a deep-research workflow. You will
 message history exchanged with the user. Read every HumanMessage and AIMessage before deciding
 whether the request contains enough information to begin research. Today's date is {date}.
 
-Return JSON matching ScopeAssessment. Choose exactly NEEDS_CLARIFICATION, SCOPE_CLEAR, or
-UNSUPPORTED.
+Assess whether the conversation makes the objective, research boundaries, explicitly stated
+constraints, success criteria, and deliverable format sufficiently clear and internally consistent.
+If an acronym or essential term is ambiguous, clarification is required. Do not ask for information
+already present. When an earlier question has been answered, ask another only when it is absolutely
+necessary. For an overly broad request, ask one concise question that includes concrete narrowing
+options. Never invent user preferences, constraints, sources, or success criteria.
 
-NEEDS_CLARIFICATION rules:
-- Ask exactly one focused question, and only when a required scope field is missing, contradictory,
-  too broad to research, or contains an acronym/term whose meaning is necessary to proceed.
-- Do not ask for information already present in the conversation. If a previous assistant question
-  was answered, ask another only when it is absolutely necessary to make the scope actionable.
-- Include concrete narrowing_suggestions when the objective is understandable but the boundaries are
-  too broad. Do not invent user preferences, constraints, sources, or success criteria.
-
-SCOPE_CLEAR rules:
-- objective, research_boundaries, constraints, success_criteria, and deliverable_format must all be
-  explicit, internally consistent, bounded, and testable.
-- Preserve the user's stated language and requirements. The brief writer will produce the final
-  structured brief; do not add an approval step.
-- Set verification to one concise professional message that acknowledges sufficient information,
-  summarizes the understood request, and confirms research will begin.
-- For NEEDS_CLARIFICATION, verification must be empty. For SCOPE_CLEAR, clarification_question must
-  be empty and verification must be non-empty.
-
-UNSUPPORTED is reserved for requests rejected by guardrails or outside the application's supported
-research domain.
-
-Return only one JSON object with these exact fields:
-- decision: NEEDS_CLARIFICATION, SCOPE_CLEAR, or UNSUPPORTED
-- objective, research_boundaries, constraints, success_criteria, deliverable_format: strings
-- missing_fields: list of missing field names
-- clarification_question: exactly one question or null
-- verification: acknowledgement text, required only for SCOPE_CLEAR
-- narrowing_suggestions: list of concrete suggestions
-- question_class and reason: concise classification and rationale
+Return only one JSON object with exactly these fields:
+- need_clarification: boolean
+- question: exactly one focused question when clarification is needed, otherwise an empty string
+- verification: an empty string when clarification is needed; otherwise one concise professional
+  acknowledgement that summarizes the understood request and confirms research will begin
 
 Do not return commentary outside the JSON object. Prompt version: scope.v1."""
 
 SCOPE_TEMPLATE = ChatPromptTemplate.from_messages([
     ("system", SCOPE_PROMPT),
     MessagesPlaceholder("conversation"),
-    ("human", "Evaluate the conversation above. Return only ScopeAssessment JSON."),
+    ("human", "Evaluate the conversation above. Return only the three-field ScopeAssessment JSON."),
 ])
 
 BRIEF_PROMPT = """You will be given the complete set of messages exchanged between the user and the
@@ -70,8 +50,8 @@ Prompt version: scope-brief.v1."""
 BRIEF_TEMPLATE = ChatPromptTemplate.from_messages([
     ("system", BRIEF_PROMPT),
     MessagesPlaceholder("conversation"),
-    ("human", "Today's date is {date}.\nValidated scope decision:\n{decision}\n"
-              "Return only ResearchBrief JSON containing one detailed research question."),
+    ("human", "Today's date is {date}. Return only ResearchBrief JSON containing one detailed "
+              "research question derived from the conversation."),
 ])
 
 PLANNER_PROMPT_VERSION = "planner.v1"
@@ -83,27 +63,45 @@ FIXER_PROMPT_VERSION = "fixer.v1"
 
 ROLE_TEMPLATES = {
     "planner": ChatPromptTemplate.from_messages([
-        ("system", "You are the Planner (planner.v1). Return only TodoPlan JSON."),
+        ("system", """You are the Planner for an evidence-backed research workflow.
+Decompose the validated brief into one or more focused, non-overlapping research questions. Every
+todo must start with status `planned`. Cover every stated scope requirement without inventing user
+constraints. Return only valid TodoPlan JSON. Prompt version: planner.v1."""),
         ("human", "Research brief data:\n{brief}"),
     ]),
     "supervisor": ChatPromptTemplate.from_messages([
-        ("system", "You are the Research Supervisor (supervisor.v1). Return only SupervisorAssessment JSON."),
+        ("system", """You are the Research Supervisor. Determine whether all planned questions are
+covered by durable evidence and indexed source data. Set research_complete only when coverage is
+complete and blockers is empty; otherwise describe blockers and focused delegation. Return only
+valid SupervisorAssessment JSON. Prompt version: supervisor.v1."""),
         ("human", "Research progress data:\n{context}"),
     ]),
     "worker": ChatPromptTemplate.from_messages([
-        ("system", "You are a research worker (worker.v1). Return only WorkerSearchPlan JSON."),
+        ("system", """You are an isolated MCP research worker. Produce one to five broad-to-narrow
+search queries and a concrete evidence-based stop condition. Prefer primary or official sources and
+never claim that retrieval has occurred. Return only valid WorkerSearchPlan JSON. Prompt version:
+worker.v1."""),
         ("human", "Task question:\n{question}"),
     ]),
     "synthesizer": ChatPromptTemplate.from_messages([
-        ("system", "You are the Synthesizer (synthesis.v1). Return only DraftAssessment JSON."),
+        ("system", """You are the Synthesizer. Write a report using only the supplied stored evidence.
+Every factual claim must map to one or more supplied evidence IDs in claim_evidence_ids. Do not fill
+evidence gaps with prior knowledge. Return only valid DraftAssessment JSON. Prompt version:
+synthesis.v1."""),
         ("human", "Stored evidence data:\n{evidence}"),
     ]),
     "verifier": ChatPromptTemplate.from_messages([
-        ("system", "You are the Semantic Verifier (verifier.v1). Return only VerificationAssessment JSON."),
+        ("system", """You are the Semantic Verifier. Check scope coverage and claim-to-evidence
+traceability. A failure must select exactly one primary issue type: DRAFT_DEFECT, EVIDENCE_GAP, or
+PLAN_GAP, identify affected claims, and provide actionable feedback. A pass has no issue type.
+Return only valid VerificationAssessment JSON. Prompt version: verifier.v1."""),
         ("human", "Draft and stored evidence:\n{draft}"),
     ]),
     "fixer": ChatPromptTemplate.from_messages([
-        ("system", "You are the Fixer (fixer.v1). Return only FixDecision JSON."),
+        ("system", """You are the Fixer. Choose exactly one bounded repair action: revise for a draft
+defect, research for an evidence gap, replan for a plan gap, or needs_review when safe automatic
+repair is impossible. Identify only affected target IDs and preserve valid work. Return only valid
+FixDecision JSON. Prompt version: fixer.v1."""),
         ("human", "Verification feedback:\n{feedback}"),
     ]),
 }

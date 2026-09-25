@@ -1,0 +1,25 @@
+{
+  "task_id": "ba091f26-9478-4394-b4ec-fcff691f148c",
+  "question": "I want a technical report explaining local software cache behavior using technical sources and citing the retrieved evidence.",
+  "sources": [
+    {
+      "source_id": "958a9286-9cc0-43ea-9dae-3a24760039cc",
+      "locator": "https://controlled.test/cache",
+      "retrieved_at": "2026-09-25T03:10:43.430076+00:00",
+      "mcp_server": "controlled",
+      "mcp_tool": "search",
+      "provenance": {
+        "query": "I want a technical report explaining local software cache behavior using technical sources and citing the retrieved evidence.",
+        "url": "https://controlled.test/cache",
+        "content": "A cache stores reusable data for later access.",
+        "sufficient": true
+      },
+      "artifact_id": "974cb53c-d6c1-4355-898e-4b76dce2df60",
+      "content_hash": "e530598821eee4278930b5db1872d34af64e19755511a60a33448975355a626f",
+      "excerpt": "A cache stores reusable data for later access."
+    }
+  ],
+  "search_calls": 1,
+  "sufficient": true,
+  "unresolved_gaps": []
+}

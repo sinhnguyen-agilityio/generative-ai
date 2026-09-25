@@ -57,7 +57,7 @@ def test_scope_execution_has_root_nodes_model_events_callbacks_and_flush(monkeyp
     model_records = [record for record in client.records if record["name"] == "model.validation.scope"]
     assert "You are the Scope Agent" in model_records[0]["input"]
     assert "bounded request" in model_records[0]["input"]
-    assert '"decision": "SCOPE_CLEAR"' in model_records[0]["updates"][-1]["output"]
+    assert '"need_clarification": false' in model_records[0]["updates"][-1]["output"]
     assert "Translate that conversation into one detailed" in model_records[1]["input"]
     assert '"research_question"' in model_records[1]["updates"][-1]["output"]
     assert all(isinstance(record["input"], str) for record in client.records)

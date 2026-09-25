@@ -32,6 +32,8 @@ class GraphState(TypedDict, total=False):
     input_turns: list[str]
     scope_questions: list[str]
     checkpoint_metadata: dict[str, Any]
+    current_action: str
+    activity: list[dict[str, Any]]
     last_error: str
 
 

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import json
+import re
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -13,10 +14,37 @@ class FallbackEvent:
     selected_model: str = ""
 
 T = TypeVar("T", bound=BaseModel)
+MAX_MODEL_ATTEMPTS = 3
+SECRET_MARKERS = ("api_key", "apikey", "secret", "password", "token", "authorization")
+
+
+def _redact_text(value: object) -> str:
+    text = str(value)
+    text = re.sub(
+        r"(?i)\b(api[_-]?key|secret|password|token|authorization)\s*[:=]\s*([^\s,;]+)",
+        r"\1=[REDACTED]",
+        text,
+    )
+    return re.sub(r"(?i)\bbearer\s+[a-z0-9._-]{8,}", "Bearer [REDACTED]", text)
+
+
+def _redact_value(value):
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]"
+            if any(marker in key.lower() for marker in SECRET_MARKERS)
+            else _redact_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_value(item) for item in value]
+    return _redact_text(value) if isinstance(value, str) else value
 
 
 class ModelRouter:
     def __init__(self, primary=None, fallback=None, *, max_attempts: int = 2, on_fallback=None, mode: str = "live", trace=None, callbacks=None):
+        if not isinstance(max_attempts, int) or not 1 <= max_attempts <= MAX_MODEL_ATTEMPTS:
+            raise ValueError(f"max_attempts must be between 1 and {MAX_MODEL_ATTEMPTS}")
         self.primary, self.fallback = primary, fallback
         self.max_attempts = max_attempts
         self.on_fallback = on_fallback
@@ -69,18 +97,19 @@ class ModelRouter:
             blocks = []
             for message in prompt:
                 role = getattr(message, "type", type(message).__name__).upper()
-                blocks.append(f"[{role}]\n{getattr(message, 'content', str(message))}")
+                content = _redact_text(getattr(message, "content", str(message)))
+                blocks.append(f"[{role}]\n{content}")
             return "\n\n".join(blocks)
-        return str(prompt)
+        return _redact_text(prompt)
 
     @staticmethod
     def _output_text(raw) -> str:
         value = getattr(raw, "content", raw)
         if isinstance(value, BaseModel):
-            return value.model_dump_json(indent=2)
+            return _redact_text(value.model_dump_json(indent=2))
         if isinstance(value, (dict, list)):
-            return json.dumps(value, ensure_ascii=False, indent=2, default=str)
-        return str(value)
+            return json.dumps(_redact_value(value), ensure_ascii=False, indent=2, default=str)
+        return _redact_text(value)
 
     def invoke(self, role, prompt, *, run_id="", thread_id="", prompt_version=""):
         if self.mode == "live" and self.primary is None:
@@ -111,7 +140,11 @@ class ModelRouter:
                 raise RuntimeError(f"primary model failed for {role} and no fallback is configured") from exc
             self.fallback_used = True
             self.last_model = self._model_name(self.fallback)
-            event = FallbackEvent(role=role, reason=str(exc), selected_model=self.last_model)
+            event = FallbackEvent(
+                role=role,
+                reason=_redact_text(exc),
+                selected_model=self.last_model,
+            )
             self.events.append(event)
             if self.on_fallback:
                 self.on_fallback(event)
@@ -142,19 +175,19 @@ class ModelRouter:
                     "prompt_version": prompt_version,
                     "run_id": run_id,
                     "thread_id": thread_id,
-                    "decision": result.model_dump(mode="json"),
+                    "decision": _redact_value(result.model_dump(mode="json")),
                     "selected_model": self.last_model,
                     "fallback_used": self.fallback_used,
                     "attempt": attempt,
                     "input_text": prompt_text,
-                    "output_text": result.model_dump_json(indent=2),
+                    "output_text": _redact_text(result.model_dump_json(indent=2)),
                 }
                 if message_count is not None:
                     event["message_count"] = message_count
                 self._trace(**event)
                 return result
             except Exception as exc:
-                errors.append(str(exc))
+                errors.append(_redact_text(exc))
                 self._trace(
                     role=role,
                     prompt_version=prompt_version,

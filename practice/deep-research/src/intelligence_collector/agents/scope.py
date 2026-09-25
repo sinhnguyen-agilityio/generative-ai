@@ -4,7 +4,6 @@ from datetime import date
 from intelligence_collector.contracts import (
     ResearchBrief,
     ScopeAssessment,
-    ScopeDecision,
     ScopedRequest,
 )
 from intelligence_collector.agents.prompts import (
@@ -106,12 +105,11 @@ class ScopeAgent:
         thread_id: str = "",
         vfs: VFS | None = None,
     ) -> ResearchBrief:
-        if assessment.decision != ScopeDecision.SCOPE_CLEAR:
-            raise ValueError("write_research_brief requires a SCOPE_CLEAR decision")
+        if assessment.need_clarification:
+            raise ValueError("write_research_brief requires a clear scope decision")
         conversation = self._messages(prior_turns)
         messages = BRIEF_TEMPLATE.format_messages(
             conversation=conversation,
-            decision=assessment.model_dump_json(),
             date=date.today().isoformat(),
         )
         brief = self.router.invoke_messages(
@@ -143,7 +141,7 @@ class ScopeAgent:
         assessment = self.clarify_with_user(
             request, prior_turns, run_id=run_id, thread_id=thread_id
         )
-        if assessment.decision == ScopeDecision.SCOPE_CLEAR:
+        if not assessment.need_clarification:
             return self.write_research_brief(
                 request,
                 assessment,

@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 from pathlib import Path
 from uuid import uuid4
 from intelligence_collector.agents.scope import ScopeAgent
@@ -9,11 +10,14 @@ from intelligence_collector.config import Settings, load_local_env
 from intelligence_collector.contracts import VerificationResult
 from intelligence_collector.guardrails import validate_request
 from intelligence_collector.graph.build import build_graph
+from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.factory import ModelConfig, ModelFactory
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.observability.tracing import Tracer
-from intelligence_collector.publication import can_request_approval
+from intelligence_collector.publication import approval_for, can_request_approval
 from intelligence_collector.storage.vfs import VFS
+from intelligence_collector.storage.vector_index import LocalVectorIndex
+from intelligence_collector.tools.mcp import TavilyMCP
 
 
 def _get_tracer(st):
@@ -63,11 +67,29 @@ def _get_scope_graph(st, agent, tracer):
 
     settings = Settings.from_env()
     connection = _open_checkpoint_connection(settings.checkpoint_path)
+    vfs = VFS(settings.vfs_root)
+    research_nodes = None
+    tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
+    tavily_url = os.getenv("TAVILY_MCP_URL", "").strip()
+    if tavily_key and tavily_url:
+        research_nodes = ResearchNodes(
+            vfs,
+            LocalVectorIndex(settings.vector_path),
+            TavilyMCP(
+                tavily_url,
+                tavily_key,
+                max_calls=settings.max_search_calls,
+            ),
+        )
     graph = build_graph(
         scope_agent=agent,
-        vfs=VFS(settings.vfs_root),
+        vfs=vfs,
+        research_nodes=research_nodes,
         checkpointer=SqliteSaver(connection),
         tracer=tracer,
+        lifecycle=lambda node, status: st.session_state.get(
+            "_lifecycle_callback", lambda *_: None
+        )(node, status),
     )
     st.session_state.scope_checkpoint_connection = connection
     st.session_state.scope_graph = graph
@@ -96,8 +118,43 @@ def _snapshot_verification(snapshot):
         return None
 
 
-def _render_graph_snapshot(st, snapshot):
+def _render_details_content(st, snapshot):
     """Render a graph snapshot without mutating authoritative workflow data."""
+    current_action = snapshot.get("current_action")
+    if current_action:
+        st.write(f"Current action: {current_action}")
+
+    activity = list(snapshot.get("activity") or [])
+    if activity:
+        st.subheader("Activity")
+        for item in activity:
+            label = _record_value(item, "label", "Workflow operation")
+            status = _status_text(_record_value(item, "status", "unknown"))
+            agent = _record_value(item, "agent", "Workflow")
+            tool = _record_value(item, "tool")
+            duration = _record_value(item, "duration_ms")
+            details = [agent]
+            if tool:
+                details.append(f"tool: {tool}")
+            if duration is not None:
+                details.append(f"{duration} ms")
+            st.markdown(f"- **{status}** — {label} · {' · '.join(details)}")
+
+    assessment = snapshot.get("progress_assessment")
+    if assessment:
+        st.subheader("Supervisor assessment")
+        next_action = _record_value(assessment, "next_action", "")
+        blockers = list(_record_value(assessment, "blockers", []) or [])
+        if next_action:
+            st.write(f"Next action: {next_action}")
+        if blockers:
+            st.write("Blockers: " + ", ".join(blockers))
+
+    attempt = int(snapshot.get("recovery_attempt") or 0)
+    if attempt:
+        st.subheader("Recovery")
+        st.write(f"Recovery attempt: {attempt}/{snapshot.get('recovery_budget', 0)}")
+
     todos = list(snapshot.get("todos") or [])
     if todos:
         completed = sum(
@@ -149,6 +206,69 @@ def _render_graph_snapshot(st, snapshot):
     return verification
 
 
+def _render_graph_snapshot(st, snapshot):
+    """Keep workflow internals available without competing with the chat."""
+    with st.expander("Details", expanded=False):
+        verification = _render_details_content(st, snapshot)
+        if snapshot.get("trace_id"):
+            st.caption(f"Langfuse trace: {snapshot['trace_id']}")
+    return verification
+
+
+def _render_transcript(st, snapshot):
+    messages = list(snapshot.get("messages") or [])
+    report = snapshot.get("report") or snapshot.get("latest_report") or snapshot.get("draft")
+    report_stage = snapshot.get("stage") in {"Awaiting Approval", "Published"}
+    last_ai = max(
+        (i for i, message in enumerate(messages) if getattr(message, "type", "") == "ai"),
+        default=-1,
+    )
+    for index, message in enumerate(messages):
+        kind = getattr(message, "type", "")
+        if kind not in {"human", "ai"}:
+            continue
+        role = "user" if kind == "human" else "assistant"
+        content = report if report and report_stage and index == last_ai else message.content
+        with st.chat_message(role):
+            st.markdown(str(content))
+
+
+_NODE_ACTIVITY = {
+    "clarify_with_user": ("Evaluating scope", "Scope Agent", None),
+    "write_research_brief": ("Generating research brief", "Scope Agent", None),
+    "planning": ("Calling write_todos", "Planner", "write_todos"),
+    "researching": ("Calling research tools", "Research Worker", "MCP search"),
+    "research_complete": ("Assessing research completeness", "Supervisor", "think_tool"),
+    "synthesizing": ("Synthesizing report", "Synthesizer", None),
+    "verifying": ("Verifying report", "Verifier", None),
+    "approval": ("Waiting for publication decision", "Publisher", None),
+}
+
+
+def _record_lifecycle(st, node: str, status: str):
+    execution_id = st.session_state.get("_execution_id", "execution")
+    item_id = f"{execution_id}:{node}"
+    label, agent, tool = _NODE_ACTIVITY.get(
+        node, (node.replace("_", " ").title(), "Workflow", None)
+    )
+    activity = list(st.session_state.get("activity", []))
+    item = next((value for value in activity if value.get("id") == item_id), None)
+    started = st.session_state.setdefault("_activity_started", {})
+    if item is None:
+        item = {"id": item_id, "label": label, "agent": agent, "status": status}
+        if tool:
+            item["tool"] = tool
+        activity.append(item)
+    else:
+        item["status"] = status
+    if status == "running":
+        started[item_id] = time.monotonic()
+    elif item_id in started:
+        item["duration_ms"] = max(0, round((time.monotonic() - started.pop(item_id)) * 1000))
+    st.session_state.activity = activity
+    return item
+
+
 def render():
     load_local_env()
     try:
@@ -158,6 +278,7 @@ def render():
     st.title("Intelligence Collector")
     st.session_state.setdefault("stage", "Scoping")
     st.session_state.setdefault("progress", "No research started")
+    st.session_state.setdefault("activity", [])
     existing_scope_state = st.session_state.get("scope_state", {})
     st.session_state.setdefault(
         "scope_thread_id", existing_scope_state.get("thread_id", str(uuid4()))
@@ -165,8 +286,13 @@ def render():
     st.session_state.setdefault("scope_state", {
         "run_id": str(uuid4()), "thread_id": st.session_state.scope_thread_id,
     })
-    st.write(f"Stage: **{st.session_state.stage}**")
-    st.write(f"Progress: {st.session_state.progress}")
+    st.caption(f"{st.session_state.stage} · {st.session_state.progress}")
+    clarification = existing_scope_state.get("scope_assessment", {}).get(
+        "question"
+    )
+    if st.session_state.stage == "Scoping" and clarification:
+        st.info("Waiting for your response")
+    _render_transcript(st, st.session_state.scope_state)
     snapshot_verification = _render_graph_snapshot(st, st.session_state.scope_state)
     if st.session_state.get("needs_review"):
         st.error("This run needs human review before it can be treated as verified or published.")
@@ -176,8 +302,20 @@ def render():
         st.subheader("Review and publish")
         decision = st.radio("Publication decision", ["Approve", "Reject"], key="publication_decision")
         if st.button("Record decision"):
-            st.session_state.approval = decision == "Approve"
-            st.success("Approval recorded; publication remains hash-bound.")
+            approval = approval_for(
+                verification.artifact_hash,
+                verification.verification_id,
+                decision == "Approve",
+                "local-user",
+            )
+            st.session_state.scope_state = {
+                **st.session_state.scope_state,
+                "approval": approval.model_dump(mode="json"),
+            }
+            if approval.approved:
+                st.success("Approval recorded; publication remains hash-bound.")
+            else:
+                st.info("Rejection recorded; permanent output was not changed.")
     text = st.chat_input("What should we research?")
     if text:
         try:
@@ -189,44 +327,58 @@ def render():
             tracer = _get_tracer(st)
             run_id = st.session_state.scope_state["run_id"]
             thread_id = st.session_state.scope_thread_id
-            with tracer.execution(
-                run_id,
-                thread_id,
-                input={"request": text},
-            ) as execution:
-                agent = _get_scope_agent(st, tracer)
-                if agent is None:
-                    raise RuntimeError("Scope model is not configured. Set SCOPE_MODEL and retry.")
-                state = {
-                    **st.session_state.scope_state,
-                    "request": text,
-                    "thread_id": thread_id,
-                }
-                config = {"configurable": {"thread_id": thread_id}}
-                result = _get_scope_graph(st, agent, tracer).invoke(state, config)
-                execution.output = json.dumps({
-                    "stage": result.get("stage"),
-                    "scope_decision": result.get("scope_assessment", {}).get("decision"),
-                    "scope_assessment": result.get("scope_assessment"),
-                    "research_brief": result.get("scoped_request"),
-                    "messages": [
-                        {"role": getattr(message, "type", "message"), "content": getattr(message, "content", str(message))}
-                        for message in result.get("messages", [])
-                    ],
-                }, ensure_ascii=False, indent=2, default=str)
-                st.session_state.scope_state = result
+            execution_id = str(uuid4())
+            st.session_state._execution_id = execution_id
+            with st.status("Processing research request", expanded=False) as indicator:
+                def lifecycle(node, status):
+                    item = _record_lifecycle(st, node, status)
+                    indicator.update(label=item["label"], state="running")
+
+                st.session_state._lifecycle_callback = lifecycle
+                with tracer.execution(
+                    run_id,
+                    thread_id,
+                    input={"request": text},
+                ) as execution:
+                    agent = _get_scope_agent(st, tracer)
+                    if agent is None:
+                        raise RuntimeError("Scope model is not configured. Set SCOPE_MODEL and retry.")
+                    state = {
+                        **st.session_state.scope_state,
+                        "request": text,
+                        "thread_id": thread_id,
+                    }
+                    config = {"configurable": {"thread_id": thread_id}}
+                    try:
+                        result = _get_scope_graph(st, agent, tracer).invoke(state, config)
+                    finally:
+                        st.session_state.pop("_lifecycle_callback", None)
+                    execution.output = json.dumps({
+                        "stage": result.get("stage"),
+                        "need_clarification": result.get("scope_assessment", {}).get(
+                            "need_clarification"
+                        ),
+                        "scope_assessment": result.get("scope_assessment"),
+                        "research_brief": result.get("scoped_request"),
+                        "messages": [
+                            {"role": getattr(message, "type", "message"), "content": getattr(message, "content", str(message))}
+                            for message in result.get("messages", [])
+                        ],
+                    }, ensure_ascii=False, indent=2, default=str)
+                indicator.update(label="Processing complete", state="complete", expanded=False)
+                result["activity"] = list(st.session_state.activity)
                 st.session_state.last_trace_id = execution.trace_id
+                result["trace_id"] = execution.trace_id
+                st.session_state.scope_state = result
                 st.session_state.stage = result.get("stage", "Scoping")
                 if st.session_state.stage == "Scoping":
-                    question = result.get("scope_assessment", {}).get("clarification_question")
-                    st.session_state.progress = "Clarification needed"
-                    st.warning(question or "Please clarify the research scope.")
+                    st.session_state.progress = "Waiting for your response"
                 else:
                     st.session_state.progress = "Scope clear; Planning started"
-                    st.success("Scope is clear. Planning started automatically.")
+                st.rerun()
         except Exception as exc:
+            if st.session_state.activity:
+                st.session_state.activity[-1]["status"] = "failure"
             st.error(f"Scope decision failed: {exc}")
-    if st.session_state.get("last_trace_id"):
-        st.caption(f"Langfuse trace: {st.session_state.last_trace_id}")
     return st
 if __name__ == "__main__": render()

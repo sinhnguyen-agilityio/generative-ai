@@ -16,7 +16,13 @@ def approval_for(artifact_hash: str, verification_id: str, approved: bool, actor
 
 def publish(content: str, destination: str, approval: ApprovalDecision, verification: VerificationResult):
     digest = hashlib.sha256(content.encode()).hexdigest()
-    if not verification.passed or approval.artifact_hash != digest or not approval.approved:
+    authorized = (
+        verification.passed
+        and approval.approved
+        and approval.artifact_hash == digest == verification.artifact_hash
+        and approval.verification_id == verification.verification_id
+    )
+    if not authorized:
         return PublicationRecord(destination=destination, artifact_hash=digest, approval_id=approval.approval_id, published=False, error="approval/hash/verification mismatch")
     target = Path(destination)
     target.parent.mkdir(parents=True, exist_ok=True)

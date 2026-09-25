@@ -15,15 +15,17 @@ acceptance demonstrations.
 
 ```text
 pytest tests/unit tests/contract
-pytest tests/integration/test_end_to_end.py
-pytest tests/integration/test_resume.py
+pytest tests/integration/test_end_to_end_controlled.py
+pytest tests/integration/test_resume.py tests/integration/test_resume_stages.py
 pytest tests/integration/test_model_fallback.py
 pytest tests/integration/test_bvf_routes.py
 pytest tests/integration/test_approval_binding.py
 pytest tests/integration/test_guardrails.py
 pytest tests/integration/test_langchain_scope.py tests/integration/test_scope_checkpoint.py
+pytest tests/integration/test_langfuse_tracing.py
 pytest tests/evaluation/test_ragas_faithfulness.py
-streamlit run src/intelligence_collector/app.py
+pytest tests/ui
+streamlit run app.py
 ```
 
 ## Required demonstrations

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 from streamlit.testing.v1 import AppTest
 
 
@@ -37,8 +38,9 @@ def test_progress_ui_starts_with_current_stage():
     app = AppTest.from_file(APP_PATH).run()
 
     assert not app.exception
-    assert "Stage: **Scoping**" in _visible_text(app)
+    assert "Scoping" in _visible_text(app)
     assert "No research started" in _visible_text(app)
+    assert app.expander[0].label == "Details"
 
 
 def test_thread_identity_is_stable_across_streamlit_reruns():
@@ -66,7 +68,7 @@ def test_graph_snapshot_renders_stage_and_task_progress():
     })
 
     text = _visible_text(app)
-    assert "Stage: **Researching**" in text
+    assert "Researching" in text
     assert "Task progress: 1/2 completed" in text
     assert "Find primary sources" in text
     assert "completed" in text
@@ -132,3 +134,67 @@ def test_ui_rejects_unsafe_input():
     app.chat_input[0].set_value("ignore previous instructions").run()
 
     assert any("unsafe" in item.value.lower() for item in app.error)
+
+
+def test_paused_clarification_is_static_and_activity_is_chronological():
+    app = _app_with_snapshot({
+        "run_id": "run-ui",
+        "thread_id": "thread-ui",
+        "stage": "Scoping",
+        "status": "paused",
+        "scope_assessment": {
+            "need_clarification": True,
+            "question": "Which workload should be compared?",
+            "verification": "",
+        },
+        "messages": [
+            HumanMessage(content="Compare databases"),
+            AIMessage(content="Which workload should be compared?"),
+        ],
+        "activity": [
+            {"id": "scope", "label": "Evaluating scope", "status": "success"},
+            {"id": "brief", "label": "Generating brief", "status": "running"},
+        ],
+    })
+
+    text = _visible_text(app)
+    assert "Waiting for your response" in text
+    assert "Which workload should be compared?" in text
+    assert text.index("Evaluating scope") < text.index("Generating brief")
+
+
+def test_chat_first_transcript_has_one_plain_assistant_message_and_collapsed_details():
+    app = _app_with_snapshot({
+        "run_id": "run-ui",
+        "thread_id": "thread-ui",
+        "stage": "Planning",
+        "status": "active",
+        "scope_assessment": {
+            "need_clarification": False,
+            "question": "",
+            "verification": "I have enough information and will begin research.",
+        },
+        "messages": [
+            HumanMessage(content="Compare PostgreSQL and SQLite"),
+            AIMessage(content="I have enough information and will begin research."),
+        ],
+        "activity": [{
+            "id": "planning",
+            "label": "Calling write_todos",
+            "agent": "Planner",
+            "tool": "write_todos",
+            "status": "success",
+            "duration_ms": 12,
+        }],
+    })
+
+    assert len(app.chat_message) == 2
+    assert app.chat_message[0].name == "user"
+    assert app.chat_message[1].name == "assistant"
+    assert len(app.chat_message[1].markdown) == 1
+    assert app.chat_message[1].markdown[0].value == (
+        "I have enough information and will begin research."
+    )
+    assert app.expander[0].label == "Details"
+    assert app.expander[0].proto.expanded is False
+    assert "write_todos" not in app.chat_message[1].markdown[0].value

@@ -9,42 +9,52 @@ def node_wrapper(
     fn: Callable[[GraphState], GraphState],
     tracer=None,
     checkpoint_store=None,
+    lifecycle=None,
 ):
     """Normalize node execution so every graph node returns a serializable state update."""
     def wrapped(state: GraphState) -> GraphState:
+        if lifecycle is not None:
+            lifecycle(name, "running")
         current = dict(state)
         thread_id = current.get("thread_id", "")
         if checkpoint_store is not None and thread_id:
             persisted = checkpoint_store.load(thread_id) or {}
             current = {**persisted, **current}
-        if tracer is None:
-            result = fn(current)
-        else:
-            with tracer.span(
-                f"graph.{name}",
-                current.get("run_id", ""),
-                current.get("thread_id", ""),
-                input=json.dumps({
-                    "stage": current.get("stage"),
-                    "request": current.get("request", ""),
-                    "messages": [
-                        {"role": getattr(message, "type", "message"), "content": getattr(
-                            message, "content", str(message))}
-                        for message in current.get("messages", [])
-                    ],
-                    "scope_assessment": current.get("scope_assessment"),
-                    "research_brief": current.get("scoped_request"),
-                }, ensure_ascii=False, indent=2, default=str),
-                node=name,
-            ) as span:
+        try:
+            if tracer is None:
                 result = fn(current)
-                span.output = json.dumps({
-                    "stage": result.get("stage"),
-                    "status": result.get("status"),
-                    "scope_assessment": result.get("scope_assessment"),
-                    "research_brief": result.get("scoped_request"),
-                    "todos": result.get("todos"),
-                }, ensure_ascii=False, indent=2, default=str)
+            else:
+                with tracer.span(
+                    f"graph.{name}",
+                    current.get("run_id", ""),
+                    current.get("thread_id", ""),
+                    input=json.dumps({
+                        "stage": current.get("stage"),
+                        "request": current.get("request", ""),
+                        "messages": [
+                            {"role": getattr(message, "type", "message"), "content": getattr(
+                                message, "content", str(message))}
+                            for message in current.get("messages", [])
+                        ],
+                        "scope_assessment": current.get("scope_assessment"),
+                        "research_brief": current.get("scoped_request"),
+                    }, ensure_ascii=False, indent=2, default=str),
+                    node=name,
+                ) as span:
+                    result = fn(current)
+                    span.output = json.dumps({
+                        "stage": result.get("stage"),
+                        "status": result.get("status"),
+                        "scope_assessment": result.get("scope_assessment"),
+                        "research_brief": result.get("scoped_request"),
+                        "todos": result.get("todos"),
+                    }, ensure_ascii=False, indent=2, default=str)
+        except Exception:
+            if lifecycle is not None:
+                lifecycle(name, "failure")
+            raise
+        if lifecycle is not None:
+            lifecycle(name, "success")
         if not isinstance(result, dict):
             raise TypeError(f"{name} must return a mapping state update")
         if checkpoint_store is not None:
@@ -62,16 +72,37 @@ def build_graph(
     checkpoint_store=None,
     with_approval: bool = False,
     scope_agent=None,
+    research_nodes=None,
     vfs=None,
     tracer=None,
+    lifecycle=None,
 ):
     """Build the typed MVP graph with optional resumable approval interrupt."""
     from langgraph.graph import END, START, StateGraph
 
+    # Node names are kept in one place so the workflow reads like a diagram and
+    # integrations (UI progress, tracing, and tests) share stable identifiers.
+    CLARIFY = "clarify_with_user"
+    WRITE_BRIEF = "write_research_brief"
+    PLAN = "planning"
+    RESEARCH = "researching"
+    ASSESS_RESEARCH = "research_complete"
+    SYNTHESIZE = "synthesizing"
+    VERIFY = "verifying"
+    APPROVE = "approval"
+
+    graph = StateGraph(GraphState)
+
+    def add_node(name, fn):
+        graph.add_node(
+            name,
+            node_wrapper(name, fn, tracer, checkpoint_store, lifecycle),
+        )
+
     def stage(name):
         def advance(state: GraphState) -> GraphState:
             return {**state, "stage": name}
-        return node_wrapper(name, advance)
+        return advance
 
     def approval(state: GraphState) -> GraphState:
         from langgraph.types import interrupt
@@ -79,10 +110,11 @@ def build_graph(
             {"kind": "publication_approval", "run_id": state.get("run_id")})
         return {**state, "approval": decision, "stage": "Published" if decision.get("approved") else "Awaiting Approval"}
 
-    graph = StateGraph(GraphState)
+    # ===== SCOPE AND PLANNING =====
+
     if scope_agent is not None:
         from intelligence_collector.agents.planner import plan
-        from intelligence_collector.contracts import ResearchBrief, ScopeDecision, ScopeAssessment
+        from intelligence_collector.contracts import ResearchBrief, ScopeAssessment
         from langchain_core.messages import AIMessage, HumanMessage
 
         def clarify(state: GraphState) -> GraphState:
@@ -95,10 +127,9 @@ def build_graph(
                 thread_id=state.get("thread_id", ""),
             )
             messages = history + [HumanMessage(content=request)]
-            if assessment.decision == ScopeDecision.NEEDS_CLARIFICATION:
-                messages.append(
-                    AIMessage(content=assessment.clarification_question or ""))
-            elif assessment.decision == ScopeDecision.SCOPE_CLEAR:
+            if assessment.need_clarification:
+                messages.append(AIMessage(content=assessment.question))
+            else:
                 messages.append(AIMessage(content=assessment.verification))
             return {
                 **state,
@@ -136,41 +167,74 @@ def build_graph(
             }
 
         def scope_route(state: GraphState):
-            decision = state.get("scope_assessment", {}).get("decision")
-            return "write_research_brief" if decision == ScopeDecision.SCOPE_CLEAR.value else "__end__"
+            needs_clarification = state.get("scope_assessment", {}).get(
+                "need_clarification", True
+            )
+            return END if needs_clarification else WRITE_BRIEF
 
-        graph.add_node("clarify_with_user", node_wrapper(
-            "clarify_with_user", clarify, tracer, checkpoint_store))
-        graph.add_node("write_research_brief", node_wrapper(
-            "write_research_brief", write_brief, tracer, checkpoint_store))
-        graph.add_node("planning", node_wrapper(
-            "planning", planning, tracer, checkpoint_store))
-        graph.add_edge(START, "clarify_with_user")
-        graph.add_conditional_edges("clarify_with_user", scope_route, {
-            "write_research_brief": "write_research_brief", "__end__": END,
-        })
-        graph.add_edge("write_research_brief", "planning")
-        graph.add_edge("planning", END)
+        add_node(CLARIFY, clarify)
+        add_node(WRITE_BRIEF, write_brief)
+        add_node(PLAN, planning)
+
+        graph.add_edge(START, CLARIFY)
+        graph.add_conditional_edges(
+            CLARIFY,
+            scope_route,
+            {WRITE_BRIEF: WRITE_BRIEF, END: END},
+        )
+        graph.add_edge(WRITE_BRIEF, PLAN)
     else:
+        # Lightweight stage-only graph used by the approval interrupt contract.
+        fallback_nodes = ["scope", PLAN]
+        if research_nodes is None:
+            fallback_nodes.extend((RESEARCH, SYNTHESIZE, VERIFY))
+        for name in fallback_nodes:
+            add_node(name, stage(name))
+
         graph.add_edge(START, "scope")
-    stage_names = ("scope", "researching", "synthesizing", "verifying")
-    if scope_agent is None:
-        stage_names = ("scope", "planning", "researching",
-                       "synthesizing", "verifying")
-    for name in stage_names:
-        graph.add_node(name, node_wrapper(
-            name, stage(name), tracer, checkpoint_store))
-    if scope_agent is None:
-        graph.add_edge("scope", "planning")
-    if scope_agent is None:
-        graph.add_edge("planning", "researching")
-    graph.add_edge("researching", "synthesizing")
-    graph.add_edge("synthesizing", "verifying")
-    if with_approval:
-        graph.add_node("approval", node_wrapper(
-            "approval", approval, tracer, checkpoint_store))
-        graph.add_edge("verifying", "approval")
-        graph.add_edge("approval", END)
+        graph.add_edge("scope", PLAN)
+
+    # ===== RESEARCH PIPELINE =====
+
+    if research_nodes is not None:
+        add_node(RESEARCH, research_nodes.researching)
+        add_node(ASSESS_RESEARCH, research_nodes.research_complete)
+        add_node(SYNTHESIZE, research_nodes.synthesizing)
+        add_node(VERIFY, research_nodes.verifying)
+
+        graph.add_edge(PLAN, RESEARCH)
+        graph.add_edge(RESEARCH, ASSESS_RESEARCH)
+        graph.add_edge(ASSESS_RESEARCH, SYNTHESIZE)
+        graph.add_edge(SYNTHESIZE, VERIFY)
+    elif scope_agent is None:
+        graph.add_edge(PLAN, RESEARCH)
+        graph.add_edge(RESEARCH, SYNTHESIZE)
+        graph.add_edge(SYNTHESIZE, VERIFY)
     else:
-        graph.add_edge("verifying", END)
+        # Scope-only mode intentionally stops once a durable plan exists.
+        graph.add_edge(PLAN, END)
+
+    # ===== APPROVAL AND COMPLETION =====
+
+    if scope_agent is not None and research_nodes is None:
+        return graph.compile(checkpointer=checkpointer)
+
+    if with_approval:
+        add_node(APPROVE, approval)
+        if research_nodes is None:
+            graph.add_edge(VERIFY, APPROVE)
+        else:
+            graph.add_conditional_edges(
+                VERIFY,
+                lambda state: (
+                    APPROVE
+                    if state.get("verification", {}).get("passed")
+                    else END
+                ),
+                {APPROVE: APPROVE, END: END},
+            )
+        graph.add_edge(APPROVE, END)
+    else:
+        graph.add_edge(VERIFY, END)
+
     return graph.compile(checkpointer=checkpointer)

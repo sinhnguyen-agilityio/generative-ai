@@ -11,7 +11,7 @@ from intelligence_collector.contracts import (
     TodoStatus,
     VerificationResult,
 )
-from intelligence_collector.graph.build import build_graph
+from intelligence_collector.graph.build import build_graph, node_wrapper
 from intelligence_collector.graph.routing import route_verification
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.publication import can_request_approval
@@ -31,12 +31,8 @@ class SequencedModel:
 
 def _clear_scope():
     return {
-        "decision": "SCOPE_CLEAR",
-        "objective": "Compare databases",
-        "research_boundaries": "Local Python applications",
-        "constraints": "Use primary technical sources",
-        "success_criteria": "Every factual claim is cited",
-        "deliverable_format": "Technical report",
+        "need_clarification": False,
+        "question": "",
         "verification": "The scope is clear; research will now begin.",
     }
 
@@ -53,12 +49,9 @@ def _brief():
 def test_invalid_scope_cannot_traverse_to_planning(tmp_path):
     model = SequencedModel([
         {
-            "decision": "NEEDS_CLARIFICATION",
-            "clarification_question": "Which databases and workload should be compared?",
-            "missing_fields": ["research_boundaries"],
-            "narrowing_suggestions": [
-                "Choose two databases and one representative workload."
-            ],
+            "need_clarification": True,
+            "question": "Which databases and workload should be compared?",
+            "verification": "",
         }
     ])
     graph = build_graph(
@@ -71,7 +64,7 @@ def test_invalid_scope_cannot_traverse_to_planning(tmp_path):
     )
 
     assert result["stage"] == "Scoping"
-    assert result["scope_assessment"]["decision"] == "NEEDS_CLARIFICATION"
+    assert result["scope_assessment"]["need_clarification"] is True
     assert "scoped_request" not in result
     assert "todos" not in result
 
@@ -133,3 +126,34 @@ def test_workflow_stage_contract_distinguishes_all_guarded_states():
         Stage.FAILED,
         Stage.NEEDS_REVIEW,
     } == set(Stage)
+
+
+def test_node_lifecycle_reports_running_and_terminal_status():
+    events = []
+    wrapped = node_wrapper(
+        "planning",
+        lambda state: {**state, "stage": "Planning"},
+        lifecycle=lambda node, status: events.append((node, status)),
+    )
+
+    wrapped({"run_id": "run", "thread_id": "thread"})
+
+    assert events == [("planning", "running"), ("planning", "success")]
+
+
+def test_node_lifecycle_reports_failure():
+    events = []
+
+    def fail(_state):
+        raise RuntimeError("planned failure")
+
+    wrapped = node_wrapper(
+        "planning",
+        fail,
+        lifecycle=lambda node, status: events.append((node, status)),
+    )
+
+    with pytest.raises(RuntimeError, match="planned failure"):
+        wrapped({"run_id": "run", "thread_id": "thread"})
+
+    assert events == [("planning", "running"), ("planning", "failure")]

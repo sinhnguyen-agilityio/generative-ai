@@ -58,51 +58,21 @@ class ScopedRequest(Model):
     scope_hash: str = ""
 
 
-class ScopeDecision(str, Enum):
-    NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
-    SCOPE_CLEAR = "SCOPE_CLEAR"
-    UNSUPPORTED = "UNSUPPORTED"
-
-
-class ScopeAssessment(Model):
-    decision: ScopeDecision
-    objective: str = ""
-    research_boundaries: str = ""
-    constraints: str = ""
-    success_criteria: str = ""
-    deliverable_format: str = ""
-    missing_fields: list[str] = Field(default_factory=list)
-    clarification_question: str | None = None
+class ScopeAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    need_clarification: bool
+    question: str = ""
     verification: str = ""
-    narrowing_suggestions: list[str] = Field(default_factory=list)
-    question_class: str = "technical_research"
-    reason: str = ""
 
     @model_validator(mode="after")
     def validate_decision(self):
-        if self.decision == ScopeDecision.NEEDS_CLARIFICATION:
-            if not self.clarification_question or not self.clarification_question.strip():
+        if self.need_clarification:
+            if not self.question.strip():
                 raise ValueError("clarification requires exactly one non-empty question")
             if self.verification.strip():
                 raise ValueError("clarification cannot contain a verification message")
-            if (
-                "research_boundaries" in self.missing_fields
-                and not self.narrowing_suggestions
-            ):
-                raise ValueError(
-                    "broad scope requires at least one concrete narrowing suggestion"
-                )
-        elif self.decision == ScopeDecision.SCOPE_CLEAR:
-            values = (
-                self.objective,
-                self.research_boundaries,
-                self.constraints,
-                self.success_criteria,
-                self.deliverable_format,
-            )
-            if any(not value.strip() for value in values):
-                raise ValueError("clear scope requires every scope field")
-            if self.clarification_question:
+        else:
+            if self.question.strip():
                 raise ValueError("clear scope cannot contain a clarification question")
             if not self.verification.strip():
                 raise ValueError("clear scope requires a non-empty verification message")
@@ -121,17 +91,31 @@ class ResearchBrief(Model):
 
 class ResearchTodo(Model):
     todo_id: str = Field(default_factory=lambda: str(uuid4()))
-    research_question: str
+    research_question: str = Field(min_length=1)
     status: TodoStatus = TodoStatus.PLANNED
+
+    @model_validator(mode="after")
+    def validate_question(self):
+        if not self.research_question.strip():
+            raise ValueError("research todo question must not be blank")
+        return self
 
 
 class TodoPlan(Model):
-    todos: list[ResearchTodo] = Field(default_factory=list)
+    todos: list[ResearchTodo] = Field(min_length=1)
 
 
 class WorkerSearchPlan(Model):
-    queries: list[str] = Field(default_factory=list)
-    stop_condition: str = ""
+    queries: list[str] = Field(min_length=1, max_length=5)
+    stop_condition: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_search_plan(self):
+        if any(not query.strip() for query in self.queries):
+            raise ValueError("worker queries must not be blank")
+        if not self.stop_condition.strip():
+            raise ValueError("worker stop condition must not be blank")
+        return self
 
 
 class VerificationAssessment(Model):
@@ -140,6 +124,14 @@ class VerificationAssessment(Model):
     affected_claims: list[str] = Field(default_factory=list)
     feedback: str = ""
 
+    @model_validator(mode="after")
+    def validate_outcome(self):
+        if self.passed and self.issue_type is not None:
+            raise ValueError("passed verification cannot contain an issue type")
+        if not self.passed and (self.issue_type is None or not self.feedback.strip()):
+            raise ValueError("failed verification requires one issue type and feedback")
+        return self
+
 
 class SupervisorAssessment(Model):
     coverage_complete: bool
@@ -147,15 +139,21 @@ class SupervisorAssessment(Model):
     blockers: list[str] = Field(default_factory=list)
     delegation: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def validate_completion(self):
+        if self.research_complete and (not self.coverage_complete or self.blockers):
+            raise ValueError("research completion requires coverage and no blockers")
+        return self
+
 
 class DraftAssessment(Model):
-    report_markdown: str
+    report_markdown: str = Field(min_length=1)
     claim_evidence_ids: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class FixDecision(Model):
-    action: str
-    reason: str
+    action: str = Field(pattern="^(revise|research|replan|needs_review)$")
+    reason: str = Field(min_length=1)
     target_ids: list[str] = Field(default_factory=list)
 
 
@@ -188,6 +186,7 @@ class IndexedChunk(Model):
 
 
 class VerificationResult(Model):
+    verification_id: str = Field(default_factory=lambda: str(uuid4()))
     artifact_hash: str
     passed: bool
     checks: list[str] = Field(default_factory=list)

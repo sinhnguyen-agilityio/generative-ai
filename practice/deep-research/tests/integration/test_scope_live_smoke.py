@@ -36,6 +36,6 @@ def test_scope_live_llm_smoke(tmp_path):
             "request": request,
         })
         execution.output = {"stage": result["stage"]}
-    assert result["scope_assessment"]["decision"] == "SCOPE_CLEAR"
+    assert result["scope_assessment"]["need_clarification"] is False
     assert result["stage"] == "Planning"
     assert execution.trace_id

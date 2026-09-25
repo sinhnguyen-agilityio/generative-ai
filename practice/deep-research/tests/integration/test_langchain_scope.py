@@ -25,12 +25,8 @@ class RecordingChatModel:
 
 def _clear_payload():
     return {
-        "decision": "SCOPE_CLEAR",
-        "objective": "Compare PostgreSQL and SQLite",
-        "research_boundaries": "Local Python applications, current stable releases",
-        "constraints": "Use technical primary sources",
-        "success_criteria": "Every factual claim has a source reference",
-        "deliverable_format": "Evidence-backed technical report",
+        "need_clarification": False,
+        "question": "",
         "verification": (
             "I have enough information to compare PostgreSQL and SQLite for local Python "
             "applications, and I will now begin the research."
@@ -85,17 +81,14 @@ def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch,
 def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
     model = RecordingChatModel([
         {
-            "decision": "NEEDS_CLARIFICATION",
-            "clarification_question": "Which database versions and workload should be compared?",
-            "missing_fields": ["research_boundaries"],
-            "narrowing_suggestions": [
-                "Limit the comparison to current stable releases used by local Python apps."
-            ],
+            "need_clarification": True,
+            "question": "Which database versions and workload should be compared?",
+            "verification": "",
         },
         {
-            "decision": "NEEDS_CLARIFICATION",
-            "clarification_question": "What evidence standard should the report meet?",
-            "missing_fields": ["success_criteria"],
+            "need_clarification": True,
+            "question": "What evidence standard should the report meet?",
+            "verification": "",
         },
         _clear_payload(),
         _brief_payload(),
@@ -104,7 +97,7 @@ def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
     graph = build_graph(scope_agent=ScopeAgent(router), vfs=VFS(tmp_path))
     first = graph.invoke({"run_id": "run-2", "thread_id": "thread-2", "request": "Compare databases"})
     assert first["stage"] == "Scoping"
-    assert first["scope_assessment"]["decision"] == "NEEDS_CLARIFICATION"
+    assert first["scope_assessment"]["need_clarification"] is True
     assert first["messages"][-1].content.startswith("Which database versions")
 
     second = graph.invoke({**first, "request": "Compare PostgreSQL and SQLite for local apps"})
@@ -113,7 +106,7 @@ def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
 
     resumed = graph.invoke({**second, "request": "Every factual claim must cite a primary source"})
     assert resumed["stage"] == "Planning"
-    assert resumed["scope_assessment"]["decision"] == "SCOPE_CLEAR"
+    assert resumed["scope_assessment"]["need_clarification"] is False
     assert len(resumed["messages"]) == 6
     assert isinstance(resumed["messages"][-2], HumanMessage)
     assert isinstance(resumed["messages"][-1], AIMessage)
@@ -138,7 +131,10 @@ def test_primary_model_failure_uses_fallback_without_silent_clear(tmp_path):
 
 
 def test_malformed_structured_output_never_routes_to_planning(tmp_path):
-    model = RecordingChatModel([{"decision": "SCOPE_CLEAR"}, {"decision": "SCOPE_CLEAR"}])
+    model = RecordingChatModel([
+        {"need_clarification": False},
+        {"need_clarification": False},
+    ])
     graph = build_graph(scope_agent=ScopeAgent(ModelRouter(model, mode="live")), vfs=VFS(tmp_path))
     with pytest.raises(ValueError, match="invalid structured output"):
         graph.invoke({"run_id": "bad", "thread_id": "bad", "request": "Research this"})

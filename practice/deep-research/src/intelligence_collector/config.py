@@ -1,11 +1,26 @@
 from __future__ import annotations
 
-import os
 import json
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from typing import Any
 
 from dotenv import load_dotenv
+
+
+MAX_SEARCH_CALLS = 5
+MAX_RECOVERY_ATTEMPTS = 10
+
+
+def _bounded_int(name: str, default: int, maximum: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer between 1 and {maximum}") from exc
+    if not 1 <= value <= maximum:
+        raise ValueError(f"{name} must be between 1 and {maximum}")
+    return value
 
 
 def load_local_env() -> None:
@@ -29,8 +44,10 @@ class Settings:
             checkpoint_path=os.getenv("INTELLIGENCE_CHECKPOINT_PATH", cls.checkpoint_path),
             vector_path=os.getenv("INTELLIGENCE_VECTOR_PATH", cls.vector_path),
             output_dir=os.getenv("INTELLIGENCE_OUTPUT_DIR", cls.output_dir),
-            max_search_calls=min(int(os.getenv("INTELLIGENCE_MAX_SEARCH_CALLS", "5")), 5),
-            recovery_attempts=max(1, int(os.getenv("INTELLIGENCE_RECOVERY_ATTEMPTS", "3"))),
+            max_search_calls=_bounded_int("INTELLIGENCE_MAX_SEARCH_CALLS", 5, MAX_SEARCH_CALLS),
+            recovery_attempts=_bounded_int(
+                "INTELLIGENCE_RECOVERY_ATTEMPTS", 3, MAX_RECOVERY_ATTEMPTS
+            ),
         )
 
 
@@ -42,8 +59,8 @@ class RoleModelSettings:
     standard_model: str
     reasoning_provider: str | None = None
     standard_provider: str | None = None
-    reasoning_kwargs: dict[str, Any] | None = None
-    standard_kwargs: dict[str, Any] | None = None
+    reasoning_kwargs: dict[str, Any] | None = field(default=None, repr=False)
+    standard_kwargs: dict[str, Any] | None = field(default=None, repr=False)
 
     @staticmethod
     def _json_object(name: str, default: str) -> dict[str, Any]:
@@ -75,8 +92,8 @@ class RoleModelSettings:
 @dataclass(frozen=True)
 class LangfuseSettings:
     enabled: bool = False
-    public_key: str = ""
-    secret_key: str = ""
+    public_key: str = field(default="", repr=False)
+    secret_key: str = field(default="", repr=False)
     host: str = "https://cloud.langfuse.com"
     environment: str = "development"
     release: str = "local"
