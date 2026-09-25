@@ -102,12 +102,15 @@ class ResearchTodo(Model):
 
 
 MAX_PLANNED_QUESTIONS = 5
+MAX_ACCEPTANCE_CRITERIA = 5
 
 
 class TodoPlan(Model):
-    """Planner LLM output: only research questions; ids and status are system-owned."""
+    """Planner LLM output: research questions plus the acceptance criteria that define when the
+    final report achieves the research brief's goal. Ids and status are system-owned."""
 
     questions: list[str] = Field(min_length=1, max_length=MAX_PLANNED_QUESTIONS)
+    acceptance_criteria: list[str] = Field(min_length=1, max_length=MAX_ACCEPTANCE_CRITERIA)
 
     @model_validator(mode="after")
     def validate_questions(self):
@@ -116,6 +119,11 @@ class TodoPlan(Model):
             raise ValueError("planned research questions must not be blank")
         if len({question.casefold() for question in self.questions}) != len(self.questions):
             raise ValueError("planned research questions must not repeat")
+        self.acceptance_criteria = [criterion.strip() for criterion in self.acceptance_criteria]
+        if any(not criterion for criterion in self.acceptance_criteria):
+            raise ValueError("acceptance criteria must not be blank")
+        if len({c.casefold() for c in self.acceptance_criteria}) != len(self.acceptance_criteria):
+            raise ValueError("acceptance criteria must not repeat")
         return self
 
 
@@ -252,6 +260,24 @@ class Reflection(Model):
         return self
 
 
+class AcceptanceCriterionResult(Model):
+    """One acceptance-criterion judgment: does the report actually achieve this goal?"""
+
+    criterion: str = Field(min_length=1)
+    met: bool
+    justification: str = Field(min_length=1)
+
+
+class AcceptanceVerdict(Model):
+    """LLM judgment of whether the report meets every planner-defined acceptance criterion.
+
+    This is a semantic, goal-level check ("does the report achieve what the brief asked for?"),
+    distinct from the deterministic ``source_verification`` checks (citation syntax/grounding).
+    """
+
+    results: list[AcceptanceCriterionResult] = Field(min_length=1)
+
+
 class ApprovalDecision(Model):
     approval_id: str = Field(default_factory=lambda: str(uuid4()))
     artifact_hash: str
@@ -287,6 +313,7 @@ class ResearchGraphState(Model):
     scope_questions: list[str] = Field(default_factory=list)
     todo_ids: list[str] = Field(default_factory=list)
     todos: list[ResearchTodo] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
     artifacts: list[ArtifactRef] = Field(default_factory=list)
     evidence: list[ArtifactRef] = Field(default_factory=list)
     index_refs: list[str] = Field(default_factory=list)

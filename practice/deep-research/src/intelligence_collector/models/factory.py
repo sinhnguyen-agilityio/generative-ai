@@ -21,7 +21,7 @@ class ModelFactory:
             kwargs["model_provider"] = config.provider
         return init_chat_model(config.model, **kwargs)
 
-    def create_role_router(self, settings, *, mode: str = "live", trace=None):
+    def create_role_router(self, settings, *, mode: str = "live", trace=None, callbacks=None):
         from intelligence_collector.models.role_router import RoleModelRouter
         from intelligence_collector.models.router import ModelRouter
 
@@ -30,12 +30,22 @@ class ModelFactory:
             provider=settings.reasoning_provider,
             reasoning=settings.reasoning_kwargs,
         ))
+        reasoning_fallback = None
+        if settings.reasoning_fallback_model:
+            reasoning_fallback = self.create(ModelConfig(
+                settings.reasoning_fallback_model, provider=settings.reasoning_fallback_provider,
+            ))
         standard = self.create(ModelConfig(
             settings.standard_model,
             provider=settings.standard_provider,
             reasoning=settings.standard_kwargs,
         ))
+        standard_fallback = None
+        if settings.standard_fallback_model:
+            standard_fallback = self.create(ModelConfig(
+                settings.standard_fallback_model, provider=settings.standard_fallback_provider,
+            ))
         return RoleModelRouter(
-            ModelRouter(reasoning, mode=mode, trace=trace),
-            ModelRouter(standard, mode=mode, trace=trace),
+            ModelRouter(reasoning, reasoning_fallback, mode=mode, trace=trace, callbacks=callbacks),
+            ModelRouter(standard, standard_fallback, mode=mode, trace=trace, callbacks=callbacks),
         )

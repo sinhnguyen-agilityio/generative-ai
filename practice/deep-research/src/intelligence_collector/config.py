@@ -64,7 +64,8 @@ class Settings:
 
 @dataclass(frozen=True)
 class RoleModelSettings:
-    """Model profiles for deep-reasoning and routine implementation roles."""
+    """Model profiles for deep-reasoning (scope, planner, verify) and standard (researcher,
+    research_compressor, synthesizer, fixer) roles. Each profile may have its own fallback."""
 
     reasoning_model: str
     standard_model: str
@@ -72,6 +73,10 @@ class RoleModelSettings:
     standard_provider: str | None = None
     reasoning_kwargs: dict[str, Any] | None = field(default=None, repr=False)
     standard_kwargs: dict[str, Any] | None = field(default=None, repr=False)
+    reasoning_fallback_model: str | None = None
+    reasoning_fallback_provider: str | None = None
+    standard_fallback_model: str | None = None
+    standard_fallback_provider: str | None = None
 
     @staticmethod
     def _json_object(name: str, default: str) -> dict[str, Any]:
@@ -97,6 +102,10 @@ class RoleModelSettings:
                 "INTELLIGENCE_REASONING_KWARGS", '{"reasoning_effort":"xhigh"}'
             ),
             standard_kwargs=cls._json_object("INTELLIGENCE_STANDARD_KWARGS", "{}"),
+            reasoning_fallback_model=os.getenv("INTELLIGENCE_REASONING_FALLBACK_MODEL") or None,
+            reasoning_fallback_provider=os.getenv("INTELLIGENCE_REASONING_FALLBACK_PROVIDER") or None,
+            standard_fallback_model=os.getenv("INTELLIGENCE_STANDARD_FALLBACK_MODEL") or None,
+            standard_fallback_provider=os.getenv("INTELLIGENCE_STANDARD_FALLBACK_PROVIDER") or None,
         )
 
 

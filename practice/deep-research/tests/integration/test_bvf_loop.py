@@ -1,5 +1,6 @@
 import json
 
+from intelligence_collector.agents.acceptance_verifier import AcceptanceVerifier
 from intelligence_collector.agents.report_writer import ReportWriter
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.contracts import ResearchTodo
@@ -8,7 +9,12 @@ from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.source_verification import gap_id, load_catalog, main as verify_script
 from intelligence_collector.tools.mcp import ControlledMCP
-from tests.fixtures.fake_models import FakeReportModel, FakeResearchModel, cited_report
+from tests.fixtures.fake_models import (
+    FakeAcceptanceModel,
+    FakeReportModel,
+    FakeResearchModel,
+    cited_report,
+)
 
 URL = "https://controlled.test/cache"
 QUESTION = "How does a local software cache store and reuse data?"
@@ -20,7 +26,8 @@ def _uncited(sentence: str) -> str:
     return cited_report(["A cache stores reusable data for later access [S1].", sentence], {"S1": URL})
 
 
-def _run(stores, report_model, *, research_model=None, budget=3, run_id="bvf"):
+def _run(stores, report_model, *, research_model=None, budget=3, run_id="bvf",
+          acceptance_verifier=None, acceptance_criteria=None):
     vfs, index = stores
     researcher = ResearchAgent(
         ModelRouter(research_model or FakeResearchModel(), mode="fake"),
@@ -31,6 +38,7 @@ def _run(stores, report_model, *, research_model=None, budget=3, run_id="bvf"):
         index,
         researcher,
         report_writer=ReportWriter(ModelRouter(report_model, mode="fake")),
+        acceptance_verifier=acceptance_verifier,
         recovery_budget=budget,
     )
     todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
@@ -39,6 +47,7 @@ def _run(stores, report_model, *, research_model=None, budget=3, run_id="bvf"):
         "thread_id": run_id,
         "scoped_request": BRIEF,
         "todos": [todo.model_dump(mode="json")],
+        "acceptance_criteria": acceptance_criteria or [],
     })
 
 
@@ -175,3 +184,57 @@ def test_standalone_verification_script_reproduces_the_graph_verdict(stores, cap
 
     vfs.write("script", "reports/latest.md", _uncited("Unsupported caching claim appears right here."), "latest_report")
     assert verify_script(["--run-id", "script", "--vfs-root", str(vfs.root)]) == 1
+
+
+CRITERIA = ["States how a cache stores data for later reuse."]
+
+
+def test_acceptance_check_only_runs_after_the_deterministic_script_passes(stores):
+    """A structurally broken draft never reaches the (paid) acceptance-criteria LLM call."""
+    acceptance = FakeAcceptanceModel([{
+        "results": [{"criterion": CRITERIA[0], "met": True, "justification": "n/a"}],
+    }])
+    model = FakeReportModel([_uncited("Caches also make every workload faster overall."), GOOD])
+
+    result = _run(
+        stores, model,
+        acceptance_verifier=AcceptanceVerifier(ModelRouter(acceptance, mode="fake")),
+        acceptance_criteria=CRITERIA,
+    )
+
+    assert result["stage"] == "Awaiting Approval"
+    assert len(acceptance.calls) == 1  # only called once the draft finally passes structurally
+
+
+def test_unmet_acceptance_criterion_fails_verification_and_is_fixed(stores):
+    bad_then_good = FakeAcceptanceModel([
+        {"results": [{"criterion": CRITERIA[0], "met": False, "justification": "Never states this."}]},
+        {"results": [{"criterion": CRITERIA[0], "met": True, "justification": "Now states it."}]},
+    ])
+    model = FakeReportModel([GOOD, GOOD], reflections=[{
+        "diagnosis": "The draft never actually describes cache storage/reuse.",
+        "lessons": ["Explicitly state how the cache stores and reuses data."],
+        "strategy": "Add one sentence stating the storage/reuse mechanism, cited.",
+    }])
+
+    result = _run(
+        stores, model,
+        acceptance_verifier=AcceptanceVerifier(ModelRouter(bad_then_good, mode="fake")),
+        acceptance_criteria=CRITERIA,
+    )
+
+    assert result["stage"] == "Awaiting Approval"
+    assert [v["passed"] for v in result["verification_history"]] == [False, True]
+    first_failure = result["verification_history"][0]
+    assert first_failure["issue_type"] == "DRAFT_DEFECT"
+    assert "acceptance_criteria" in first_failure["checks"]
+    assert "Never states this" in first_failure["repair_details"]
+    assert len(bad_then_good.calls) == 2
+
+
+def test_acceptance_check_is_skipped_without_a_configured_verifier(stores):
+    """No acceptance_verifier injected: verification behaves exactly as before this feature."""
+    result = _run(stores, FakeReportModel([GOOD]), acceptance_criteria=CRITERIA)
+
+    assert result["stage"] == "Awaiting Approval"
+    assert "acceptance_criteria" not in result["verification"]["checks"]

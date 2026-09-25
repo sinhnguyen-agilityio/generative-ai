@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage
 
+from intelligence_collector.agents.acceptance_verifier import AcceptanceVerifier, merge_acceptance_verdict
 from intelligence_collector.agents.report_writer import (
     DEFAULT_EVIDENCE_TOP_K,
     ReportWriter,
@@ -116,7 +117,8 @@ class ScopeNodes:
 
 
 class PlannerNodes:
-    """Planning: the Planner Agent turns the brief into questions and calls `write_todos`."""
+    """Planning: the Planner Agent turns the brief into questions, acceptance criteria, and
+    calls `write_todos`."""
 
     def __init__(self, planner_agent, vfs=None):
         self.planner_agent = planner_agent
@@ -126,7 +128,7 @@ class PlannerNodes:
         if self.vfs is None:
             raise RuntimeError("Planning requires an injected VFS")
         brief = ResearchBrief.model_validate(state["scoped_request"])
-        todos = self.planner_agent.write_todos(
+        todos, acceptance_criteria = self.planner_agent.write_todos(
             brief,
             self.vfs,
             state["run_id"],
@@ -136,6 +138,7 @@ class PlannerNodes:
             **state,
             "stage": Stage.PLANNING.value,
             "todos": [todo.model_dump(mode="json") for todo in todos],
+            "acceptance_criteria": acceptance_criteria,
         }
 
 
@@ -152,6 +155,7 @@ class ResearchNodes:
         researcher,
         *,
         report_writer: ReportWriter | None = None,
+        acceptance_verifier: AcceptanceVerifier | None = None,
         max_concurrent_researchers: int = DEFAULT_MAX_CONCURRENT_RESEARCHERS,
         recovery_budget: int = DEFAULT_RECOVERY_BUDGET,
         evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
@@ -169,6 +173,7 @@ class ResearchNodes:
             index,
             self.supervisor,
             report_writer or ReportWriter(researcher.router),
+            acceptance_verifier=acceptance_verifier,
             recovery_budget=recovery_budget,
             evidence_top_k=evidence_top_k,
         )
@@ -255,11 +260,12 @@ def _merge_research(state, results):
 class BVFNodes:
     """Mandatory Build-Verify-Fix loop around the report.
 
-    Build (``synthesizing``) -> Verify (``verifying``, programmatic source-verification script)
-    -> on failure Fix (``fixing``: record the attempt and reflect to learn lessons) -> either a
-    revised draft (DRAFT_DEFECT) or targeted gap research (EVIDENCE_GAP) -> Build again.
-    Only a report that passes every check leaves the loop normally; exhausting the recovery
-    budget or repeating the same failures ends in ``needs_review``.
+    Build (``synthesizing``) -> Verify (``verifying``, programmatic source-verification script,
+    then, only if that passes, the LLM acceptance-criteria check) -> on failure Fix (``fixing``:
+    record the attempt and reflect to learn lessons) -> either a revised draft (DRAFT_DEFECT) or
+    targeted gap research (EVIDENCE_GAP) -> Build again. Only a report that passes every check
+    leaves the loop normally; exhausting the recovery budget or repeating the same failures ends
+    in ``needs_review``.
     """
 
     def __init__(
@@ -269,6 +275,7 @@ class BVFNodes:
         supervisor: ResearchSupervisor,
         writer: ReportWriter,
         *,
+        acceptance_verifier: AcceptanceVerifier | None = None,
         recovery_budget: int,
         evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
     ):
@@ -276,6 +283,7 @@ class BVFNodes:
         self.index = index
         self.supervisor = supervisor
         self.writer = writer
+        self.acceptance_verifier = acceptance_verifier
         self.recovery_budget = recovery_budget
         self.evidence_top_k = evidence_top_k
 
@@ -325,10 +333,23 @@ class BVFNodes:
         }
 
     def verifying(self, state):
-        """Run the programmatic source-verification script over the report text."""
+        """Run the programmatic source-verification script, then, only if it passes, the LLM
+        acceptance-criteria check (there is no point judging goal achievement on a structurally
+        broken draft)."""
         catalog = self._catalog(state)
         researched = list(state.get("researched_gaps", []))
         result = verify_report(state.get("draft", ""), catalog, researched_gaps=researched)
+        criteria = list(state.get("acceptance_criteria", []))
+        if result.passed and self.acceptance_verifier is not None and criteria:
+            brief = ResearchBrief.model_validate(state["scoped_request"])
+            verdict = self.acceptance_verifier.verify(
+                brief,
+                criteria,
+                state.get("draft", ""),
+                run_id=state["run_id"],
+                thread_id=state.get("thread_id", ""),
+            )
+            result = merge_acceptance_verdict(result, verdict)
         fingerprint = failure_fingerprint(result)
         stalled = not result.passed and fingerprint == state.get("progress_fingerprint")
         run_id = state["run_id"]

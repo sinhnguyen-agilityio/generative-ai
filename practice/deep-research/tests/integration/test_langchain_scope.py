@@ -51,7 +51,11 @@ def _plan_payload():
             "applications, according to their official documentation?",
             "What operational and deployment trade-offs do PostgreSQL and SQLite have for local "
             "Python applications, according to primary technical sources?",
-        ]
+        ],
+        "acceptance_criteria": [
+            "States a concurrency/locking difference between PostgreSQL and SQLite.",
+            "States an operational or deployment trade-off between PostgreSQL and SQLite.",
+        ],
     }
 
 
@@ -79,7 +83,7 @@ def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch,
     assert question in model.calls[2][-1].content
     assert traces[0]["prompt_version"] == "scope.v1"
     assert traces[1]["prompt_version"] == "scope-brief.v1"
-    assert traces[2]["prompt_version"] == "planner.v2"
+    assert traces[2]["prompt_version"] == "planner.v3"
     assert traces[2]["role"] == "planner"
     assert traces[0]["selected_model"] == "fake-live-scope"
     assert len(result["messages"]) == 2

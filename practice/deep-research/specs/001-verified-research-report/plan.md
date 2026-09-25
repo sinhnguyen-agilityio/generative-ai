@@ -112,10 +112,13 @@ alternatives that would violate the constitution or clarified specification.
    second structured call with its own versioned prompt, validates a dedicated single-question
    `ResearchBrief`,
    writes `scope/brief_summary.v1.json`, and enters Planning without a brief approval interrupt.
-4. Planning runs the Planner Agent: a structured `planner.v2` LLM call decomposes the brief's
-   research question into 1–5 standalone, non-overlapping research questions (`TodoPlan.questions`).
-   The system turns each question into a `planned` todo and persists the list via `write_todos`.
-   A non-empty, valid, durably stored todo list is required before any Research/retrieval edge.
+4. Planning runs the Planner Agent: a structured `planner.v3` LLM call decomposes the brief's
+   research question into 1–5 standalone, non-overlapping research questions (`TodoPlan.questions`)
+   and 1–5 acceptance criteria (`TodoPlan.acceptance_criteria`) describing what a finished report
+   must state to count as achieving the brief's goal. The system turns each question into a
+   `planned` todo, persists the list via `write_todos`, and persists the acceptance criteria to
+   `planning/acceptance_criteria.v1.json` and graph state. A non-empty, valid, durably stored todo
+   list is required before any Research/retrieval edge.
 5. The Research Supervisor delegates each planned todo to its own research sub-agent, running up to
    `INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS` (default 3) in parallel. Each sub-agent gets a fresh
    Tavily MCP client and runs the loop `llm_call` → (`tool_node` → `llm_call`)* →
@@ -143,7 +146,11 @@ alternatives that would violate the constitution or clarified specification.
    report text against the stored sources and returns pass or one primary issue: `EVIDENCE_GAP`
    (no evidence, or unresolved research gaps not yet researched) or `DRAFT_DEFECT` (structure,
    unknown citation ids, uncited claims, ungrounded numbers/wording, invented URLs, Sources list,
-   uncovered questions, undisclosed gaps). Only a report passing every check leaves the loop.
+   uncovered questions, undisclosed gaps). Only if that script passes, `AcceptanceVerifier`
+   (`acceptance.v1`, role `verify`) judges the report against each planner-defined acceptance
+   criterion; any unmet criterion is folded in as an additional `acceptance_criteria` check and
+   turns the result into a failed `DRAFT_DEFECT`. Only a report passing every check, including
+   acceptance, leaves the loop.
 9. **Fix** (self-improving): each failure increments the visible attempt counter. For a
    `DRAFT_DEFECT`, a reflection call (`bvf-reflect.v1`) diagnoses the root cause, adds reusable
    lessons to an accumulating lesson memory, and plans a strategy; the next Build receives the
@@ -166,7 +173,8 @@ alternatives that would violate the constitution or clarified specification.
 | Streamlit UI | Chat, stage/progress display, report/evidence review, approval decision | Renders typed state; never writes authoritative artifacts; displays actionable errors | Graph runner, VFS read API |
 | Input Validator + Guardrail | Validate shape/size and reject prompt injection or disallowed offensive/violent requests | Returns typed `GuardrailDecision`; rejection has no state mutation | Scope entry edge, audit event |
 | Scope Agent | `clarify_with_user` evaluates actual message history; `write_research_brief` creates a dedicated validated `ResearchBrief` after a clear decision | One-question clarification or complete brief; model/validation/persistence failure cannot become clear | LangChain chat model/router, LangGraph thread state, checkpoint, brief VFS artifact |
-| Planner Agent + `write_todos` | `PlannerAgent.define_questions` turns the `ResearchBrief` into a list of research questions; `PlannerAgent.write_todos` converts them to `planned` todos and persists them | `TodoPlan` (questions only, 1–5, non-blank, unique); invalid output or failed write blocks Research | Model router (`planner` role), VFS, graph state |
+| Planner Agent + `write_todos` | `PlannerAgent.define_plan` turns the `ResearchBrief` into research questions and acceptance criteria; `PlannerAgent.write_todos` converts the questions to `planned` todos, persists them, and persists the criteria | `TodoPlan` (questions and acceptance_criteria, 1–5 each, non-blank, unique); invalid output or failed write blocks Research | Model router (`planner` role, reasoning tier), VFS, graph state |
+| Acceptance Verifier (`agents/acceptance_verifier.py`) | Judge the passing report against each planner-defined acceptance criterion, only after source-verification passes | `AcceptanceVerdict` (met/unmet + justification per criterion); any unmet criterion folds into `VerificationResult` as a `DRAFT_DEFECT` | Model router (`verify` role, reasoning tier), graph state (`acceptance_criteria`) |
 | Research Supervisor (`agents/supervisor.py`) | Delegate one sub-agent per todo (bounded thread pool), persist outcomes in plan order, use `think_tool`, assess readiness | `ProgressAssessment` with blockers; a failing sub-agent becomes a FAILED task outcome, never cancels siblings; cannot ResearchComplete until all todos complete and artifacts indexed | `ResearchAgent`, VFS, vector store |
 | Research Sub-agent (`agents/researcher.py`) | LangGraph loop: LLM decision → `tavily_search` tool execution → routing → research compression | Fresh MCP client and hard per-task budget (≤5); MCP failures become tool/task outcomes with redacted errors; `ResearchFindings` validated | Model router (`researcher`, `research_compressor` roles, tool calling), Tavily MCP |
 | Research persistence (`agents/worker.py`) | Turn a `ResearchOutcome` into raw captures, notes, excerpts, evidence bundle, and index chunks; idempotent resume guard; capture each URL once per run | COMPLETED with sources + findings (gaps recorded); FAILED writes `outcome.json`; already-captured URLs reference the first capture (`reused_from_task`) | VFS, vector store, `UrlRegistry` |
@@ -175,7 +183,7 @@ alternatives that would violate the constitution or clarified specification.
 | Report Writer (`agents/report_writer.py`) | Build/Fix drafts from top-K retrieved evidence (`select_relevant_evidence`, per question) with `[S<n>]` citations; BVF reflection producing lessons and strategy | `DraftAssessment` / `Reflection` validated; fix attempts must receive failures, lessons, strategy, previous draft; retrieval scoped per question, never global | Model router (`synthesizer`, `fixer` roles), VFS, vector index |
 | Vector Index (`storage/vector_index.py`, `storage/chroma_vector_index.py`) | `LocalVectorIndex` (lexical, offline/tests) and `ChromaVectorIndex` (OpenAI embeddings, local Chroma persistence, live) behind one `VectorIndex` interface | `retrieve(query, limit, run_id, todo_id)`; Verify never reads through this — it always loads the full evidence catalog from VFS independently | OpenAI embeddings API, local Chroma directory |
 | Source Verifier (`source_verification.py`) | Deterministic source-verification script over report text and evidence bundles; standalone CLI | Ten checks; exactly one primary issue type on failure; failure fingerprint for no-progress detection; pass enables approval | Evidence bundles in VFS, `verification/catalog_state.json`, graph conditional edges |
-| Model Router | Role-specific primary/fallback models and cost-conscious reasoning sandwich | Retries bounded; fallback event traced; final failure is visible | All model-using nodes, Langfuse |
+| Model Router (`models/router.py`, `models/role_router.py`) | `RoleModelRouter` dispatches each role to one of two profiles: reasoning (`scope`, `planner`, `verify`) or standard (`researcher`, `research_compressor`, `synthesizer`, `fixer`). Live app default: GPT reasoning tier (`INTELLIGENCE_REASONING_MODEL/PROVIDER`, no free Gemini xhigh-equivalent tier), Gemini standard tier (`INTELLIGENCE_STANDARD_MODEL/PROVIDER`, free), each with its own optional fallback, built once via `app._get_role_router` and shared by every agent | Retries bounded per profile; fallback event traced; final failure is visible | All model-using nodes, Langfuse |
 | Checkpointer | Persist typed graph state and resume points | Atomic checkpoint; invalid latest checkpoint falls back or NEEDS_REVIEW | LangGraph, VFS metadata |
 | Approval/Publisher | Bind approval to artifact hash and atomically publish | Reject/stale/unverified writes nothing permanent | Streamlit interrupt, VFS, output path |
 | Tracing/Evaluation | Create root execution traces grouped by thread, nested node spans, model generations, validation/fallback events, and evaluate faithfulness | Missing live tracing config blocks execution; export/flush failure is surfaced without exposing credentials | Langfuse v4 SDK and LangChain callback, Ragas dataset |
@@ -200,6 +208,7 @@ src/intelligence_collector/
 │   ├── researcher.py       # ResearchAgent sub-agent (LLM ↔ tavily_search loop + compression)
 │   ├── worker.py           # persist a sub-agent outcome to VFS + vector index
 │   ├── report_writer.py    # BVF Build/Fix drafts + reflection (lessons, strategy)
+│   ├── acceptance_verifier.py  # LLM goal-achievement check, run only after Verify passes
 │   ├── synthesis.py        # report version persistence (draft.vN / previous / latest)
 │   └── verification.py
 ├── tools/
@@ -213,7 +222,10 @@ src/intelligence_collector/
 │   ├── artifacts.py
 │   ├── vector_index.py         # VectorIndex Protocol + LocalVectorIndex (lexical, offline)
 │   └── chroma_vector_index.py  # ChromaVectorIndex: OpenAI embeddings, local Chroma persistence
-├── models/router.py
+├── models/
+│   ├── router.py       # ModelRouter: primary/fallback, tracing, structured-output parsing
+│   ├── role_router.py  # RoleModelRouter: dispatches scope/planner/verify vs. the rest
+│   └── factory.py      # ModelFactory: init_chat_model wiring, create_role_router
 ├── guardrails.py
 ├── publication.py
 ├── source_verification.py  # BVF "Verify": programmatic report-vs-sources checks + CLI
@@ -238,9 +250,11 @@ tested independently and no UI path can bypass workflow gates.
 - `graph/nodes.py` owns the `Node` name constants (single source for wiring, `app.py` activity
   labels, and `graph.<node>` trace spans) and all node logic. Collaborator-dependent nodes are
   grouped into injected classes: `ScopeNodes(scope_agent, vfs)`, `PlannerNodes(planner_agent, vfs)`,
-  and `ResearchNodes(vfs, index, researcher, max_concurrent_researchers=3)`, which owns a
-  `ResearchSupervisor`. `build_graph(planner_agent=...)` defaults to a
-  `PlannerAgent` sharing the scope agent's model router.
+  and `ResearchNodes(vfs, index, researcher, acceptance_verifier=None, max_concurrent_researchers=3)`,
+  which owns a `ResearchSupervisor` and a `BVFNodes` (holding the optional `AcceptanceVerifier`).
+  `build_graph(planner_agent=...)` defaults to a `PlannerAgent` sharing the scope agent's model
+  router (`scope_agent.router`) — in the live app this is the shared `RoleModelRouter`, so each
+  agent's calls still land on the correct reasoning/standard profile by role name.
 - `graph/routing.py` holds named routers for every conditional edge: `route_after_clarify`
   (END when clarification is needed, else `write_research_brief`) and `route_after_verify`
   (`approval` only when `verification.passed`; a `None`/missing result ends the run).

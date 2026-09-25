@@ -37,7 +37,10 @@ def test_full_graph_executes_guarded_research_to_approval_ready(stores):
                 "technical sources and citing the retrieved evidence."
             )
         },
-        {"questions": ["How does a local software cache store and reuse data?"]},
+        {
+            "questions": ["How does a local software cache store and reuse data?"],
+            "acceptance_criteria": ["States how a local cache stores and reuses data."],
+        },
     ])
     mcp = ControlledMCP([{
         "url": "https://controlled.test/cache",

@@ -79,7 +79,10 @@ def test_failed_todo_write_cannot_traverse_to_research(tmp_path):
     model = SequencedModel([
         _clear_scope(),
         _brief(),
-        {"questions": ["Which databases suit local Python applications, per primary sources?"]},
+        {
+            "questions": ["Which databases suit local Python applications, per primary sources?"],
+            "acceptance_criteria": ["Names at least one database suited to local Python apps."],
+        },
     ])
     graph = build_graph(
         scope_agent=ScopeAgent(ModelRouter(model, mode="live")),

@@ -442,3 +442,59 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   `tests/unit/test_evidence_selection.py`, and
   `tests/integration/test_bvf_loop.py::test_evidence_selection_narrows_the_build_prompt_but_not_verification`
   (FR-012, FR-012a).
+
+## Phase 22: Gemini Primary with GPT Fallback
+
+- [X] T119 [US1] Configure the live app's shared model router with a Gemini primary and an
+  optional GPT fallback: add `langchain-google-genai` to `pyproject.toml` (`ModelFactory.create`
+  already forwards any `model_provider` string to `init_chat_model` unchanged, so no factory code
+  change was needed); wire `SCOPE_FALLBACK_MODEL`/`SCOPE_FALLBACK_PROVIDER` in
+  `src/intelligence_collector/app.py::_get_scope_agent` (`ModelRouter(primary, fallback, ...)`, an
+  unset fallback model preserves prior single-model behavior); update `SCOPE_MODEL`/`SCOPE_PROVIDER`
+  defaults to Gemini and document the new fallback vars in `.env.example`. Completion means every
+  role sharing the Scope Agent's router (Planner, Researcher, Report Writer, Fixer, via their
+  default constructors in `graph/build.py` and `graph/nodes.py`) gets the same primary/fallback pair
+  with no per-role changes, covered offline (mocked `init_chat_model`) in
+  `tests/unit/test_scope_agent_wiring.py` (FR-031, FR-032, FR-032a). Superseded by Phase 23, which
+  replaces the single shared router with per-role reasoning/standard tiers.
+
+## Phase 23: Role-Tiered Model Routing and Acceptance-Criteria Verification
+
+- [X] T120 [US1] Extend `TodoPlan` with `acceptance_criteria` (1–5 non-blank, non-duplicate
+  strings) in `src/intelligence_collector/contracts.py`; bump the Planner prompt to `planner.v3` in
+  `src/intelligence_collector/agents/prompts.py` to also require acceptance criteria; change
+  `PlannerAgent.define_questions`/`write_todos` to `define_plan`/`write_todos` (now returning
+  `tuple[list[ResearchTodo], list[str]]` and persisting `planning/acceptance_criteria.v1.json`) in
+  `src/intelligence_collector/agents/planner.py`; thread `acceptance_criteria` through
+  `PlannerNodes.planning` and `GraphState`/`ResearchGraphState`. Completion means invalid planner
+  output (missing or malformed criteria, same as malformed questions) never writes a todo list,
+  covered in `tests/contract/test_semantic_decision_contracts.py` and
+  `tests/integration/test_langchain_scope.py` (FR-006a, FR-037a).
+- [X] T121 [US1] Add the LLM acceptance-criteria check: `AcceptanceVerifier` (role `verify`,
+  `acceptance.v1` prompt) and `merge_acceptance_verdict` in
+  `src/intelligence_collector/agents/acceptance_verifier.py`; wire an optional
+  `acceptance_verifier` into `ResearchNodes`/`BVFNodes` in
+  `src/intelligence_collector/graph/nodes.py` so `verifying()` runs it only when the deterministic
+  `verify_report` already passed, folding any unmet criterion into `VerificationResult` as an
+  `acceptance_criteria` check with `IssueType.DRAFT_DEFECT` — reusing the existing Fix/reflect loop
+  with no new routing. Completion means a structurally failing draft never reaches this (paid) LLM
+  call and an unmet criterion is fixed like any other `DRAFT_DEFECT`, covered in
+  `tests/unit/test_acceptance_verifier.py` and `tests/integration/test_bvf_loop.py` (FR-016b).
+- [X] T122 [US1] Replace the single shared model router with per-role tiers: add
+  `reasoning_fallback_model/provider` and `standard_fallback_model/provider` to
+  `RoleModelSettings.from_env()` in `src/intelligence_collector/config.py`; give
+  `ModelFactory.create_role_router` a `callbacks` param and per-tier fallback construction in
+  `src/intelligence_collector/models/factory.py`; update `DEEP_REASONING_ROLES`/`STANDARD_ROLES` to
+  the real live role names (`scope`, `planner`, `verify` / `researcher`, `research_compressor`,
+  `synthesizer`, `fixer`) and add `RoleModelRouter.invoke_with_tools` in
+  `src/intelligence_collector/models/role_router.py`; replace `app.py::_get_scope_agent`'s
+  standalone primary/fallback construction with `app.py::_get_role_router`, built once from
+  `INTELLIGENCE_REASONING_*`/`INTELLIGENCE_STANDARD_*` and shared by every agent; wire
+  `AcceptanceVerifier(agent.router)` into `ResearchNodes` in `app.py::_get_scope_graph`. Recommended
+  live defaults (documented in `.env.example`): GPT as the reasoning tier (Gemini has no free
+  "xhigh"-equivalent — Pro is paid-only, Flash's ceiling is `thinking_level="high"`) and Gemini
+  Flash (`reasoning_effort="low"`) as the standard tier, each with an optional GPT fallback.
+  `SCOPE_MODEL`/`SCOPE_FALLBACK_MODEL` remain only for the opt-in live smoke tests. Completion means
+  every agent's calls land on the correct tier by role name with no per-agent changes, covered
+  offline in `tests/unit/test_scope_agent_wiring.py` and
+  `tests/contract/test_role_model_routing.py` (FR-032a, FR-032b).

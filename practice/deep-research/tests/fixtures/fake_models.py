@@ -93,6 +93,27 @@ def cited_report(claims: list[str], sources: dict[str, str], *, limitations: lis
     return "\n".join(parts)
 
 
+class FakeAcceptanceModel:
+    """Scripted acceptance-verdict fake; records every prompt it receives."""
+
+    model_name = "fake-acceptance-verifier"
+
+    def __init__(self, verdicts):
+        self.verdicts = list(verdicts)
+        self.calls: list[list] = []
+
+    @staticmethod
+    def _next(items):
+        return items.pop(0) if len(items) > 1 else items[0]
+
+    def invoke(self, messages, config=None):
+        self.calls.append(messages)
+        return AIMessage(content=json.dumps(self._next(self.verdicts)))
+
+    def prompts(self) -> list[str]:
+        return ["\n".join(str(m.content) for m in messages) for messages in self.calls]
+
+
 class FakeModel:
     """A deterministic role-aware model substitute for tests."""
     def __init__(self, responses=None, error_roles=None):

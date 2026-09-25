@@ -5,15 +5,15 @@ import sqlite3
 import time
 from pathlib import Path
 from uuid import uuid4
+from intelligence_collector.agents.acceptance_verifier import AcceptanceVerifier
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.scope import ScopeAgent
-from intelligence_collector.config import Settings, load_local_env
+from intelligence_collector.config import RoleModelSettings, Settings, load_local_env
 from intelligence_collector.contracts import VerificationResult
 from intelligence_collector.guardrails import validate_request
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import Node, ResearchNodes
-from intelligence_collector.models.factory import ModelConfig, ModelFactory
-from intelligence_collector.models.router import ModelRouter
+from intelligence_collector.models.factory import ModelFactory
 from intelligence_collector.observability.tracing import Tracer
 from intelligence_collector.publication import approval_for, can_request_approval
 from intelligence_collector.storage.chroma_vector_index import ChromaVectorIndex
@@ -27,20 +27,28 @@ def _get_tracer(st):
     return st.session_state.tracer
 
 
+def _get_role_router(st, tracer):
+    """One shared router, dispatching by role: xhigh reasoning for scope/planner/verify,
+    standard for researcher/research_compressor/synthesizer/fixer (see RoleModelSettings)."""
+    if "role_router" in st.session_state:
+        return st.session_state.role_router
+    if not os.getenv("INTELLIGENCE_REASONING_MODEL", "").strip():
+        return None
+    settings = RoleModelSettings.from_env()
+    router = ModelFactory().create_role_router(
+        settings, mode="live", trace=tracer.model_event, callbacks=tracer.callbacks,
+    )
+    st.session_state.role_router = router
+    return router
+
+
 def _get_scope_agent(st, tracer):
     if "scope_agent" in st.session_state:
         return st.session_state.scope_agent
-    model_name = os.getenv("SCOPE_MODEL", "").strip()
-    if not model_name:
+    router = _get_role_router(st, tracer)
+    if router is None:
         return None
-    provider = os.getenv("SCOPE_PROVIDER") or None
-    primary = ModelFactory().create(ModelConfig(model_name, provider=provider))
-    agent = ScopeAgent(ModelRouter(
-        primary,
-        mode="live",
-        trace=tracer.model_event,
-        callbacks=tracer.callbacks,
-    ))
+    agent = ScopeAgent(router)
     st.session_state.scope_agent = agent
     return agent
 
@@ -90,6 +98,9 @@ def _get_scope_graph(st, agent, tracer):
             # re-reads the full evidence independently, so this never affects what gets checked.
             ChromaVectorIndex(settings.chroma_path, model=settings.embedding_model),
             researcher,
+            # Goal-level check, run only after the deterministic script passes; shares the
+            # scope/planner/verify reasoning-tier model (agent.router is the role router).
+            acceptance_verifier=AcceptanceVerifier(agent.router),
             max_concurrent_researchers=settings.max_concurrent_researchers,
             recovery_budget=settings.recovery_attempts,
             evidence_top_k=settings.evidence_top_k,

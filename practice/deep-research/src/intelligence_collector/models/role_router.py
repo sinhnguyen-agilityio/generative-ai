@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
-DEEP_REASONING_ROLES = frozenset({"planner", "verifier"})
-STANDARD_ROLES = frozenset({"supervisor", "worker", "synthesizer", "fixer"})
+# "verify" is the LLM acceptance-criteria check (agents/acceptance_verifier.py); the
+# source-verification script itself makes no LLM call and so has no role here.
+DEEP_REASONING_ROLES = frozenset({"scope", "planner", "verify"})
+STANDARD_ROLES = frozenset({"researcher", "research_compressor", "synthesizer", "fixer"})
 
 
 class RoleModelRouter:
@@ -30,3 +32,6 @@ class RoleModelRouter:
 
     def invoke_messages(self, role, messages, schema, **kwargs):
         return self.router_for(role).invoke_messages(role, messages, schema, **kwargs)
+
+    def invoke_with_tools(self, role, messages, tools, **kwargs):
+        return self.router_for(role).invoke_with_tools(role, messages, tools, **kwargs)

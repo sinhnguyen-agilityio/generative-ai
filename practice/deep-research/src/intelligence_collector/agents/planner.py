@@ -28,16 +28,16 @@ class PlannerAgent:
     def __init__(self, router):
         self.router = router
 
-    def define_questions(
+    def define_plan(
         self,
         brief: ResearchBrief,
         *,
         run_id: str = "",
         thread_id: str = "",
-    ) -> list[str]:
-        """Structured LLM decision: decompose the brief into standalone research questions."""
+    ) -> TodoPlan:
+        """Structured LLM decision: standalone research questions plus acceptance criteria."""
         messages = PLANNER_TEMPLATE.format_messages(brief=brief.research_question)
-        plan = self.router.invoke_messages(
+        return self.router.invoke_messages(
             "planner",
             messages,
             TodoPlan,
@@ -45,7 +45,6 @@ class PlannerAgent:
             run_id=run_id,
             thread_id=thread_id,
         )
-        return plan.questions
 
     def write_todos(
         self,
@@ -54,10 +53,17 @@ class PlannerAgent:
         run_id: str,
         *,
         thread_id: str = "",
-    ) -> list[ResearchTodo]:
-        """Define the questions, then durably record them as planned todos."""
-        questions = self.define_questions(brief, run_id=run_id, thread_id=thread_id)
-        return create_todos(vfs, run_id, questions)
+    ) -> tuple[list[ResearchTodo], list[str]]:
+        """Define the plan, then durably record the todos and acceptance criteria."""
+        plan = self.define_plan(brief, run_id=run_id, thread_id=thread_id)
+        todos = create_todos(vfs, run_id, plan.questions)
+        vfs.write_json(
+            run_id,
+            "planning/acceptance_criteria.v1.json",
+            plan.acceptance_criteria,
+            "acceptance_criteria",
+        )
+        return todos, plan.acceptance_criteria
 
 
 def replan_affected_node(

@@ -60,6 +60,10 @@ evidence-backed technical report from a user's research request."
   locally), scoped per question so no question's sources can be crowded out by another's;
   Verification always reads the full, unfiltered evidence catalog independently, so narrowing the
   writer's prompt cannot change what a claim is checked against (FR-012a).
+- Q: Which chat model should the live app use as primary, and what happens on failure? → A: Gemini
+  (free tier) as primary, GPT as fallback, configured via environment variables and shared by every
+  role through the one router each reused by default; an unset fallback keeps the app running with
+  only the primary model. Superseded 2026-09-25 by per-role reasoning/standard tiers (FR-032b).
 
 ### Session 2026-09-24
 
@@ -91,6 +95,21 @@ evidence-backed technical report from a user's research request."
   clear decision, and pauses the same LangGraph thread when clarification is needed; once clear,
   `write_research_brief` makes a second structured LLM call to produce the brief and the graph
   automatically transitions to Planning without asking the user to approve the brief.
+
+### Session 2026-09-25
+
+- Q: How should the workflow know a report actually achieves the research brief's goal, beyond
+  passing the deterministic citation/grounding checks? → A: The Planner also defines 1–5 acceptance
+  criteria alongside the research questions (`TodoPlan.acceptance_criteria`); once the deterministic
+  source-verification script passes, a separate LLM acceptance check judges the report against each
+  criterion. Any unmet criterion is folded into the same verification result as a `DRAFT_DEFECT`, so
+  it is fixed by the existing Build-Verify-Fix reflection loop rather than a new code path
+  (FR-006a, FR-016b).
+- Q: Which roles should use a deeper-reasoning model tier versus a cheaper/faster standard tier? → A:
+  Scope, Planner, and the acceptance check (role `verify`) use the reasoning tier; Researcher,
+  research compression, Synthesizer, and Fixer use the standard tier. Each tier is configured with
+  its own primary and optional fallback model via environment variables, replacing the single
+  shared router every role previously used (FR-032b).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -307,6 +326,10 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-006**: The Planner MUST call `write_todos` to durably create a non-empty list of structured
   research tasks before any external retrieval begins; a failed or invalid write MUST keep the run
   in Planning and expose an actionable error.
+- **FR-006a**: The same structured Planner call MUST also define 1–5 acceptance criteria (non-blank,
+  non-duplicate) describing what a finished report must state or cover to count as achieving the
+  research brief's goal. The Planner MUST persist the criteria durably alongside the todo list;
+  invalid planner output (missing or malformed criteria) MUST NOT write a todo list either.
 - **FR-007**: Each research task MUST contain a non-empty research question and a valid current
   status. Each newly written task MUST start in the planned status.
 - **FR-008**: A Research Supervisor MUST assign planned tasks to research workers, track their
@@ -381,6 +404,11 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   cited id with its exact URL, that every researched question is cited, and that unresolved
   evidence gaps are researched and then disclosed. Only a report passing every check MAY leave the
   Build-Verify-Fix loop toward approval.
+- **FR-016b**: Only after the deterministic source-verification script passes, the system MUST run
+  an LLM acceptance check that judges the report against each planner-defined acceptance criterion
+  (met/unmet with justification). Any unmet criterion MUST turn that verification result into a
+  failed `DRAFT_DEFECT`, feeding the same Build-Verify-Fix fix/reflect loop as a source-verification
+  failure; a structurally failing draft MUST NOT reach this check.
 - **FR-017**: The recovery workflow MUST revise the draft for `DRAFT_DEFECT`, research the specific
   gap for `EVIDENCE_GAP`, and re-plan affected tasks for `PLAN_GAP`.
 - **FR-017a**: Each unresolved evidence gap MUST receive one targeted research round; gaps that remain
@@ -449,6 +477,16 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-032**: The model router MUST centralize primary/fallback models, reasoning settings, timeouts,
   retry limits, prompt versions, selected model, fallback events, errors, and structured decisions in
   run traces without recording secrets.
+- **FR-032a**: `SCOPE_MODEL`/`SCOPE_PROVIDER`/`SCOPE_FALLBACK_MODEL`/`SCOPE_FALLBACK_PROVIDER` MUST
+  remain available to configure a standalone primary/fallback pair for the opt-in live LLM/MCP
+  smoke tests; they MUST NOT drive the live application, which is configured per FR-032b.
+- **FR-032b**: The live application MUST route every role to one of two model profiles by role
+  name: a reasoning profile for `scope`, `planner`, and `verify` (the acceptance-criteria check),
+  and a standard profile for `researcher`, `research_compressor`, `synthesizer`, and `fixer`. Each
+  profile MUST configure its own primary model, optional fallback model, provider, and reasoning
+  kwargs from environment variables (`INTELLIGENCE_REASONING_*`, `INTELLIGENCE_STANDARD_*`) so the
+  operator can change either tier without a code change. An unset fallback MUST leave that
+  profile's router with only its primary model configured.
 - **FR-033**: The `clarify_with_user` LLM output MUST contain exactly three fields:
   `need_clarification` (boolean), `question` (string), and `verification` (string). When clarification
   is needed, `question` MUST contain exactly one focused question and `verification` MUST be empty.
@@ -485,10 +523,12 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   Researching or invoke external retrieval. Brief or todo persistence failure MUST end the current
   invocation visibly without enabling retrieval.
 - **FR-037a**: The Planner Agent MUST decompose the `ResearchBrief` with a structured, versioned LLM
-  call whose output is only a list of research questions (`TodoPlan.questions`, 1–5 items). Each
-  question MUST be standalone, non-blank, and not duplicate another (case-insensitive). The LLM MUST
-  NOT set todo IDs or statuses; the system converts each question into a `planned` todo and persists
-  the list through `write_todos`. Invalid planner output MUST NOT write a todo list.
+  call whose output is a list of research questions and a list of acceptance criteria
+  (`TodoPlan.questions` and `TodoPlan.acceptance_criteria`, 1–5 items each). Each question and each
+  criterion MUST be standalone, non-blank, and not duplicate another (case-insensitive). The LLM
+  MUST NOT set todo IDs or statuses; the system converts each question into a `planned` todo and
+  persists both the todo list (through `write_todos`) and the acceptance criteria. Invalid planner
+  output MUST NOT write a todo list.
 - **FR-038**: Every live workflow execution MUST emit one complete Langfuse trace before it may be
   treated as successfully observed. Each execution trace MUST be grouped under the LangGraph
   `thread_id`, correlated with `run_id`, and contain a root execution observation, child graph-node
