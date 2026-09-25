@@ -23,11 +23,16 @@ def _responses():
         "fixer": {"action": "revise", "reason": "draft defect"},
     }
 
+
 def test_all_semantic_roles_use_structured_router():
-    fake = FakeModel(responses=_responses()); roles = SemanticRoles(ModelRouter(fake, fake, mode="fake"))
-    assert roles.planner("brief") and roles.supervisor("context") and roles.worker("question")
-    assert roles.synthesizer("evidence") and roles.verifier("draft") and roles.fixer("feedback")
-    assert {call[0] for call in fake.calls} == {"planner", "supervisor", "worker", "synthesizer", "verifier", "fixer"}
+    fake = FakeModel(responses=_responses())
+    roles = SemanticRoles(ModelRouter(fake, fake, mode="fake"))
+    assert roles.planner("brief") and roles.supervisor(
+        "context") and roles.worker("question")
+    assert roles.synthesizer("evidence") and roles.verifier(
+        "draft") and roles.fixer("feedback")
+    assert {call[0] for call in fake.calls} == {"planner",
+                                                "supervisor", "worker", "synthesizer", "verifier", "fixer"}
 
 
 def test_every_semantic_role_prompt_is_versioned_and_instructive():

@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from intelligence_collector.contracts import IssueType, VerificationCheck, VerificationResult
+from intelligence_collector.tools.url_tracking import normalize_url
 
 CATALOG_STATE_PATH = "verification/catalog_state.json"
 EXEMPT_SECTIONS = ("scope", "limitations", "sources", "references")
@@ -93,7 +94,8 @@ class SourceCatalog:
 
 
 def _normalize_url(url: str) -> str:
-    return url.strip().rstrip(".,;:").rstrip("/")
+    # URLs pulled out of report prose may carry trailing punctuation.
+    return normalize_url(url.strip().rstrip(".,;:"))
 
 
 def gap_id(todo_id: str, text: str) -> str:

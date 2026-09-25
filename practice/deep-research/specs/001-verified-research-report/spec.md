@@ -13,40 +13,53 @@ evidence-backed technical report from a user's research request."
 
 ### Session 2026-09-25
 
-- Q: Structured output của `clarify_with_user` có nên chỉ gồm đúng ba field
-  `need_clarification`, `question`, và `verification`, còn research scope chi tiết được tạo riêng
-  trong `write_research_brief`? → A: Chỉ ba field clarification.
-- Q: Mỗi lượt xử lý nên hiển thị response của assistant theo format nào trong chat transcript? →
-  A: Một Markdown message mỗi lượt; structured JSON và workflow metadata chỉ nằm trong Details.
-- Q: Trong màn hình mặc định, thông tin agent, progress và tool calls nên xuất hiện như thế nào để
-  chat vẫn đơn giản như ChatGPT? → A: Chat-first với status line và panel Details thu gọn mặc định.
-- Q: Trong lúc workflow đang chạy, Streamlit nên hiển thị mức độ chi tiết nào về Scope,
-  Planning và tool calls? → A: Hiển thị stage hiện tại, bước đang chạy và activity feed ngắn như
-  “Evaluating scope”, “Generating brief”, hoặc “Calling write_todos”; ẩn tool arguments nhạy cảm.
-- Q: Indicator nên hoạt động thế nào khi workflow đang xử lý hoặc đang chờ người dùng trả lời
-  clarification? → A: Chỉ animate spinner khi backend đang thực thi; khi graph pause để chờ
-  clarification, dừng spinner và hiển thị trạng thái tĩnh “Waiting for your response”.
-- Q: Activity feed nên cập nhật vào thời điểm nào trong quá trình Scope, Planning và tool
-  execution? → A: Cập nhật realtime theo lifecycle; tạo item khi node hoặc tool bắt đầu rồi cập nhật
-  chính item đó thành success hoặc failure khi kết thúc.
-- Q: Graph nodes và edges nên được tổ chức thế nào để dễ đọc và bảo trì? → A: Tách wiring
-  (`build.py`), node logic (`nodes.py`), conditional routers (`routing.py`) và
-  tracing/checkpoint/lifecycle wrapper (`instrumentation.py`); node names dùng chung một nguồn
-  (FR-030a).
-- Q: Planner Agent nên nhận gì và trả về gì? → A: Nhận research brief, dùng LLM để định nghĩa danh
-  sách research questions (output chỉ là list câu hỏi), rồi node Planning gọi `write_todos` để lưu
-  thành todo list (FR-037a).
-- Q: Research agent và Supervisor nên hoạt động thế nào? → A: Supervisor giao mỗi todo cho một
-  research sub-agent riêng (tối đa 3 chạy song song, cấu hình được); sub-agent dùng vòng lặp LLM
-  decision → Tavily MCP tool → compression, định tuyến theo quyết định của LLM (FR-008a, FR-009c).
-- Q: Khi sub-agent dùng hết search budget mà LLM đánh giá evidence chưa đủ thì todo có trạng thái
-  gì? → A: Completed kèm `sufficient: false` và unresolved gaps trong evidence bundle; chỉ Failed
-  khi retrieval/compression không tạo ra kết quả dùng được (FR-009d).
-- Q: Vòng Build-Verify-Fix nên kiểm chứng và retry thế nào? → A: Verify bằng script kiểm chứng
-  nguồn có tính lập trình (deterministic) trên nội dung report; agent không được kết thúc bình
-  thường cho đến khi mọi check pass. Retry phải tự cải thiện: reflect để rút ra nguyên nhân, bài học
-  và chiến lược, tích lũy bài học qua các lần thử; lối thoát duy nhất khác là `NEEDS_REVIEW` khi hết
-  budget hoặc không tiến triển (FR-016a, FR-017a, FR-017b, FR-019, FR-020).
+- Q: Should the structured output of `clarify_with_user` contain exactly the three fields
+  `need_clarification`, `question`, and `verification`, with the detailed research scope created
+  separately in `write_research_brief`? → A: Only the three clarification fields.
+- Q: In what format should each assistant response appear in the chat transcript per turn? →
+  A: One Markdown message per turn; structured JSON and workflow metadata appear only in Details.
+- Q: On the default screen, how should agent, progress, and tool-call information appear so the
+  chat stays as simple as ChatGPT? → A: Chat-first, with a status line and a Details panel that is
+  collapsed by default.
+- Q: While the workflow is running, how much detail about Scope, Planning, and tool calls should
+  Streamlit show? → A: Show the current stage, the running step, and a short activity feed such as
+  “Evaluating scope”, “Generating brief”, or “Calling write_todos”; hide sensitive tool arguments.
+- Q: How should the indicator behave while the workflow is processing or waiting for the user to
+  answer a clarification? → A: Animate the spinner only while the backend is executing; when the
+  graph pauses for clarification, stop the spinner and show the static state “Waiting for your
+  response”.
+- Q: When should the activity feed update during Scope, Planning, and tool execution? → A: Update in
+  real time with the lifecycle; create an item when a node or tool starts, then update that same
+  item to success or failure when it finishes.
+- Q: How should graph nodes and edges be organized to stay readable and maintainable? → A: Separate
+  wiring (`build.py`), node logic (`nodes.py`), conditional routers (`routing.py`), and the
+  tracing/checkpoint/lifecycle wrapper (`instrumentation.py`); node names come from a single shared
+  source (FR-030a).
+- Q: What should the Planner Agent receive and return? → A: It receives the research brief, uses an
+  LLM to define a list of research questions (the output is only a list of questions), and then the
+  Planning node calls `write_todos` to save them as the todo list (FR-037a).
+- Q: How should the research agent and the Supervisor work? → A: The Supervisor assigns each todo to
+  its own research sub-agent (at most 3 running in parallel, configurable); each sub-agent runs an
+  LLM decision → Tavily MCP tool → compression loop, routed by the LLM's decisions (FR-008a,
+  FR-009c).
+- Q: When a sub-agent uses its whole search budget and the LLM judges the evidence insufficient,
+  what status should the todo have? → A: Completed, with `sufficient: false` and unresolved gaps in
+  the evidence bundle; Failed only when retrieval or compression produced nothing usable (FR-009d).
+- Q: How should the Build-Verify-Fix loop verify and retry? → A: Verify with a deterministic,
+  programmatic source-verification script over the report text; the agent may not finish normally
+  until every check passes. Retries must be self-improving: reflect to derive the root cause,
+  lessons, and a strategy, and accumulate lessons across attempts; the only other exit is
+  `NEEDS_REVIEW` when the budget is exhausted or no progress is made (FR-016a, FR-017a, FR-017b,
+  FR-019, FR-020).
+- Q: How should repeated URLs be handled during research? → A: Track URLs by normalized identity;
+  a sub-agent never re-shows or re-collects a page it already retrieved, and a run-level URL
+  registry lets later tasks reference the first capture instead of storing and indexing the page
+  again (FR-010c).
+- Q: Should the Build/Fix prompt include every stored source, or a retrieved subset? → A: Retrieve
+  a configurable top-K sources per research question (OpenAI embeddings, Chroma, persisted
+  locally), scoped per question so no question's sources can be crowded out by another's;
+  Verification always reads the full, unfiltered evidence catalog independently, so narrowing the
+  writer's prompt cannot change what a claim is checked against (FR-012a).
 
 ### Session 2026-09-24
 
@@ -332,11 +345,25 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   report and the latest report.
 - **FR-010a**: Workers MUST preserve raw data retrieved from web sources with its source provenance
   and index that research data in the vector store for retrieval during synthesis.
+- **FR-010c**: The workflow MUST track retrieved URLs by a normalized identity (case-insensitive
+  scheme and host, no default port, fragment, trailing slash, or tracking parameters, sorted query)
+  so each web page is captured and indexed at most once per run. Within one research sub-agent, a
+  URL already retrieved MUST NOT be shown to the LLM again or collected twice. Across tasks, gap
+  research, and resumed invocations, a run-scoped URL registry MUST make later evidence bundles
+  reference the first capture (same source and artifact ids) instead of writing and indexing the
+  page again.
 - **FR-011**: The Supervisor MUST signal `ResearchComplete` before synthesis can begin and MAY signal
   it only when every todo has completed status, all required intermediate artifact files are
   durably stored through the VFS, and all raw web research data is indexed successfully.
 - **FR-012**: The system MUST synthesize a versioned draft by retrieving from the indexed research
   data and stored evidence rather than relying on conversation history as the source of record.
+- **FR-012a**: The Build/Fix prompt MUST select each research question's evidence by real
+  embedding-based retrieval (not full-text dump) and MUST cap it at a configurable top-K sources
+  per question, scoped to that question only, so one question's sources can never crowd out
+  another's representation. Verification MUST read the complete, unfiltered evidence catalog
+  independently of this selection, so narrowing the Build/Fix prompt MUST NOT change what a claim
+  is checked against. A retrieval failure MUST NOT block Build; it MUST leave that question's
+  evidence unfiltered instead.
 - **FR-013**: The verifier MUST determine whether the draft addresses every required element of the
   scoped request.
 - **FR-014**: The verifier MUST determine whether every factual claim intended for the final report

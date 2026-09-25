@@ -10,9 +10,11 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage, HumanMessage
 
 from intelligence_collector.agents.report_writer import (
+    DEFAULT_EVIDENCE_TOP_K,
     ReportWriter,
     RevisionContext,
     merge_lessons,
+    select_relevant_evidence,
 )
 from intelligence_collector.agents.supervisor import (
     DEFAULT_MAX_CONCURRENT_RESEARCHERS,
@@ -152,6 +154,7 @@ class ResearchNodes:
         report_writer: ReportWriter | None = None,
         max_concurrent_researchers: int = DEFAULT_MAX_CONCURRENT_RESEARCHERS,
         recovery_budget: int = DEFAULT_RECOVERY_BUDGET,
+        evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
     ):
         self.vfs = vfs
         self.index = index
@@ -163,9 +166,11 @@ class ResearchNodes:
         )
         self.bvf = BVFNodes(
             vfs,
+            index,
             self.supervisor,
             report_writer or ReportWriter(researcher.router),
             recovery_budget=recovery_budget,
+            evidence_top_k=evidence_top_k,
         )
 
     def researching(self, state):
@@ -257,13 +262,25 @@ class BVFNodes:
     budget or repeating the same failures ends in ``needs_review``.
     """
 
-    def __init__(self, vfs, supervisor: ResearchSupervisor, writer: ReportWriter, *, recovery_budget: int):
+    def __init__(
+        self,
+        vfs,
+        index,
+        supervisor: ResearchSupervisor,
+        writer: ReportWriter,
+        *,
+        recovery_budget: int,
+        evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
+    ):
         self.vfs = vfs
+        self.index = index
         self.supervisor = supervisor
         self.writer = writer
         self.recovery_budget = recovery_budget
+        self.evidence_top_k = evidence_top_k
 
     def _catalog(self, state):
+        """Full, unfiltered catalog — used by Verify and gap research, never narrowed."""
         return load_catalog(self.vfs, state["run_id"], state.get("evidence", []))
 
     def synthesizing(self, state):
@@ -279,9 +296,14 @@ class BVFNodes:
                 lessons=list(state.get("bvf_lessons", [])),
                 strategy=state.get("fix_strategy", ""),
             )
+        # The writer's prompt sees a per-question top-K selection; Verify still checks the
+        # full catalog independently, so narrowing here can never hide a citation problem.
+        catalog = select_relevant_evidence(
+            self._catalog(state), self.index, state["run_id"], top_k=self.evidence_top_k
+        )
         report = self.writer.write(
             brief,
-            self._catalog(state),
+            catalog,
             revision=revision,
             run_id=state["run_id"],
             thread_id=state.get("thread_id", ""),

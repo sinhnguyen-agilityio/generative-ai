@@ -14,6 +14,7 @@ from intelligence_collector.agents.worker import already_researched, failed_outc
 from intelligence_collector.contracts import ProgressAssessment, ResearchTodo, TodoStatus
 from intelligence_collector.tools.mcp import redact_mcp_error
 from intelligence_collector.tools.think_tool import think_tool
+from intelligence_collector.tools.url_tracking import UrlRegistry
 
 DEFAULT_MAX_CONCURRENT_RESEARCHERS = 3
 MAX_CONCURRENT_RESEARCHERS = 5
@@ -45,15 +46,17 @@ class ResearchSupervisor:
         pending = [todo for todo in todos if not already_researched(self.vfs, run_id, todo)]
         outcomes = self._run_sub_agents(run_id, pending, thread_id) if pending else {}
 
+        # One run-level URL registry, so a page found by several sub-agents is captured once.
+        registry = UrlRegistry.load(self.vfs, run_id)
         results = []
         for todo in todos:
             if todo.todo_id not in outcomes:
                 todo.status = TodoStatus.COMPLETED  # researched in an earlier invocation
                 results.append((todo, [], []))
             else:
-                results.append(
-                    persist_research(self.vfs, self.index, run_id, todo, outcomes[todo.todo_id])
-                )
+                results.append(persist_research(
+                    self.vfs, self.index, run_id, todo, outcomes[todo.todo_id], registry
+                ))
         return results
 
     def _run_sub_agents(

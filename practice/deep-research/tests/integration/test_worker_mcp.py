@@ -37,9 +37,11 @@ def test_research_agent_searches_broad_then_narrow_and_persists_provenance(store
     assert [event["role"] for event in traces] == [
         "researcher", "researcher", "researcher", "research_compressor",
     ]
-    assert traces[0]["prompt_version"] == "researcher.v1"
+    assert traces[0]["prompt_version"] == "researcher.v2"
     assert traces[-1]["prompt_version"] == "research-compress.v1"
-    assert {ref.kind for ref in refs} == {"raw_capture", "notes", "excerpts", "evidence_bundle"}
+    assert {ref.kind for ref in refs} == {
+        "raw_capture", "url_registry", "notes", "excerpts", "evidence_bundle",
+    }
     evidence = json.loads(vfs.read("run", f"research/{todo.todo_id}/evidence/result.json"))
     assert evidence["sufficient"] is True
     assert evidence["search_calls"] == 2
@@ -145,6 +147,63 @@ def test_supervisor_delegates_one_sub_agent_per_todo_in_parallel(stores):
     assert len(clients) == 3  # a fresh MCP client, and search budget, per sub-agent
     assert all(client.calls == 4 for client in clients)
     assert peak == 2
+
+
+def test_sub_agent_does_not_repeat_a_url_it_already_retrieved(stores):
+    vfs, index = stores
+    todo = ResearchTodo(research_question="How do caches evict entries?")
+    model = FakeResearchModel(queries={todo.research_question: ["broad cache", "narrow cache"]})
+    page = {"url": "https://primary.test/cache", "content": "A cache evicts entries."}
+    mcp = ControlledMCP([
+        [page],
+        [{**page, "url": "https://PRIMARY.test/cache/#eviction", "content": "Different snippet"},
+         {"url": "https://primary.test/lru", "content": "LRU evicts the least recently used."}],
+    ])
+    captured = []
+    researcher = _researcher(model, lambda: mcp)
+    original = researcher.research
+
+    def research(question, **kwargs):
+        captured.append(original(question, **kwargs))
+        return captured[-1]
+
+    researcher.research = research
+    _, refs, chunks = run_worker(vfs, index, "seen", todo, researcher)
+
+    assert [s["url"] for s in captured[0].sources] == [
+        "https://primary.test/cache", "https://primary.test/lru",
+    ]
+    assert len(chunks) == 2 and [r.kind for r in refs].count("raw_capture") == 2
+
+
+def test_url_found_by_several_tasks_is_captured_and_indexed_once(stores):
+    vfs, index = stores
+    first, second = ResearchTodo(research_question="First"), ResearchTodo(research_question="Second")
+    shared = {"url": "https://primary.test/shared", "content": "Shared evidence"}
+    supervisor = ResearchSupervisor(
+        _researcher(FakeResearchModel(), lambda: ControlledMCP([shared])), vfs, index
+    )
+
+    results = supervisor.delegate("shared", [first, second])
+    later = supervisor.delegate("shared", [ResearchTodo(research_question="Gap follow-up")])
+
+    assert [todo.status for todo, _, _ in [*results, *later]] == [TodoStatus.COMPLETED] * 3
+    assert sum(len(chunks) for _, _, chunks in [*results, *later]) == 1
+    assert len(index.retrieve("Shared evidence", limit=10, run_id="shared")) == 1
+    bundles = [
+        json.loads(vfs.read("shared", f"research/{todo.todo_id}/evidence/result.json"))
+        for todo in (first, second, later[0][0])
+    ]
+    original = bundles[0]["sources"][0]
+    assert "reused_from_task" not in original
+    for bundle in bundles[1:]:
+        reused = bundle["sources"][0]
+        assert reused["reused_from_task"] == first.todo_id
+        assert (reused["source_id"], reused["artifact_id"]) == (
+            original["source_id"], original["artifact_id"],
+        )
+    registry = json.loads(vfs.read("shared", "research/url_registry.json"))
+    assert list(registry) == ["https://primary.test/shared"]
 
 
 def test_failing_sub_agent_does_not_cancel_siblings(stores):

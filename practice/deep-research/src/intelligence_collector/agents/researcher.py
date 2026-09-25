@@ -19,7 +19,7 @@ import operator
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, TypedDict, cast
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
@@ -33,6 +33,7 @@ from intelligence_collector.agents.prompts import (
 )
 from intelligence_collector.contracts import ResearchFindings
 from intelligence_collector.tools.mcp import MCPResearchPort, redact_mcp_error
+from intelligence_collector.tools.url_tracking import normalize_url
 
 HARD_SEARCH_LIMIT = 5
 TOOL_RESULT_CHARS = 1500
@@ -87,25 +88,31 @@ class ResearchOutcome:
 
 
 def unique_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop repeated (url, content) results returned by overlapping searches."""
+    """Keep the first result per normalized URL; later copies of the same page are dropped."""
     seen, unique = set(), []
     for source in sources:
-        identity = (source.get("url"), source.get("content"))
+        identity = normalize_url(source.get("url", ""))
         if identity not in seen:
             seen.add(identity)
             unique.append(source)
     return unique
 
 
-def _format_search_results(query: str, rows: list[dict[str, Any]]) -> str:
+def _format_search_results(query: str, rows: list[dict[str, Any]], repeated: list[str]) -> str:
     if not rows:
-        return f'No results for "{query}".'
-    blocks = [f'Search results for "{query}":']
-    for number, row in enumerate(rows, start=1):
+        blocks = [f'No new results for "{query}".']
+    else:
+        blocks = [f'Search results for "{query}":']
+        for number, row in enumerate(rows, start=1):
+            blocks.append(
+                f"[{number}] {row.get('title') or 'Untitled'}\n"
+                f"URL: {row.get('url', '')}\n"
+                f"{str(row.get('content', ''))[:TOOL_RESULT_CHARS]}"
+            )
+    if repeated:
         blocks.append(
-            f"[{number}] {row.get('title') or 'Untitled'}\n"
-            f"URL: {row.get('url', '')}\n"
-            f"{str(row.get('content', ''))[:TOOL_RESULT_CHARS]}"
+            "Already retrieved earlier, not repeated: " + ", ".join(repeated)
+            + ". Change the query if you need new sources."
         )
     return "\n\n".join(blocks)
 
@@ -161,6 +168,8 @@ class ResearchAgent:
         budget = outcome.search_budget
         # Allow a couple of non-search turns (e.g. a malformed tool call) without looping forever.
         max_llm_calls = budget + 2
+        # URLs this sub-agent has already retrieved; repeats are not re-shown or re-collected.
+        seen_urls: set[str] = set()
 
         def llm_call(state: ResearcherState) -> ResearcherState:
             messages = RESEARCHER_TEMPLATE.format_messages(
@@ -180,8 +189,11 @@ class ResearchAgent:
 
         def tool_node(state: ResearcherState) -> ResearcherState:
             calls = state.get("search_calls", 0)
-            replies, sources, errors = [], [], []
-            for call in state["messages"][-1].tool_calls:
+            replies: list[BaseMessage] = []
+            sources: list[dict[str, Any]] = []
+            errors: list[str] = []
+            last = cast(AIMessage, state["messages"][-1])  # routed here only with tool calls
+            for call in last.tool_calls:
                 query = str(call["args"].get("query", "")).strip()
                 if call["name"] != SEARCH_TOOL_NAME:
                     content = f"Unknown tool {call['name']!r}; only {SEARCH_TOOL_NAME} is available."
@@ -198,8 +210,16 @@ class ResearchAgent:
                         errors.append(error)
                         content = f"Search failed: {error}"
                     else:
-                        sources.extend({**row, "_query": query} for row in rows)
-                        content = _format_search_results(query, rows)
+                        fresh, repeated = [], []
+                        for row in rows:
+                            key = normalize_url(row.get("url", ""))
+                            if key in seen_urls:
+                                repeated.append(str(row.get("url", "")))
+                            else:
+                                seen_urls.add(key)
+                                fresh.append(row)
+                        sources.extend({**row, "_query": query} for row in fresh)
+                        content = _format_search_results(query, fresh, repeated)
                 replies.append(ToolMessage(content=content, tool_call_id=call["id"]))
             return {"messages": replies, "search_calls": calls, "sources": sources, "errors": errors}
 

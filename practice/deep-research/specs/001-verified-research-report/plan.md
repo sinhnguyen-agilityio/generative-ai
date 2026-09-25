@@ -123,13 +123,21 @@ alternatives that would violate the constitution or clarified specification.
    `tavily_search` result, narrows as needed, and stops with a final note or at the per-task
    five-call hard limit; compression (`research-compress.v1`) returns cited `ResearchFindings`.
    After all sub-agents return, the Supervisor writes raw source captures, notes (with findings),
-   excerpts, evidence bundles, and vector-index records to the VFS in plan order.
+   excerpts, evidence bundles, and vector-index records to the VFS in plan order. URLs are tracked
+   by normalized identity: a sub-agent hides pages it already retrieved from later search results
+   (`researcher.v2`), and the run-level `research/url_registry.json` makes later tasks, gap
+   research, and resumed runs reference the first capture instead of re-capturing and re-indexing.
 6. `think_tool` creates a progress assessment with explicit blockers. The Supervisor may issue
    `ResearchComplete` only if every todo is completed and all VFS/index prerequisites are present.
    This ends Research only.
-7. **Build**: the Report Writer (`report-writer.v1`, structured LLM call) drafts the report from the
-   stored evidence bundles only, citing a per-run source catalog as `[S<n>]`, and persists
-   `reports/draft.v<n>.md`, `reports/previous.md`, and `reports/latest.md`.
+7. **Build**: for each research question, `select_relevant_evidence` retrieves its top-K most
+   relevant sources (`INTELLIGENCE_EVIDENCE_TOP_K`, default 6) from the Chroma vector index —
+   OpenAI embeddings (`INTELLIGENCE_EMBEDDING_MODEL`, default `text-embedding-3-small`), persisted
+   locally under `INTELLIGENCE_CHROMA_PATH` — scoped to that question so no question's sources can
+   be crowded out by another's; a bundle at or under top-K, or a retrieval failure, is left
+   unfiltered. The Report Writer (`report-writer.v1`, structured LLM call) then drafts the report
+   from that narrowed evidence, citing the (unchanged, still-complete) per-run source catalog as
+   `[S<n>]`, and persists `reports/draft.v<n>.md`, `reports/previous.md`, and `reports/latest.md`.
 8. **Verify**: the deterministic source-verification script (`source_verification.py`, also runnable
    as `python -m intelligence_collector.source_verification --run-id RUN`) runs ten checks on the
    report text against the stored sources and returns pass or one primary issue: `EVIDENCE_GAP`
@@ -161,10 +169,11 @@ alternatives that would violate the constitution or clarified specification.
 | Planner Agent + `write_todos` | `PlannerAgent.define_questions` turns the `ResearchBrief` into a list of research questions; `PlannerAgent.write_todos` converts them to `planned` todos and persists them | `TodoPlan` (questions only, 1–5, non-blank, unique); invalid output or failed write blocks Research | Model router (`planner` role), VFS, graph state |
 | Research Supervisor (`agents/supervisor.py`) | Delegate one sub-agent per todo (bounded thread pool), persist outcomes in plan order, use `think_tool`, assess readiness | `ProgressAssessment` with blockers; a failing sub-agent becomes a FAILED task outcome, never cancels siblings; cannot ResearchComplete until all todos complete and artifacts indexed | `ResearchAgent`, VFS, vector store |
 | Research Sub-agent (`agents/researcher.py`) | LangGraph loop: LLM decision → `tavily_search` tool execution → routing → research compression | Fresh MCP client and hard per-task budget (≤5); MCP failures become tool/task outcomes with redacted errors; `ResearchFindings` validated | Model router (`researcher`, `research_compressor` roles, tool calling), Tavily MCP |
-| Research persistence (`agents/worker.py`) | Turn a `ResearchOutcome` into raw captures, notes, excerpts, evidence bundle, and index chunks; idempotent resume guard | COMPLETED with sources + findings (gaps recorded); FAILED writes `outcome.json` | VFS, vector store |
+| Research persistence (`agents/worker.py`) | Turn a `ResearchOutcome` into raw captures, notes, excerpts, evidence bundle, and index chunks; idempotent resume guard; capture each URL once per run | COMPLETED with sources + findings (gaps recorded); FAILED writes `outcome.json`; already-captured URLs reference the first capture (`reused_from_task`) | VFS, vector store, `UrlRegistry` |
 | VFS Artifact Store | Atomic run-scoped files and immutable versions | Reject path escape/cross-run writes; partial writes are invisible | All nodes, checkpoint metadata |
 | Vector Index | Chunk/index raw source captures and retrieve synthesis context | Index failures block ResearchComplete; retrieval records source IDs | Worker, synthesis, verifier |
-| Report Writer (`agents/report_writer.py`) | Build/Fix drafts from stored evidence with `[S<n>]` citations; BVF reflection producing lessons and strategy | `DraftAssessment` / `Reflection` validated; fix attempts must receive failures, lessons, strategy, previous draft | Model router (`synthesizer`, `fixer` roles), VFS |
+| Report Writer (`agents/report_writer.py`) | Build/Fix drafts from top-K retrieved evidence (`select_relevant_evidence`, per question) with `[S<n>]` citations; BVF reflection producing lessons and strategy | `DraftAssessment` / `Reflection` validated; fix attempts must receive failures, lessons, strategy, previous draft; retrieval scoped per question, never global | Model router (`synthesizer`, `fixer` roles), VFS, vector index |
+| Vector Index (`storage/vector_index.py`, `storage/chroma_vector_index.py`) | `LocalVectorIndex` (lexical, offline/tests) and `ChromaVectorIndex` (OpenAI embeddings, local Chroma persistence, live) behind one `VectorIndex` interface | `retrieve(query, limit, run_id, todo_id)`; Verify never reads through this — it always loads the full evidence catalog from VFS independently | OpenAI embeddings API, local Chroma directory |
 | Source Verifier (`source_verification.py`) | Deterministic source-verification script over report text and evidence bundles; standalone CLI | Ten checks; exactly one primary issue type on failure; failure fingerprint for no-progress detection; pass enables approval | Evidence bundles in VFS, `verification/catalog_state.json`, graph conditional edges |
 | Model Router | Role-specific primary/fallback models and cost-conscious reasoning sandwich | Retries bounded; fallback event traced; final failure is visible | All model-using nodes, Langfuse |
 | Checkpointer | Persist typed graph state and resume points | Atomic checkpoint; invalid latest checkpoint falls back or NEEDS_REVIEW | LangGraph, VFS metadata |
@@ -196,12 +205,14 @@ src/intelligence_collector/
 ├── tools/
 │   ├── write_todos.py
 │   ├── think_tool.py
-│   └── mcp.py
+│   ├── mcp.py
+│   └── url_tracking.py     # normalize_url + run-level UrlRegistry (capture each page once)
 ├── storage/
 │   ├── vfs.py
 │   ├── checkpoints.py
 │   ├── artifacts.py
-│   └── vector_index.py
+│   ├── vector_index.py         # VectorIndex Protocol + LocalVectorIndex (lexical, offline)
+│   └── chroma_vector_index.py  # ChromaVectorIndex: OpenAI embeddings, local Chroma persistence
 ├── models/router.py
 ├── guardrails.py
 ├── publication.py

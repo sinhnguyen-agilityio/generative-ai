@@ -6,7 +6,7 @@ from intelligence_collector.contracts import ResearchTodo
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
-from intelligence_collector.source_verification import gap_id, main as verify_script
+from intelligence_collector.source_verification import gap_id, load_catalog, main as verify_script
 from intelligence_collector.tools.mcp import ControlledMCP
 from tests.fixtures.fake_models import FakeReportModel, FakeResearchModel, cited_report
 
@@ -131,6 +131,39 @@ def test_evidence_gap_triggers_targeted_research_then_disclosure(stores):
     assert result["todos"][1]["research_question"].startswith("cache eviction policy details")
     assert gap_id("todo-1", "cache eviction policy details") in result["researched_gaps"]
     assert "BVF fix attempt 1" in model.prompts("write")[1]
+
+
+def test_evidence_selection_narrows_the_build_prompt_but_not_verification(stores):
+    """The writer's prompt sees only evidence_top_k sources per question; Verify still reads
+    every source that was actually captured, independent of that narrowing."""
+    vfs, index = stores
+    sources = [
+        {"url": f"https://controlled.test/page{n}", "content": f"Cache related detail number {n}"}
+        for n in range(8)
+    ]
+    researcher = ResearchAgent(
+        ModelRouter(FakeResearchModel(), mode="fake"),
+        lambda: ControlledMCP([sources]),
+    )
+    report_model = FakeReportModel([GOOD])
+    nodes = ResearchNodes(
+        vfs, index, researcher,
+        report_writer=ReportWriter(ModelRouter(report_model, mode="fake")),
+        recovery_budget=3,
+        evidence_top_k=3,
+    )
+    todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
+
+    result = build_graph(research_nodes=nodes).invoke({
+        "run_id": "narrow", "thread_id": "narrow",
+        "scoped_request": BRIEF, "todos": [todo.model_dump(mode="json")],
+    })
+
+    build_prompt = report_model.prompts("write")[0]
+    assert build_prompt.count("Excerpt:") == 3  # narrowed to evidence_top_k, not all 8
+
+    full_catalog = load_catalog(vfs, "narrow", result["evidence"])
+    assert len(full_catalog.bundles[0].source_ids) == 8  # Verify still sees every captured source
 
 
 def test_standalone_verification_script_reproduces_the_graph_verdict(stores, capsys):

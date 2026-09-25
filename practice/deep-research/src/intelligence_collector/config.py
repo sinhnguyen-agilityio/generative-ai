@@ -34,6 +34,9 @@ class Settings:
     vfs_root: str = ".data/vfs"
     checkpoint_path: str = ".data/checkpoints.sqlite3"
     vector_path: str = ".data/vector-index.json"
+    chroma_path: str = ".data/chroma"
+    embedding_model: str = "text-embedding-3-small"
+    evidence_top_k: int = 6
     output_dir: str = "exports"
     max_search_calls: int = 5
     max_concurrent_researchers: int = 3
@@ -45,6 +48,9 @@ class Settings:
             vfs_root=os.getenv("INTELLIGENCE_VFS_ROOT", cls.vfs_root),
             checkpoint_path=os.getenv("INTELLIGENCE_CHECKPOINT_PATH", cls.checkpoint_path),
             vector_path=os.getenv("INTELLIGENCE_VECTOR_PATH", cls.vector_path),
+            chroma_path=os.getenv("INTELLIGENCE_CHROMA_PATH", cls.chroma_path),
+            embedding_model=os.getenv("INTELLIGENCE_EMBEDDING_MODEL", cls.embedding_model),
+            evidence_top_k=_bounded_int("INTELLIGENCE_EVIDENCE_TOP_K", 6, 20),
             output_dir=os.getenv("INTELLIGENCE_OUTPUT_DIR", cls.output_dir),
             max_search_calls=_bounded_int("INTELLIGENCE_MAX_SEARCH_CALLS", 5, MAX_SEARCH_CALLS),
             max_concurrent_researchers=_bounded_int(

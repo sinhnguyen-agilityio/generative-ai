@@ -26,10 +26,12 @@ from intelligence_collector.contracts import (
     ResearchBrief,
     VerificationResult,
 )
-from intelligence_collector.source_verification import SourceCatalog
+from intelligence_collector.source_verification import EvidenceBundle, SourceCatalog
+from intelligence_collector.tools.url_tracking import normalize_url
 
 EXCERPT_CHARS = 1200
 MAX_LESSONS = 12
+DEFAULT_EVIDENCE_TOP_K = 6
 
 
 @dataclass
@@ -61,6 +63,66 @@ def format_evidence(catalog: SourceCatalog) -> str:
             f"Sources:\n" + ("\n".join(sources) or "(none)")
         )
     return "\n\n".join(blocks) or "(no evidence)"
+
+
+def select_relevant_evidence(
+    catalog: SourceCatalog,
+    index,
+    run_id: str,
+    *,
+    top_k: int = DEFAULT_EVIDENCE_TOP_K,
+) -> SourceCatalog:
+    """Narrow each bundle to its top-K most relevant sources via vector retrieval.
+
+    Scoped *per research question* (bundle), never globally, so every question keeps
+    guaranteed representation in the Build/Fix prompt — a global top-K could let one
+    question's sources crowd out another's entirely, which would make the report unable to
+    cite that question and fail the verifier's ``question_coverage`` check for a reason that
+    has nothing to do with missing evidence.
+
+    Verification always reads the full, unfiltered catalog independently (``BVFNodes._catalog``
+    calls ``load_catalog`` directly); this narrowing affects only what the writer's prompt sees,
+    never what a claim is checked against. A bundle at or under ``top_k`` sources is left as-is,
+    and retrieval failures never block Build — they just leave the bundle unfiltered.
+    """
+    if index is None:
+        return catalog
+    narrowed = []
+    for bundle in catalog.bundles:
+        if len(bundle.source_ids) <= top_k:
+            narrowed.append(bundle)
+            continue
+        try:
+            chunks = index.retrieve(
+                bundle.question, limit=top_k, run_id=run_id, todo_id=bundle.todo_id
+            )
+        except Exception:
+            narrowed.append(bundle)
+            continue
+        url_to_sid = {
+            normalize_url(catalog.sources[sid].url): sid for sid in bundle.source_ids
+        }
+        ranked: list[str] = []
+        seen: set[str] = set()
+        for chunk in chunks:
+            sid = url_to_sid.get(normalize_url(chunk.metadata.get("locator", "")))
+            if sid and sid not in seen:
+                seen.add(sid)
+                ranked.append(sid)
+        for sid in bundle.source_ids:  # keep exactly top_k even if retrieval matched fewer
+            if len(ranked) >= top_k:
+                break
+            if sid not in seen:
+                seen.add(sid)
+                ranked.append(sid)
+        narrowed.append(EvidenceBundle(
+            todo_id=bundle.todo_id,
+            question=bundle.question,
+            summary=bundle.summary,
+            source_ids=ranked,
+            gaps=bundle.gaps,
+        ))
+    return SourceCatalog(sources=catalog.sources, bundles=narrowed)
 
 
 def merge_lessons(existing: list[str], new: list[str]) -> list[str]:

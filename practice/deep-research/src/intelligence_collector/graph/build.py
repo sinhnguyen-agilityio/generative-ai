@@ -74,19 +74,22 @@ def build_graph(
     graph = StateGraph(GraphState)
 
     def add_node(name: str, fn) -> None:
-        graph.add_node(name, node_wrapper(name, fn, tracer, checkpoint_store, lifecycle))
+        graph.add_node(name, node_wrapper(
+            name, fn, tracer, checkpoint_store, lifecycle))
 
     # ===== SCOPE AND PLANNING =====
 
     if scope_agent is not None:
         scope = ScopeNodes(scope_agent, vfs)
-        planner = PlannerNodes(planner_agent or PlannerAgent(scope_agent.router), vfs)
+        planner = PlannerNodes(
+            planner_agent or PlannerAgent(scope_agent.router), vfs)
         add_node(Node.CLARIFY, scope.clarify_with_user)
         add_node(Node.WRITE_BRIEF, scope.write_research_brief)
         add_node(Node.PLAN, planner.planning)
 
         graph.add_edge(START, Node.CLARIFY)
-        graph.add_conditional_edges(Node.CLARIFY, route_after_clarify, [Node.WRITE_BRIEF, END])
+        graph.add_conditional_edges(Node.CLARIFY, route_after_clarify, [
+                                    Node.WRITE_BRIEF, END])
         graph.add_edge(Node.WRITE_BRIEF, Node.PLAN)
     else:
         for name in (Node.STUB_SCOPE, Node.PLAN):
@@ -94,7 +97,6 @@ def build_graph(
         _chain(graph, START, Node.STUB_SCOPE, Node.PLAN)
 
     # ===== RESEARCH PIPELINE =====
-
     if research_nodes is None and scope_agent is not None:
         # Scope-only mode intentionally stops once a durable plan exists.
         graph.add_edge(Node.PLAN, END)
@@ -114,10 +116,10 @@ def build_graph(
 
     add_node(Node.RESEARCH, research_nodes.researching)
     add_node(Node.ASSESS_RESEARCH, research_nodes.research_complete)
-    _chain(graph, Node.PLAN, Node.RESEARCH, Node.ASSESS_RESEARCH, Node.SYNTHESIZE)
+    _chain(graph, Node.PLAN, Node.RESEARCH,
+           Node.ASSESS_RESEARCH, Node.SYNTHESIZE)
 
     # ===== BUILD-VERIFY-FIX LOOP =====
-
     bvf = research_nodes.bvf
     add_node(Node.SYNTHESIZE, bvf.synthesizing)
     add_node(Node.VERIFY, bvf.verifying)
@@ -141,7 +143,6 @@ def build_graph(
     graph.add_edge(Node.NEEDS_REVIEW, END)
 
     # ===== APPROVAL =====
-
     if with_approval:
         add_node(Node.APPROVE, approval)
         graph.add_edge(Node.APPROVE, END)

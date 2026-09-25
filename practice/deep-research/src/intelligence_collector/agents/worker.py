@@ -15,6 +15,7 @@ from intelligence_collector.contracts import (
     Stage,
     TodoStatus,
 )
+from intelligence_collector.tools.url_tracking import UrlRegistry
 
 
 def _evidence_path(todo: ResearchTodo) -> str:
@@ -51,8 +52,20 @@ def failed_outcome(todo: ResearchTodo, error: str) -> ResearchOutcome:
     )
 
 
-def persist_research(vfs, index, run_id: str, todo: ResearchTodo, outcome: ResearchOutcome):
+def persist_research(
+    vfs,
+    index,
+    run_id: str,
+    todo: ResearchTodo,
+    outcome: ResearchOutcome,
+    registry: UrlRegistry | None = None,
+):
     """Write raw captures, notes, excerpts, and the evidence bundle; index raw content.
+
+    Each URL is captured and indexed once per run: a URL already in the run's ``UrlRegistry``
+    (from another task, gap research, or an earlier invocation) is referenced by its first
+    capture instead of being written and indexed again. Pass a shared ``registry`` when
+    persisting several tasks; otherwise it is loaded from and saved to the VFS here.
 
     A task is COMPLETED when it gathered sources and compressed findings, even if the findings
     report unresolved gaps (recorded in the evidence bundle for Verification). It is FAILED only
@@ -64,7 +77,9 @@ def persist_research(vfs, index, run_id: str, todo: ResearchTodo, outcome: Resea
         reason = "; ".join(outcome.errors) or "Research returned no sources"
         return todo, [_write_failure(vfs, run_id, todo, reason)], []
 
+    urls = registry if registry is not None else UrlRegistry.load(vfs, run_id)
     refs, chunks, evidence_sources = [], [], []
+    reused = 0
     for i, source in enumerate(sources):
         payload = {key: value for key, value in source.items() if key != "_query"}
         record = SourceRecord(
@@ -74,6 +89,27 @@ def persist_research(vfs, index, run_id: str, todo: ResearchTodo, outcome: Resea
             provenance={"query": source.get("_query", ""), **payload},
         )
         raw = source.get("content", "")
+        entry = {
+            "source_id": record.source_id,
+            "locator": record.locator,
+            "retrieved_at": record.retrieved_at.isoformat(),
+            "mcp_server": record.mcp_server,
+            "mcp_tool": record.mcp_tool,
+            "provenance": record.provenance,
+            "excerpt": raw,
+        }
+        known = urls.get(record.locator)
+        if known is not None:
+            # Already captured in this run: point at the first capture, skip write + index.
+            reused += 1
+            evidence_sources.append({
+                **entry,
+                "source_id": known["source_id"],
+                "artifact_id": known["artifact_id"],
+                "content_hash": known["content_hash"],
+                "reused_from_task": known["task_id"],
+            })
+            continue
         ref = vfs.write_json(
             run_id,
             f"research/{todo.todo_id}/raw/{i}.json",
@@ -89,17 +125,20 @@ def persist_research(vfs, index, run_id: str, todo: ResearchTodo, outcome: Resea
             metadata={"run_id": run_id, "todo_id": todo.todo_id, "locator": record.locator},
         ))
         evidence_sources.append({
+            **entry, "artifact_id": ref.artifact_id, "content_hash": ref.content_hash,
+        })
+        urls.register(record.locator, {
             "source_id": record.source_id,
-            "locator": record.locator,
-            "retrieved_at": record.retrieved_at.isoformat(),
-            "mcp_server": record.mcp_server,
-            "mcp_tool": record.mcp_tool,
-            "provenance": record.provenance,
             "artifact_id": ref.artifact_id,
             "content_hash": ref.content_hash,
-            "excerpt": raw,
+            "task_id": todo.todo_id,
+            "locator": record.locator,
         })
-    index.index(chunks)
+    if chunks:
+        index.index(chunks)
+    registry_ref = urls.save(vfs, run_id)
+    if registry_ref is not None:
+        refs.append(registry_ref)
 
     findings = outcome.findings
     todo.status = TodoStatus.COMPLETED
@@ -108,7 +147,8 @@ def persist_research(vfs, index, run_id: str, todo: ResearchTodo, outcome: Resea
         f"research/{todo.todo_id}/notes/result.md",
         f"# Research notes\n\nQuestion: {todo.research_question}\n\n"
         f"Search calls: {outcome.search_calls}/{outcome.search_budget}\n\n"
-        f"Sources: {len(sources)}\n\n## Findings\n\n{findings.summary}\n",
+        f"Sources: {len(sources)} ({reused} already captured earlier in this run)\n\n"
+        f"## Findings\n\n{findings.summary}\n",
         "notes",
         task_id=todo.todo_id,
     ))

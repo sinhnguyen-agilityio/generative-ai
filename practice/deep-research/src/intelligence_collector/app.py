@@ -16,8 +16,8 @@ from intelligence_collector.models.factory import ModelConfig, ModelFactory
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.observability.tracing import Tracer
 from intelligence_collector.publication import approval_for, can_request_approval
+from intelligence_collector.storage.chroma_vector_index import ChromaVectorIndex
 from intelligence_collector.storage.vfs import VFS
-from intelligence_collector.storage.vector_index import LocalVectorIndex
 from intelligence_collector.tools.mcp import TavilyMCP
 
 
@@ -85,10 +85,14 @@ def _get_scope_graph(st, agent, tracer):
         )
         research_nodes = ResearchNodes(
             vfs,
-            LocalVectorIndex(settings.vector_path),
+            # Real semantic retrieval: OpenAI embeddings, persisted locally via Chroma. Used to
+            # narrow the Build/Fix prompt to each question's most relevant sources; Verify always
+            # re-reads the full evidence independently, so this never affects what gets checked.
+            ChromaVectorIndex(settings.chroma_path, model=settings.embedding_model),
             researcher,
             max_concurrent_researchers=settings.max_concurrent_researchers,
             recovery_budget=settings.recovery_attempts,
+            evidence_top_k=settings.evidence_top_k,
         )
     graph = build_graph(
         scope_agent=agent,

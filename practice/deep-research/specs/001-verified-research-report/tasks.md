@@ -405,3 +405,40 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   precedence, fingerprint) and `tests/integration/test_bvf_loop.py` (reflect-and-fix with lessons in
   the fix prompt, no-progress escalation, budget exhaustion, evidence-gap research and disclosure,
   standalone script verdict) (SC-005, SC-006).
+
+## Phase 20: URL Deduplication and Documentation Language
+
+- [X] T115 [US1] Track retrieved URLs by normalized identity: add `normalize_url` and the run-level
+  `UrlRegistry` (`research/url_registry.json`) in `src/intelligence_collector/tools/url_tracking.py`;
+  hide already-retrieved pages from later search results inside a sub-agent and dedupe sources by
+  URL in `src/intelligence_collector/agents/researcher.py` (prompt `researcher.v2`); reuse the first
+  capture instead of re-writing and re-indexing in `src/intelligence_collector/agents/worker.py`
+  and `src/intelligence_collector/agents/supervisor.py`; share URL normalization with
+  `src/intelligence_collector/source_verification.py`. Covered by `tests/unit/test_url_tracking.py`
+  and `tests/integration/test_worker_mcp.py` (FR-010, FR-010a, FR-010c).
+- [X] T116 Translate the Vietnamese Clarifications (Session 2026-09-25) in
+  `specs/001-verified-research-report/spec.md` to English; all specification documents are English.
+
+## Phase 21: Embedding-Based Evidence Retrieval for the Build/Fix Prompt
+
+- [X] T117 [US1] Add a shared `VectorIndex` interface and a real, locally persisted embedding
+  backend: define the `VectorIndex` Protocol and extend `LocalVectorIndex.retrieve()` with a
+  `todo_id` scope in `src/intelligence_collector/storage/vector_index.py`; add `ChromaVectorIndex`
+  (OpenAI embeddings via `langchain-openai`, local persistence via `chromadb`, an injectable
+  `embeddings` for offline testing) in
+  `src/intelligence_collector/storage/chroma_vector_index.py`; add `chromadb`/`langchain-openai` to
+  `pyproject.toml` and `chroma_path`/`embedding_model`/`evidence_top_k` to
+  `src/intelligence_collector/config.py` and `.env.example` (FR-012a).
+- [X] T118 [US1] Narrow the Build/Fix prompt to each research question's most relevant evidence
+  without changing what Verify checks against: add `select_relevant_evidence` (per-bundle top-K,
+  never global; retrieval failure leaves a bundle unfiltered) in
+  `src/intelligence_collector/agents/report_writer.py`; call it from `BVFNodes.synthesizing` only —
+  `BVFNodes._catalog` (used by `verifying` and `researching_gaps`) stays on the full, unfiltered
+  catalog — in `src/intelligence_collector/graph/nodes.py`; wire `ChromaVectorIndex` and
+  `evidence_top_k` into the live app in `src/intelligence_collector/app.py`. Completion means a
+  bundle at or under `evidence_top_k` is unchanged, a larger bundle is narrowed to exactly
+  `evidence_top_k` sources scoped to its own question, and the full evidence catalog persisted for
+  a run is unaffected by this narrowing, covered in `tests/unit/test_vector_index.py`,
+  `tests/unit/test_evidence_selection.py`, and
+  `tests/integration/test_bvf_loop.py::test_evidence_selection_narrows_the_build_prompt_but_not_verification`
+  (FR-012, FR-012a).
