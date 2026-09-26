@@ -498,3 +498,72 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   every agent's calls land on the correct tier by role name with no per-agent changes, covered
   offline in `tests/unit/test_scope_agent_wiring.py` and
   `tests/contract/test_role_model_routing.py` (FR-032a, FR-032b).
+- [X] T123 [US1] Switch the "Reasoning Sandwich" baseline to Google Gemini as the primary provider
+  for both tiers and Groq as the fallback provider for both tiers, and make embeddings
+  provider-aware: recommended live defaults in `.env.example` are now
+  `INTELLIGENCE_REASONING_MODEL=gemini-3.8-flash` / `INTELLIGENCE_REASONING_PROVIDER=google_genai`
+  (`reasoning_effort=xhigh`) with fallback `openai/gpt-oss-120b` on `groq`, and
+  `INTELLIGENCE_STANDARD_MODEL=gemini-3.5-flash-lite` / `INTELLIGENCE_STANDARD_PROVIDER=google_genai`
+  (`reasoning_effort=low`) with fallback `openai/gpt-oss-20b` on `groq`. Added `langchain-groq` to
+  `pyproject.toml`. Added `embedding_provider` (`INTELLIGENCE_EMBEDDING_PROVIDER`, default
+  `google_genai`) to `Settings` in `src/intelligence_collector/config.py`; `ChromaVectorIndex`
+  (`src/intelligence_collector/storage/chroma_vector_index.py`) now takes a `provider` param and
+  builds `GoogleGenerativeAIEmbeddings` by default (`INTELLIGENCE_EMBEDDING_MODEL` default changed
+  to `gemini-embedding-2`), falling back to `OpenAIEmbeddings` only when `provider="openai"`;
+  `app.py::_get_scope_graph` passes `settings.embedding_provider` through. `RoleModelRouter`'s role
+  sets and the model-agnostic `ModelRouter`/`ModelFactory` fallback machinery are unchanged — this
+  task only changes which models/providers populate them. Covered offline in
+  `tests/unit/test_vector_index.py` (`test_chroma_index_uses_google_embeddings_by_default`,
+  `test_chroma_index_uses_openai_embeddings_when_provider_is_openai`) and the existing
+  provider-agnostic `tests/contract/test_role_model_routing.py` (FR-032a, FR-032b, FR-012a).
+- [X] T124 [US1] Remove the standalone `SCOPE_MODEL`/`SCOPE_PROVIDER`/`SCOPE_FALLBACK_MODEL`/
+  `SCOPE_FALLBACK_PROVIDER` model config — a Phase 22 leftover, superseded by the reasoning/
+  standard tiers in Phase 23 but never cleaned up, and dead weight against the two-tier
+  "Reasoning Sandwich" model: there is exactly one reasoning-tier config and one standard-tier
+  config, shared by role name, never a model per scope/agent. Repointed
+  `tests/integration/test_scope_live_smoke.py` and `test_live_mcp_opt_in.py` at
+  `INTELLIGENCE_REASONING_MODEL`/`INTELLIGENCE_REASONING_PROVIDER` instead (`scope` is already a
+  reasoning-tier role); removed the four `SCOPE_*` lines from `.env.example`; fixed the stale
+  `app.py` error message that told operators to set `SCOPE_MODEL` when the actual gate is
+  `INTELLIGENCE_REASONING_MODEL`; updated `tests/unit/test_env_config.py` to assert on the
+  `INTELLIGENCE_REASONING_*`/`GOOGLE_API_KEY`/`GROQ_API_KEY` placeholders instead, and decoupled
+  its override-precedence test from the `SCOPE_MODEL` name. Rewrote FR-032a in `spec.md`
+  accordingly. Completion means grepping `SCOPE_MODEL`/`SCOPE_PROVIDER`/`SCOPE_FALLBACK` under
+  `src/` and `tests/` returns nothing, and the full suite still passes (FR-032a).
+- [X] T125 [US1] Fix a live-breaking bug: `reasoning_effort="xhigh"` is not a value any provider
+  SDK accepts (`ChatGoogleGenerativeAI`'s `reasoning_effort` field is a `Literal["minimal", "low",
+  "medium", "high"]`, and OpenAI's own field has the same ceiling) — "xhigh" is only this project's
+  name for the reasoning tier, never a real setting, and passing it through crashed every scope
+  request with a pydantic `literal_error`. Changed the `INTELLIGENCE_REASONING_KWARGS` default in
+  `RoleModelSettings.from_env()` (`src/intelligence_collector/config.py`) from
+  `{"reasoning_effort":"xhigh"}` to `{"reasoning_effort":"high"}`, updated the same value in
+  `.env.example`, and updated `tests/contract/test_role_model_routing.py` to assert `"high"`
+  instead of the invalid `"xhigh"`. Completion means submitting a research request against the
+  live Gemini reasoning tier no longer raises a `reasoning_effort` validation error (FR-032b).
+- [X] T126 [US1] Fix a second live-breaking bug hit right after T125: with `reasoning_effort`
+  now valid, Gemini's thinking mode returns `AIMessage.content` as a list of blocks (a
+  `{"type":"thinking",...}` block plus a `{"type":"text",...}` block) instead of a plain string.
+  `ModelRouter._parse` (`src/intelligence_collector/models/router.py`) only handled a schema
+  instance, `dict`, or `str`, so a list fell through to `raise TypeError("model output for
+  {role} is not structured")`, surfacing as `ValueError: invalid structured output for scope
+  after 2 attempts: model output for scope is not structured; model output for scope is not
+  structured`. Fixed by reading `raw.text` (a `BaseMessage` property that collapses any
+  provider's multi-block content down to the final text block) instead of `raw.content` when
+  `raw` is a `BaseMessage`, before attempting JSON parse — provider-agnostic, so it also covers
+  Anthropic/OpenAI reasoning models that return multi-block content. Covered by
+  `tests/contract/test_model_router_contract.py::test_invoke_messages_parses_multi_block_thinking_content`
+  (verified to fail with the pre-fix code, reproducing the exact reported error) (FR-032b).
+- [X] T127 [US1] Fix research tasks failing on Gemini, seen as `ResearchComplete denied: Task
+  not completed (failed)` for every todo. Two causes, from the tasks' `outcome.json` files:
+  (a) `research_compressor` failed with `Expecting value: line 1 column 1 (char 0)` because the
+  router parsed free-text JSON that Gemini returns wrapped in Markdown fences (or empty). Fixed:
+  `ModelRouter._invoke_and_parse` now binds `with_structured_output(schema)` on primary and
+  fallback when the model supports it (Gemini response schema, Groq tool/json mode), so every
+  structured role gets provider-native parsing; `_model_name` unwraps the resulting sequence for
+  traces. (b) One task failed with `Research returned no sources` because the standard-tier model
+  answered without calling `tavily_search`. Fixed: `invoke_with_tools` takes a `tool_choice`,
+  and the researcher passes `tool_choice="any"` on its first turn only (no search yet); the
+  final note now uses `AIMessage.text` instead of `str(content)`. Covered by
+  `tests/contract/test_model_router_contract.py::test_invoke_messages_uses_provider_native_structured_output`
+  and the `tool_choices == ["any", None, None]` assertion in
+  `tests/integration/test_worker_mcp.py` (FR-032b).

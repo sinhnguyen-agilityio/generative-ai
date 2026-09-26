@@ -42,9 +42,9 @@ def test_implementation_roles_use_standard_profile():
 def test_role_model_settings_load_provider_specific_kwargs(monkeypatch):
     monkeypatch.setenv("INTELLIGENCE_REASONING_MODEL", "reasoning-model")
     monkeypatch.setenv("INTELLIGENCE_STANDARD_MODEL", "standard-model")
-    monkeypatch.setenv("INTELLIGENCE_REASONING_KWARGS", '{"reasoning_effort":"xhigh"}')
+    monkeypatch.setenv("INTELLIGENCE_REASONING_KWARGS", '{"reasoning_effort":"high"}')
     settings = RoleModelSettings.from_env()
-    assert settings.reasoning_kwargs == {"reasoning_effort": "xhigh"}
+    assert settings.reasoning_kwargs == {"reasoning_effort": "high"}
 
 
 def test_role_model_settings_require_both_profiles(monkeypatch):

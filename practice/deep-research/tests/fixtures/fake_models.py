@@ -18,9 +18,11 @@ class FakeResearchModel:
         self.findings = findings or {}
         self.fail_questions = set(fail_questions)
         self.bound_tools = None
+        self.tool_choices = []
 
-    def bind_tools(self, tools):
+    def bind_tools(self, tools, tool_choice=None):
         self.bound_tools = tools
+        self.tool_choices.append(tool_choice)
         return self
 
     @staticmethod

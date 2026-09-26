@@ -34,6 +34,8 @@ def test_research_agent_searches_broad_then_narrow_and_persists_provenance(store
     assert completed.status == TodoStatus.COMPLETED
     assert [request["query"] for request in mcp.requests] == [todo.research_question, narrow]
     assert model.bound_tools[0]["function"]["name"] == "tavily_search"
+    # Only the first turn forces a search; later turns may finish without one.
+    assert model.tool_choices == ["any", None, None]
     assert [event["role"] for event in traces] == [
         "researcher", "researcher", "researcher", "research_compressor",
     ]

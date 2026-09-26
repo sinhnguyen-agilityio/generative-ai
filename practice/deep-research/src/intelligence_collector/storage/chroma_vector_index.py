@@ -4,7 +4,8 @@ Same adapter interface as :class:`LocalVectorIndex` (``index(chunks)`` / ``retri
 see :class:`~intelligence_collector.storage.vector_index.VectorIndex`), so it is a drop-in
 replacement wherever a vector index is injected. Chroma itself runs fully locally against a
 directory on disk — no network call, no service to run. Only computing embeddings calls out
-(to OpenAI by default); everything else, including similarity search, happens locally.
+(to Google Gemini by default, OpenAI when explicitly selected); everything else, including
+similarity search, happens locally.
 """
 
 from __future__ import annotations
@@ -14,15 +15,17 @@ from typing import Protocol
 
 from intelligence_collector.contracts import IndexedChunk
 
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_EMBEDDING_MODEL = "gemini-embedding-2"
+DEFAULT_EMBEDDING_PROVIDER = "google_genai"
 DEFAULT_COLLECTION = "research_chunks"
 
 
 class Embeddings(Protocol):
     """The slice of ``langchain_core.embeddings.Embeddings`` this adapter needs.
 
-    Real usage passes an ``OpenAIEmbeddings`` instance (or nothing, to construct one);
-    tests inject a deterministic fake so the adapter's own logic is covered offline.
+    Real usage passes a ``GoogleGenerativeAIEmbeddings`` (or ``OpenAIEmbeddings``) instance
+    (or nothing, to construct one); tests inject a deterministic fake so the adapter's own
+    logic is covered offline.
     """
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
@@ -38,14 +41,19 @@ def _where(run_id: str | None, todo_id: str | None) -> dict | None:
     return clauses[0] if len(clauses) == 1 else {"$and": clauses}
 
 
-def _default_embeddings(model: str) -> Embeddings:
-    from langchain_openai import OpenAIEmbeddings  # lazy: only needed for the live default
+def _default_embeddings(model: str, provider: str) -> Embeddings:
+    if provider == "openai":
+        from langchain_openai import OpenAIEmbeddings  # lazy: only needed for this provider
 
-    return OpenAIEmbeddings(model=model)
+        return OpenAIEmbeddings(model=model)
+
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings  # lazy: live default
+
+    return GoogleGenerativeAIEmbeddings(model=model)
 
 
 class ChromaVectorIndex:
-    """Local, persistent Chroma collection embedded with an OpenAI (or injected) embedding model."""
+    """Local, persistent Chroma collection embedded with a Google Gemini (or injected) model."""
 
     def __init__(
         self,
@@ -53,12 +61,13 @@ class ChromaVectorIndex:
         *,
         embeddings: Embeddings | None = None,
         model: str = DEFAULT_EMBEDDING_MODEL,
+        provider: str = DEFAULT_EMBEDDING_PROVIDER,
         collection_name: str = DEFAULT_COLLECTION,
     ):
         import chromadb  # lazy: keeps the dependency edge local to this adapter
 
         Path(path).mkdir(parents=True, exist_ok=True)
-        self._embeddings = embeddings or _default_embeddings(model)
+        self._embeddings = embeddings or _default_embeddings(model, provider)
         self._collection = chromadb.PersistentClient(path=str(path)).get_or_create_collection(
             collection_name
         )

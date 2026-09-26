@@ -135,7 +135,9 @@ alternatives that would violate the constitution or clarified specification.
    This ends Research only.
 7. **Build**: for each research question, `select_relevant_evidence` retrieves its top-K most
    relevant sources (`INTELLIGENCE_EVIDENCE_TOP_K`, default 6) from the Chroma vector index —
-   OpenAI embeddings (`INTELLIGENCE_EMBEDDING_MODEL`, default `text-embedding-3-small`), persisted
+   Gemini embeddings by default (`INTELLIGENCE_EMBEDDING_MODEL`, default `gemini-embedding-2`;
+   `INTELLIGENCE_EMBEDDING_PROVIDER`, default `google_genai`; set to `openai` with an OpenAI
+   model name to switch providers), persisted
    locally under `INTELLIGENCE_CHROMA_PATH` — scoped to that question so no question's sources can
    be crowded out by another's; a bundle at or under top-K, or a retrieval failure, is left
    unfiltered. The Report Writer (`report-writer.v1`, structured LLM call) then drafts the report
@@ -181,9 +183,9 @@ alternatives that would violate the constitution or clarified specification.
 | VFS Artifact Store | Atomic run-scoped files and immutable versions | Reject path escape/cross-run writes; partial writes are invisible | All nodes, checkpoint metadata |
 | Vector Index | Chunk/index raw source captures and retrieve synthesis context | Index failures block ResearchComplete; retrieval records source IDs | Worker, synthesis, verifier |
 | Report Writer (`agents/report_writer.py`) | Build/Fix drafts from top-K retrieved evidence (`select_relevant_evidence`, per question) with `[S<n>]` citations; BVF reflection producing lessons and strategy | `DraftAssessment` / `Reflection` validated; fix attempts must receive failures, lessons, strategy, previous draft; retrieval scoped per question, never global | Model router (`synthesizer`, `fixer` roles), VFS, vector index |
-| Vector Index (`storage/vector_index.py`, `storage/chroma_vector_index.py`) | `LocalVectorIndex` (lexical, offline/tests) and `ChromaVectorIndex` (OpenAI embeddings, local Chroma persistence, live) behind one `VectorIndex` interface | `retrieve(query, limit, run_id, todo_id)`; Verify never reads through this — it always loads the full evidence catalog from VFS independently | OpenAI embeddings API, local Chroma directory |
+| Vector Index (`storage/vector_index.py`, `storage/chroma_vector_index.py`) | `LocalVectorIndex` (lexical, offline/tests) and `ChromaVectorIndex` (Gemini embeddings by default, OpenAI selectable via `INTELLIGENCE_EMBEDDING_PROVIDER`, local Chroma persistence, live) behind one `VectorIndex` interface | `retrieve(query, limit, run_id, todo_id)`; Verify never reads through this — it always loads the full evidence catalog from VFS independently | Gemini/OpenAI embeddings API, local Chroma directory |
 | Source Verifier (`source_verification.py`) | Deterministic source-verification script over report text and evidence bundles; standalone CLI | Ten checks; exactly one primary issue type on failure; failure fingerprint for no-progress detection; pass enables approval | Evidence bundles in VFS, `verification/catalog_state.json`, graph conditional edges |
-| Model Router (`models/router.py`, `models/role_router.py`) | `RoleModelRouter` dispatches each role to one of two profiles: reasoning (`scope`, `planner`, `verify`) or standard (`researcher`, `research_compressor`, `synthesizer`, `fixer`). Live app default: GPT reasoning tier (`INTELLIGENCE_REASONING_MODEL/PROVIDER`, no free Gemini xhigh-equivalent tier), Gemini standard tier (`INTELLIGENCE_STANDARD_MODEL/PROVIDER`, free), each with its own optional fallback, built once via `app._get_role_router` and shared by every agent | Retries bounded per profile; fallback event traced; final failure is visible | All model-using nodes, Langfuse |
+| Model Router (`models/router.py`, `models/role_router.py`) | `RoleModelRouter` dispatches each role to one of two profiles: reasoning (`scope`, `planner`, `verify`) or standard (`researcher`, `research_compressor`, `synthesizer`, `fixer`) — the "Reasoning Sandwich": a high-effort model plans and verifies around standard-tier implementation work. Live app default: Gemini for both tiers (`INTELLIGENCE_REASONING_MODEL/PROVIDER` = `gemini-3.8-flash`/`google_genai` at `reasoning_effort=high`, the ceiling `ChatGoogleGenerativeAI` accepts — neither Gemini nor OpenAI's SDK has an "xhigh" literal, that word is only this tier's name; `INTELLIGENCE_STANDARD_MODEL/PROVIDER` = `gemini-3.5-flash-lite`/`google_genai` at `reasoning_effort=low`), each with a Groq fallback (`openai/gpt-oss-120b` for reasoning, `openai/gpt-oss-20b` for standard), built once via `app._get_role_router` and shared by every agent | Retries bounded per profile; fallback event traced; final failure is visible | All model-using nodes, Langfuse |
 | Checkpointer | Persist typed graph state and resume points | Atomic checkpoint; invalid latest checkpoint falls back or NEEDS_REVIEW | LangGraph, VFS metadata |
 | Approval/Publisher | Bind approval to artifact hash and atomically publish | Reject/stale/unverified writes nothing permanent | Streamlit interrupt, VFS, output path |
 | Tracing/Evaluation | Create root execution traces grouped by thread, nested node spans, model generations, validation/fallback events, and evaluate faithfulness | Missing live tracing config blocks execution; export/flush failure is surfaced without exposing credentials | Langfuse v4 SDK and LangChain callback, Ragas dataset |
@@ -221,7 +223,7 @@ src/intelligence_collector/
 │   ├── checkpoints.py
 │   ├── artifacts.py
 │   ├── vector_index.py         # VectorIndex Protocol + LocalVectorIndex (lexical, offline)
-│   └── chroma_vector_index.py  # ChromaVectorIndex: OpenAI embeddings, local Chroma persistence
+│   └── chroma_vector_index.py  # ChromaVectorIndex: Gemini embeddings (default), local Chroma persistence
 ├── models/
 │   ├── router.py       # ModelRouter: primary/fallback, tracing, structured-output parsing
 │   ├── role_router.py  # RoleModelRouter: dispatches scope/planner/verify vs. the rest

@@ -92,7 +92,23 @@ def test_chroma_index_persists_across_instances(tmp_path):
     assert result.source_id == "durable"
 
 
-def test_chroma_index_uses_openai_embeddings_by_default(tmp_path, monkeypatch):
+def test_chroma_index_uses_google_embeddings_by_default(tmp_path, monkeypatch):
+    captured = {}
+
+    class RecordingGoogleEmbeddings:
+        def __init__(self, model):
+            captured["model"] = model
+
+    monkeypatch.setattr(
+        "langchain_google_genai.GoogleGenerativeAIEmbeddings", RecordingGoogleEmbeddings,
+    )
+
+    ChromaVectorIndex(tmp_path / "chroma", model="gemini-embedding-2")
+
+    assert captured["model"] == "gemini-embedding-2"
+
+
+def test_chroma_index_uses_openai_embeddings_when_provider_is_openai(tmp_path, monkeypatch):
     captured = {}
 
     class RecordingOpenAIEmbeddings:
@@ -103,6 +119,8 @@ def test_chroma_index_uses_openai_embeddings_by_default(tmp_path, monkeypatch):
         "langchain_openai.OpenAIEmbeddings", RecordingOpenAIEmbeddings,
     )
 
-    ChromaVectorIndex(tmp_path / "chroma", model="text-embedding-3-large")
+    ChromaVectorIndex(
+        tmp_path / "chroma", model="text-embedding-3-large", provider="openai",
+    )
 
     assert captured["model"] == "text-embedding-3-large"

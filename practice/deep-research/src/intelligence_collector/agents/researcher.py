@@ -184,6 +184,9 @@ class ResearchAgent:
                 prompt_version=RESEARCHER_PROMPT_VERSION,
                 run_id=run_id,
                 thread_id=thread_id,
+                # Without a forced first search, lighter models answer from prior knowledge and
+                # the task fails with no sources.
+                tool_choice="any" if not state.get("search_calls") else None,
             )
             return {"messages": [response], "llm_calls": state.get("llm_calls", 0) + 1}
 
@@ -227,7 +230,7 @@ class ResearchAgent:
             if not state.get("sources"):
                 return {"findings": None}
             last = state["messages"][-1]
-            note = "" if getattr(last, "tool_calls", None) else str(last.content)
+            note = "" if getattr(last, "tool_calls", None) else last.text
             messages = COMPRESS_TEMPLATE.format_messages(
                 question=state["research_question"],
                 note=note or "(none)",

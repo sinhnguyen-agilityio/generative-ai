@@ -93,10 +93,14 @@ def _get_scope_graph(st, agent, tracer):
         )
         research_nodes = ResearchNodes(
             vfs,
-            # Real semantic retrieval: OpenAI embeddings, persisted locally via Chroma. Used to
+            # Real semantic retrieval: Gemini embeddings, persisted locally via Chroma. Used to
             # narrow the Build/Fix prompt to each question's most relevant sources; Verify always
             # re-reads the full evidence independently, so this never affects what gets checked.
-            ChromaVectorIndex(settings.chroma_path, model=settings.embedding_model),
+            ChromaVectorIndex(
+                settings.chroma_path,
+                model=settings.embedding_model,
+                provider=settings.embedding_provider,
+            ),
             researcher,
             # Goal-level check, run only after the deterministic script passes; shares the
             # scope/planner/verify reasoning-tier model (agent.router is the role router).
@@ -374,7 +378,10 @@ def render():
                 ) as execution:
                     agent = _get_scope_agent(st, tracer)
                     if agent is None:
-                        raise RuntimeError("Scope model is not configured. Set SCOPE_MODEL and retry.")
+                        raise RuntimeError(
+                            "Reasoning-tier model is not configured. "
+                            "Set INTELLIGENCE_REASONING_MODEL and retry."
+                        )
                     state = {
                         **st.session_state.scope_state,
                         "request": text,

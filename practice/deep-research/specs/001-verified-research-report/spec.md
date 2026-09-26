@@ -56,8 +56,8 @@ evidence-backed technical report from a user's research request."
   registry lets later tasks reference the first capture instead of storing and indexing the page
   again (FR-010c).
 - Q: Should the Build/Fix prompt include every stored source, or a retrieved subset? → A: Retrieve
-  a configurable top-K sources per research question (OpenAI embeddings, Chroma, persisted
-  locally), scoped per question so no question's sources can be crowded out by another's;
+  a configurable top-K sources per research question (Gemini embeddings by default, Chroma,
+  persisted locally), scoped per question so no question's sources can be crowded out by another's;
   Verification always reads the full, unfiltered evidence catalog independently, so narrowing the
   writer's prompt cannot change what a claim is checked against (FR-012a).
 - Q: Which chat model should the live app use as primary, and what happens on failure? → A: Gemini
@@ -477,12 +477,13 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-032**: The model router MUST centralize primary/fallback models, reasoning settings, timeouts,
   retry limits, prompt versions, selected model, fallback events, errors, and structured decisions in
   run traces without recording secrets.
-- **FR-032a**: `SCOPE_MODEL`/`SCOPE_PROVIDER`/`SCOPE_FALLBACK_MODEL`/`SCOPE_FALLBACK_PROVIDER` MUST
-  remain available to configure a standalone primary/fallback pair for the opt-in live LLM/MCP
-  smoke tests; they MUST NOT drive the live application, which is configured per FR-032b.
-- **FR-032b**: The live application MUST route every role to one of two model profiles by role
-  name: a reasoning profile for `scope`, `planner`, and `verify` (the acceptance-criteria check),
-  and a standard profile for `researcher`, `research_compressor`, `synthesizer`, and `fixer`. Each
+- **FR-032a**: The opt-in live LLM/MCP smoke tests MUST reuse the reasoning profile's
+  `INTELLIGENCE_REASONING_MODEL`/`INTELLIGENCE_REASONING_PROVIDER` rather than a standalone
+  model config, so there is exactly one place to configure the reasoning tier.
+- **FR-032b**: The live application MUST route every role to one of exactly two model profiles by
+  role name — there is no per-role or per-scope model config: a reasoning profile for `scope`,
+  `planner`, and `verify` (the acceptance-criteria check), and a standard profile for `researcher`,
+  `research_compressor`, `synthesizer`, and `fixer`. Each
   profile MUST configure its own primary model, optional fallback model, provider, and reasoning
   kwargs from environment variables (`INTELLIGENCE_REASONING_*`, `INTELLIGENCE_STANDARD_*`) so the
   operator can change either tier without a code change. An unset fallback MUST leave that

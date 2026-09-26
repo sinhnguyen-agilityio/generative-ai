@@ -35,7 +35,8 @@ class Settings:
     checkpoint_path: str = ".data/checkpoints.sqlite3"
     vector_path: str = ".data/vector-index.json"
     chroma_path: str = ".data/chroma"
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = "gemini-embedding-2"
+    embedding_provider: str = "google_genai"
     evidence_top_k: int = 6
     output_dir: str = "exports"
     max_search_calls: int = 5
@@ -50,6 +51,9 @@ class Settings:
             vector_path=os.getenv("INTELLIGENCE_VECTOR_PATH", cls.vector_path),
             chroma_path=os.getenv("INTELLIGENCE_CHROMA_PATH", cls.chroma_path),
             embedding_model=os.getenv("INTELLIGENCE_EMBEDDING_MODEL", cls.embedding_model),
+            embedding_provider=os.getenv(
+                "INTELLIGENCE_EMBEDDING_PROVIDER", cls.embedding_provider
+            ),
             evidence_top_k=_bounded_int("INTELLIGENCE_EVIDENCE_TOP_K", 6, 20),
             output_dir=os.getenv("INTELLIGENCE_OUTPUT_DIR", cls.output_dir),
             max_search_calls=_bounded_int("INTELLIGENCE_MAX_SEARCH_CALLS", 5, MAX_SEARCH_CALLS),
@@ -99,7 +103,7 @@ class RoleModelSettings:
             reasoning_provider=os.getenv("INTELLIGENCE_REASONING_PROVIDER") or None,
             standard_provider=os.getenv("INTELLIGENCE_STANDARD_PROVIDER") or None,
             reasoning_kwargs=cls._json_object(
-                "INTELLIGENCE_REASONING_KWARGS", '{"reasoning_effort":"xhigh"}'
+                "INTELLIGENCE_REASONING_KWARGS", '{"reasoning_effort":"high"}'
             ),
             standard_kwargs=cls._json_object("INTELLIGENCE_STANDARD_KWARGS", "{}"),
             reasoning_fallback_model=os.getenv("INTELLIGENCE_REASONING_FALLBACK_MODEL") or None,

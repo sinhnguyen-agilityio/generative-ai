@@ -18,9 +18,12 @@ def _live_tavily_configuration():
         pytest.skip("set RUN_LIVE_MCP=1 to run the live Tavily MCP acceptance test")
     endpoint = os.getenv("TAVILY_MCP_URL", "").strip()
     api_key = os.getenv("TAVILY_API_KEY", "").strip()
-    model_name = os.getenv("SCOPE_MODEL", "").strip()
+    model_name = os.getenv("INTELLIGENCE_REASONING_MODEL", "").strip()
     if not endpoint or not api_key or not model_name:
-        pytest.skip("TAVILY_MCP_URL, TAVILY_API_KEY, and SCOPE_MODEL are required for live MCP")
+        pytest.skip(
+            "TAVILY_MCP_URL, TAVILY_API_KEY, and INTELLIGENCE_REASONING_MODEL are required "
+            "for live MCP"
+        )
     return endpoint, api_key, model_name
 
 
@@ -29,7 +32,9 @@ def test_live_tavily_mcp_preserves_provenance_artifacts_and_index(stores):
     vfs, index = stores
     mcp = TavilyMCP(endpoint, api_key, max_calls=5)
     model = ModelFactory().create(
-        ModelConfig(model_name, provider=os.getenv("SCOPE_PROVIDER") or None, timeout=45)
+        ModelConfig(
+            model_name, provider=os.getenv("INTELLIGENCE_REASONING_PROVIDER") or None, timeout=45,
+        )
     )
     researcher = ResearchAgent(ModelRouter(model, mode="live"), lambda: mcp)
     todo = ResearchTodo(

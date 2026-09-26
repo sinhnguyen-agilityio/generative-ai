@@ -12,10 +12,10 @@ def test_scope_live_llm_smoke(tmp_path):
     load_local_env()
     if os.getenv("RUN_LIVE_LLM") != "1":
         pytest.skip("set RUN_LIVE_LLM=1 to enable the opt-in live LLM smoke test")
-    model_name = os.getenv("SCOPE_MODEL")
+    model_name = os.getenv("INTELLIGENCE_REASONING_MODEL")
     if not model_name:
-        pytest.skip("Set SCOPE_MODEL when RUN_LIVE_LLM=1")
-    provider = os.getenv("SCOPE_PROVIDER") or None
+        pytest.skip("Set INTELLIGENCE_REASONING_MODEL when RUN_LIVE_LLM=1")
+    provider = os.getenv("INTELLIGENCE_REASONING_PROVIDER") or None
     model = ModelFactory().create(ModelConfig(model_name, provider=provider, timeout=45))
     tracer = Tracer.from_env(required=True)
     agent = ScopeAgent(

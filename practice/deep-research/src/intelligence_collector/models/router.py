@@ -73,15 +73,26 @@ class ModelRouter:
         self._local.fallback_used = value
 
     @staticmethod
-    def _bind_tools(model, tools):
+    def _bind_tools(model, tools, tool_choice=None):
         if model is None or not hasattr(model, "bind_tools"):
             return model
+        if tool_choice:
+            return model.bind_tools(tools, tool_choice=tool_choice)
         return model.bind_tools(tools)
+
+    @staticmethod
+    def _bind_schema(model, schema):
+        # Provider-native structured output (Gemini response schema, Groq tool/json mode) instead
+        # of trusting free-text JSON, which Gemini often wraps in Markdown fences.
+        if model is None or not hasattr(model, "with_structured_output"):
+            return model
+        return model.with_structured_output(schema)
 
     @staticmethod
     def _model_name(model) -> str:
         if model is None:
             return ""
+        model = getattr(model, "first", model)  # unwrap with_structured_output() sequences
         model = getattr(model, "bound", model)  # unwrap bind_tools() bindings
         return str(getattr(model, "model_name", None) or getattr(model, "model", None) or type(model).__name__)
 
@@ -104,7 +115,12 @@ class ModelRouter:
             self.trace(event)
 
     def _parse(self, role: str, raw, schema: type[T]) -> T:
-        if hasattr(raw, "content"):
+        if isinstance(raw, BaseMessage):
+            # `.text` collapses provider-specific multi-block content (e.g. Gemini's
+            # thinking + text blocks under reasoning_effort) down to the final text block,
+            # unlike `.content`, which can be a list of blocks rather than a string.
+            raw = raw.text
+        elif hasattr(raw, "content"):
             raw = raw.content
         if isinstance(raw, schema):
             return raw
@@ -155,11 +171,12 @@ class ModelRouter:
         prompt_version: str,
         run_id: str = "",
         thread_id: str = "",
+        tool_choice: str | None = None,
     ) -> AIMessage:
         """Tool-calling decision: the returned AIMessage carries a final answer or tool calls."""
         raw = self._invoke_with(
-            self._bind_tools(self.primary, tools),
-            self._bind_tools(self.fallback, tools),
+            self._bind_tools(self.primary, tools, tool_choice),
+            self._bind_tools(self.fallback, tools, tool_choice),
             role,
             messages,
             run_id=run_id,
@@ -238,9 +255,13 @@ class ModelRouter:
         errors = []
         attempts = max(1, self.max_attempts)
         prompt_text = self._prompt_text(prompt)
+        primary = self._bind_schema(self.primary, schema)
+        fallback = self._bind_schema(self.fallback, schema)
         for attempt in range(1, attempts + 1):
             try:
-                raw = self.invoke(
+                raw = self._invoke_with(
+                    primary,
+                    fallback,
                     role,
                     prompt,
                     run_id=run_id,
