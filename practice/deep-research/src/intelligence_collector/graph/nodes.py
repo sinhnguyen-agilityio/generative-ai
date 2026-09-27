@@ -68,7 +68,8 @@ class Node:
 def _activity(state, label: str, status: str = "success"):
     return [
         *state.get("activity", []),
-        {"id": f"{len(state.get('activity', [])) + 1}:{label}", "label": label, "status": status},
+        {"id": f"{len(state.get('activity', [])) + 1}:{label}",
+         "label": label, "status": status},
     ]
 
 
@@ -180,9 +181,11 @@ class ResearchNodes:
 
     def researching(self, state):
         """Supervisor delegates each planned question to its own research sub-agent."""
-        todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
+        todos = [ResearchTodo.model_validate(
+            todo) for todo in state.get("todos", [])]
         if not todos:
-            raise ValueError("Research requires a persisted non-empty todo plan")
+            raise ValueError(
+                "Research requires a persisted non-empty todo plan")
         results = self.supervisor.delegate(
             state["run_id"], todos, thread_id=state.get("thread_id", "")
         )
@@ -213,7 +216,8 @@ class ResearchNodes:
         }
 
     def research_complete(self, state):
-        todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
+        todos = [ResearchTodo.model_validate(
+            todo) for todo in state.get("todos", [])]
         assessment = self.supervisor.assess(
             todos,
             state.get("artifacts", []),
@@ -249,7 +253,8 @@ def _merge_research(state, results):
     for todo, refs, chunks in results:
         todos.append(todo.model_dump(mode="json"))
         artifacts.extend(ref.model_dump(mode="json") for ref in refs)
-        evidence.extend(ref.model_dump(mode="json") for ref in refs if ref.kind == "evidence_bundle")
+        evidence.extend(ref.model_dump(mode="json")
+                        for ref in refs if ref.kind == "evidence_bundle")
         index_refs.extend(chunk.chunk_id for chunk in chunks)
     return {"todos": todos, "artifacts": artifacts, "evidence": evidence, "index_refs": index_refs}
 
@@ -338,7 +343,8 @@ class BVFNodes:
         broken draft)."""
         catalog = self._catalog(state)
         researched = list(state.get("researched_gaps", []))
-        result = verify_report(state.get("draft", ""), catalog, researched_gaps=researched)
+        result = verify_report(state.get("draft", ""),
+                               catalog, researched_gaps=researched)
         criteria = list(state.get("acceptance_criteria", []))
         if result.passed and self.acceptance_verifier is not None and criteria:
             brief = ResearchBrief.model_validate(state["scoped_request"])
@@ -351,9 +357,11 @@ class BVFNodes:
             )
             result = merge_acceptance_verdict(result, verdict)
         fingerprint = failure_fingerprint(result)
-        stalled = not result.passed and fingerprint == state.get("progress_fingerprint")
+        stalled = not result.passed and fingerprint == state.get(
+            "progress_fingerprint")
         run_id = state["run_id"]
-        save_catalog_state(self.vfs, run_id, state.get("evidence", []), researched)
+        save_catalog_state(self.vfs, run_id, state.get(
+            "evidence", []), researched)
         ref = self.vfs.write_json(
             run_id,
             f"verification/result.{result.verification_id}.json",
@@ -372,7 +380,8 @@ class BVFNodes:
             "activity": _activity(state, "Verifying report"),
             "verification": result.model_dump(mode="json"),
             "verification_history": [
-                *state.get("verification_history", []), result.model_dump(mode="json")
+                *state.get("verification_history", []
+                           ), result.model_dump(mode="json")
             ],
             "progress_fingerprint": fingerprint,
             "stall_count": state.get("stall_count", 0) + 1 if stalled else 0,
@@ -407,7 +416,8 @@ class BVFNodes:
             )
             lessons = merge_lessons(lessons, reflection.lessons)
             strategy = reflection.strategy
-            entry.update(diagnosis=reflection.diagnosis, lessons=reflection.lessons, strategy=strategy)
+            entry.update(diagnosis=reflection.diagnosis,
+                         lessons=reflection.lessons, strategy=strategy)
             action = "revising the draft"
         else:
             entry["gaps"] = verification.affected_ids
@@ -415,8 +425,10 @@ class BVFNodes:
         history.append(entry)
         run_id = state["run_id"]
         refs = [
-            self.vfs.write_json(run_id, "verification/bvf_history.json", history, "bvf_history"),
-            self.vfs.write_json(run_id, "verification/lessons.json", lessons, "bvf_lessons"),
+            self.vfs.write_json(
+                run_id, "verification/bvf_history.json", history, "bvf_history"),
+            self.vfs.write_json(
+                run_id, "verification/lessons.json", lessons, "bvf_lessons"),
         ]
         return {
             **state,
@@ -439,14 +451,17 @@ class BVFNodes:
         researched = list(state.get("researched_gaps", []))
         gaps = [gap for gap in catalog.gaps if gap.gap_id not in researched]
         todos = [
-            ResearchTodo(research_question=f"{gap.text} (Context: {gap.question})")
+            ResearchTodo(
+                research_question=f"{gap.text} (Context: {gap.question})")
             for gap in gaps
         ]
-        results = self.supervisor.delegate(state["run_id"], todos, thread_id=state.get("thread_id", "")) if todos else []
+        results = self.supervisor.delegate(
+            state["run_id"], todos, thread_id=state.get("thread_id", "")) if todos else []
         merged = {**state, **_merge_research(state, results)}
         # Each gap gets one targeted research round; whatever remains must be disclosed.
         researched += [gap.gap_id for gap in gaps]
-        researched += [gap.gap_id for gap in self._catalog(merged).gaps if gap.gap_id not in researched]
+        researched += [gap.gap_id for gap in self._catalog(
+            merged).gaps if gap.gap_id not in researched]
         return {
             **merged,
             "stage": Stage.SYNTHESIZING.value,
@@ -495,8 +510,10 @@ def approval(state: GraphState) -> GraphState:
     """Pause the graph until a human resumes it with a publication decision."""
     from langgraph.types import interrupt
 
-    decision = interrupt({"kind": "publication_approval", "run_id": state.get("run_id")})
-    stage = Stage.PUBLISHED if decision.get("approved") else Stage.AWAITING_APPROVAL
+    decision = interrupt({"kind": "publication_approval",
+                         "run_id": state.get("run_id")})
+    stage = Stage.PUBLISHED if decision.get(
+        "approved") else Stage.AWAITING_APPROVAL
     return {**state, "approval": decision, "stage": stage.value}
 
 
