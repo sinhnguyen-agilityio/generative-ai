@@ -9,7 +9,7 @@ from intelligence_collector.agents.acceptance_verifier import AcceptanceVerifier
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.scope import ScopeAgent
 from intelligence_collector.config import RoleModelSettings, Settings, load_local_env
-from intelligence_collector.contracts import VerificationResult
+from intelligence_collector.contracts import Stage, VerificationResult
 from intelligence_collector.guardrails import validate_request
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import Node, ResearchNodes
@@ -330,9 +330,13 @@ def render():
         st.info("Waiting for your response")
     _render_transcript(st, st.session_state.scope_state)
     snapshot_verification = _render_graph_snapshot(st, st.session_state.scope_state)
-    if st.session_state.get("needs_review"):
+    if st.session_state.scope_state.get("stage") == Stage.NEEDS_REVIEW.value:
         st.error("This run needs human review before it can be treated as verified or published.")
-        st.caption(st.session_state.get("review_feedback", "Unresolved verification feedback is stored with the run."))
+        st.caption(
+            st.session_state.scope_state.get("current_action")
+            or st.session_state.scope_state.get("last_error")
+            or "Unresolved verification feedback is stored with the run."
+        )
     verification = snapshot_verification or st.session_state.get("verification")
     if verification is not None and can_request_approval(verification):
         st.subheader("Review and publish")
