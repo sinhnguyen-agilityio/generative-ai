@@ -54,7 +54,7 @@ def build_graph(
             START -> clarify_with_user --(needs clarification)--> END
                                        \\-> write_research_brief -> planning
                   -> researching -> research_complete -> synthesizing -> verifying
-            verifying --(all checks pass)--> approval (with_approval) | END
+            verifying --(all checks pass)--> evaluating_faithfulness -> approval (with_approval) | END
                       --(failed, budget left)--> fixing --(DRAFT_DEFECT)--> synthesizing
                                                         \\-(EVIDENCE_GAP)-> researching_gaps
                                                                             -> synthesizing
@@ -123,17 +123,22 @@ def build_graph(
     bvf = research_nodes.bvf
     add_node(Node.SYNTHESIZE, bvf.synthesizing)
     add_node(Node.VERIFY, bvf.verifying)
+    add_node(Node.EVALUATE_FAITHFULNESS, bvf.evaluating_faithfulness)
     add_node(Node.FIX, bvf.fixing)
     add_node(Node.RESEARCH_GAPS, bvf.researching_gaps)
     add_node(Node.NEEDS_REVIEW, bvf.needs_review)
 
     graph.add_edge(Node.SYNTHESIZE, Node.VERIFY)
     passed_target = Node.APPROVE if with_approval else END
+    # RAGAS Faithfulness (evaluating_faithfulness) runs only on this PASSED edge — once, on the
+    # final report that actually left the BVF loop — never on a draft that gets fixed and
+    # reverified.
     graph.add_conditional_edges(
         Node.VERIFY,
         route_after_verify,
-        {PASSED: passed_target, FIX: Node.FIX, NEEDS_REVIEW: Node.NEEDS_REVIEW},
+        {PASSED: Node.EVALUATE_FAITHFULNESS, FIX: Node.FIX, NEEDS_REVIEW: Node.NEEDS_REVIEW},
     )
+    graph.add_edge(Node.EVALUATE_FAITHFULNESS, passed_target)
     graph.add_conditional_edges(
         Node.FIX,
         route_after_fix,

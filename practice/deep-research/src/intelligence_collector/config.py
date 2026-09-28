@@ -42,6 +42,7 @@ class Settings:
     max_search_calls: int = 5
     max_concurrent_researchers: int = 3
     recovery_attempts: int = 3
+    faithfulness_model: str = "gemini-3.7-flash"
 
     @classmethod
     def from_env(cls):
@@ -62,6 +63,9 @@ class Settings:
             ),
             recovery_attempts=_bounded_int(
                 "INTELLIGENCE_RECOVERY_ATTEMPTS", 3, MAX_RECOVERY_ATTEMPTS
+            ),
+            faithfulness_model=os.getenv(
+                "INTELLIGENCE_FAITHFULNESS_MODEL", cls.faithfulness_model
             ),
         )
 

@@ -126,7 +126,8 @@ def test_unverified_snapshot_never_renders_verified_or_publication_controls():
     assert "evidence_gap" in text
     assert "verified report" not in text
     assert not app.radio
-    assert not app.button
+    # "New thread" is always present; no publication-decision button for unverified content.
+    assert "Record decision" not in [button.label for button in app.button]
 
 
 def test_ui_rejects_unsafe_input():

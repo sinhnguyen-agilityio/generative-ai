@@ -94,13 +94,12 @@ def _get_scope_graph(st, agent, tracer):
         )
         faithfulness_evaluator = None
         google_api_key = os.getenv("GOOGLE_API_KEY", "").strip()
-        reasoning_model = os.getenv("INTELLIGENCE_REASONING_MODEL", "").strip()
-        if os.getenv("INTELLIGENCE_REASONING_PROVIDER", "").strip() == "google_genai" and google_api_key:
-            # RAGAS Faithfulness judge reuses the same reasoning-tier model/provider config as
-            # the rest of the app (single model-config surface); disabled entirely on any other
-            # provider until that judge-LLM path is wired up too.
+        if google_api_key:
+            # RAGAS Faithfulness judge is independent of the app's own reasoning/standard
+            # tier models — always Gemini (settings.faithfulness_model, default
+            # gemini-3.7-flash), disabled entirely when no Google key is configured.
             faithfulness_evaluator = make_faithfulness_evaluator(
-                model=reasoning_model, api_key=google_api_key,
+                model=settings.faithfulness_model, api_key=google_api_key,
             )
         research_nodes = ResearchNodes(
             vfs,
@@ -134,6 +133,24 @@ def _get_scope_graph(st, agent, tracer):
     st.session_state.scope_checkpoint_connection = connection
     st.session_state.scope_graph = graph
     return graph
+
+
+def _get_vfs(st):
+    if "vfs" not in st.session_state:
+        st.session_state.vfs = VFS(Settings.from_env().vfs_root)
+    return st.session_state.vfs
+
+
+def _start_new_thread(st):
+    """Reset conversation-scoped state only; cached model/graph/tracer connections stay put."""
+    new_thread_id = str(uuid4())
+    st.session_state.scope_thread_id = new_thread_id
+    st.session_state.scope_state = {"run_id": str(uuid4()), "thread_id": new_thread_id}
+    st.session_state.activity = []
+    st.session_state.stage = "Scoping"
+    st.session_state.progress = "No research started"
+    for key in ("verification", "last_trace_id", "publication_decision"):
+        st.session_state.pop(key, None)
 
 
 def _record_value(record, key, default=None):
@@ -262,6 +279,145 @@ def _render_details_content(st, snapshot):
     return verification
 
 
+_AGENT_ROWS = [
+    ("Scope Agent", "Scope Agent"),
+    ("Planner", "Planner"),
+    ("Researcher", "Research Supervisor"),
+    ("Synthesizer", "Report Writer"),
+    ("Verifier", "Verifier"),
+]
+
+_STATUS_BADGE = {
+    "pending": "⚪ Pending",
+    "running": "⏳ Running",
+    "complete": "✅ Complete",
+    "failed": "❌ Failed",
+}
+
+
+def _agent_status(activity, agent_name):
+    items = [item for item in activity if _record_value(item, "agent") == agent_name]
+    if not items:
+        return "pending"
+    if any(_record_value(item, "status") == "running" for item in items):
+        return "running"
+    if any(_record_value(item, "status") == "failure" for item in items):
+        return "failed"
+    return "complete"
+
+
+def _scope_agent_status(snapshot, activity):
+    """A successful clarify_with_user turn only means one question was asked, not that the
+    Scope Agent is done — that only happens once a research brief actually exists."""
+    if snapshot.get("scoped_request"):
+        return "complete"
+    base = _agent_status(activity, "Scope Agent")
+    return "running" if base in {"running", "complete"} else base
+
+
+def _agent_row_status(snapshot, activity, agent_key):
+    if agent_key == "Scope Agent":
+        return _scope_agent_status(snapshot, activity)
+    return _agent_status(activity, agent_key)
+
+
+def _todo_sources(vfs, run_id: str, todo_id: str) -> list[dict]:
+    """Tavily sources captured for one completed todo, read from its evidence bundle."""
+    try:
+        bundle = json.loads(vfs.read(run_id, f"research/{todo_id}/evidence/result.json"))
+    except FileNotFoundError:
+        return []
+    seen: set[str] = set()
+    sources = []
+    for source in bundle.get("sources", []):
+        locator = source.get("locator")
+        if not locator or locator in seen:
+            continue
+        seen.add(locator)
+        title = (source.get("provenance") or {}).get("title") or locator
+        sources.append({"locator": locator, "title": title})
+    return sources
+
+
+def _render_agent_row_body(st, agent_key, status, snapshot, vfs):
+    """The agent-specific content shown under its title: a processing note while running,
+    otherwise its key output once complete."""
+    if agent_key == "Scope Agent":
+        if status == "running":
+            st.caption("Processing your request…")
+        elif status == "complete":
+            brief = (snapshot.get("scoped_request") or {}).get("research_question")
+            if brief:
+                st.write(brief)
+    elif agent_key == "Planner":
+        if status == "running":
+            st.caption("Decomposing the brief into research questions…")
+        elif status == "complete":
+            for todo in snapshot.get("todos") or []:
+                st.markdown(f"- {_record_value(todo, 'research_question', 'Untitled task')}")
+    elif agent_key == "Research Supervisor":
+        if status == "running":
+            st.caption("Searching sources for each question…")
+        elif status == "complete":
+            run_id = snapshot.get("run_id", "")
+            completed_todos = [
+                todo for todo in snapshot.get("todos") or []
+                if _status_text(_record_value(todo, "status")) == "completed"
+            ]
+            for todo in completed_todos:
+                question = _record_value(todo, "research_question", "Untitled task")
+                todo_id = _record_value(todo, "todo_id", "")
+                sources = _todo_sources(vfs, run_id, todo_id) if todo_id and run_id else []
+                with st.expander(question, expanded=False):
+                    if sources:
+                        for source in sources:
+                            st.markdown(f"- [{source['title']}]({source['locator']})")
+                    else:
+                        st.caption("No sources recorded.")
+    elif agent_key == "Report Writer":
+        if status == "running":
+            st.caption("Drafting the report…")
+        elif status == "complete":
+            draft = snapshot.get("draft")
+            if draft:
+                st.caption(f"{len(draft.split())} words drafted — full report and checks below.")
+    elif agent_key == "Verifier":
+        if status == "running":
+            st.caption("Checking the report against its sources…")
+        elif status == "complete":
+            verification = _snapshot_verification(snapshot)
+            if verification is not None:
+                if verification.passed:
+                    st.success("All checks passed")
+                else:
+                    failed = [c.name for c in verification.check_results if not c.passed]
+                    st.error(f"Failed — {', '.join(failed)}")
+
+
+def _render_agent_row(st, placeholder, label, agent_key, snapshot, vfs):
+    """One agent per row: title/content on the left, its running/complete badge on the right
+    of that same row — redrawn into `placeholder` so it can be updated live during streaming.
+    A row stays hidden until that agent actually starts processing — the pipeline shouldn't
+    list every agent as "Pending" before the user has even sent a request."""
+    activity = list(snapshot.get("activity") or [])
+    status = _agent_row_status(snapshot, activity, agent_key)
+    if status == "pending":
+        placeholder.empty()
+        return
+    with placeholder.container():
+        content_col, badge_col = st.columns([5, 1])
+        with content_col:
+            st.markdown(f"**{label}**")
+            _render_agent_row_body(st, agent_key, status, snapshot, vfs)
+        with badge_col:
+            st.markdown(_STATUS_BADGE[status])
+
+
+def _render_agent_pipeline(st, placeholders, snapshot, vfs):
+    for label, agent_key in _AGENT_ROWS:
+        _render_agent_row(st, placeholders[agent_key], label, agent_key, snapshot, vfs)
+
+
 def _render_graph_snapshot(st, snapshot):
     """Keep workflow internals available without competing with the chat."""
     with st.expander("Details", expanded=False):
@@ -297,6 +453,7 @@ _NODE_ACTIVITY = {
     Node.ASSESS_RESEARCH: ("Assessing research completeness", "Research Supervisor", "think_tool"),
     Node.SYNTHESIZE: ("Synthesizing report", "Report Writer", None),
     Node.VERIFY: ("Verifying report against sources", "Verifier", "source_verification"),
+    Node.EVALUATE_FAITHFULNESS: ("Scoring RAGAS Faithfulness", "Verifier", None),
     Node.FIX: ("Reflecting on verification failures", "Fix Planner", None),
     Node.RESEARCH_GAPS: ("Researching evidence gaps", "Research Supervisor", "tavily_search"),
     Node.NEEDS_REVIEW: ("Escalating for review", "Verifier", None),
@@ -352,6 +509,10 @@ def render():
     if st.session_state.stage == "Scoping" and clarification:
         st.info("Waiting for your response")
     _render_transcript(st, st.session_state.scope_state)
+    vfs_for_ui = _get_vfs(st)
+    st.subheader("Pipeline")
+    placeholders = {agent_key: st.empty() for _, agent_key in _AGENT_ROWS}
+    _render_agent_pipeline(st, placeholders, st.session_state.scope_state, vfs_for_ui)
     snapshot_verification = _render_graph_snapshot(st, st.session_state.scope_state)
     if st.session_state.scope_state.get("stage") == Stage.NEEDS_REVIEW.value:
         st.error("This run needs human review before it can be treated as verified or published.")
@@ -379,7 +540,14 @@ def render():
                 st.success("Approval recorded; publication remains hash-bound.")
             else:
                 st.info("Rejection recorded; permanent output was not changed.")
-    text = st.chat_input("What should we research?")
+    # Wrapping chat_input in a container (instead of calling it at the script's top level)
+    # trades away its viewport-pinned/floating placement so the New Thread button can render
+    # in normal flow right below it.
+    with st.container():
+        text = st.chat_input("What should we research?")
+        if st.button("New thread", icon="➕"):
+            _start_new_thread(st)
+            st.rerun()
     if text:
         text = normalize_text(text)
         try:
@@ -416,8 +584,17 @@ def render():
                         "thread_id": thread_id,
                     }
                     config = {"configurable": {"thread_id": thread_id}}
+                    graph = _get_scope_graph(st, agent, tracer)
+                    result = state
                     try:
-                        result = _get_scope_graph(st, agent, tracer).invoke(state, config)
+                        # stream_mode="values" yields the full accumulated state after each
+                        # node finishes (not just its delta), so every step can be redrawn
+                        # straight into the pipeline placeholders for live, node-by-node
+                        # progress instead of one static view after the whole run completes.
+                        for chunk in graph.stream(state, config, stream_mode="values"):
+                            result = chunk
+                            live_snapshot = {**result, "activity": list(st.session_state.activity)}
+                            _render_agent_pipeline(st, placeholders, live_snapshot, vfs_for_ui)
                     finally:
                         st.session_state.pop("_lifecycle_callback", None)
                     execution.output = json.dumps({

@@ -55,6 +55,41 @@ def test_uncited_claim_is_a_draft_defect():
     assert "Uncited claim" in result.repair_details
 
 
+def test_abbreviated_month_before_a_day_number_does_not_split_the_claim_from_its_citation():
+    """"released on Aug. 4, 2026 [S1]." must be read as one cited claim. The naive sentence
+    splitter used to treat the period in "Aug." as a sentence end because it's followed by a
+    digit, stranding "...released on Aug." as an uncited claim and "4, 2026 [S1]." as a second,
+    separately-cited one — a real bug that made otherwise fully-cited, date-heavy reports (e.g.
+    software release reports) fail verification and burn the whole recovery budget."""
+    bundle = _bundle()
+    bundle["sources"][0]["excerpt"] += " Version 3.13 was released on August 4, 2026."
+    report = cited_report(
+        [GOOD_CLAIM, "Version 3.13 was released on Aug. 4, 2026 [S1]."], {"S1": URL}
+    )
+
+    result = verify_report(report, catalog_from_bundles([bundle]))
+
+    assert result.passed, result.repair_details
+
+
+def test_as_of_todays_date_is_not_required_to_be_grounded_in_the_source():
+    """"as of <today's date>" is the report's own generation-time framing, never something a
+    Python.org page (or any source) will literally state — requiring it to appear in the cited
+    excerpt made every "as of {date}" sentence permanently ungroundable and burned the whole
+    recovery budget on a report that was otherwise fully correct (the exact failure hit for
+    "what is the latest version of python")."""
+    bundle = _bundle()
+    bundle["sources"][0]["excerpt"] += " Active releases include version 3.13."
+    report = cited_report(
+        [GOOD_CLAIM, "Active releases as of September 28, 2026 include version 3.13 [S1]."],
+        {"S1": URL},
+    )
+
+    result = verify_report(report, catalog_from_bundles([bundle]))
+
+    assert result.passed, result.repair_details
+
+
 def test_unknown_citation_and_invented_url_are_rejected():
     report = cited_report(
         [GOOD_CLAIM, "More detail is at https://invented.test/page for caching [S9]."],

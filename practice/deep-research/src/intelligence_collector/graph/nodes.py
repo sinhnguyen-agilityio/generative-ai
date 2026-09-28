@@ -58,6 +58,7 @@ class Node:
     # Build-Verify-Fix loop
     SYNTHESIZE = "synthesizing"
     VERIFY = "verifying"
+    EVALUATE_FAITHFULNESS = "evaluating_faithfulness"
     FIX = "fixing"
     RESEARCH_GAPS = "researching_gaps"
     NEEDS_REVIEW = "needs_review"
@@ -376,32 +377,6 @@ class BVFNodes:
         )
         failed = [check.name for check in result.check_results if not check.passed]
 
-        # RAGAS Faithfulness over the whole (now-passing) report — observability only, per
-        # research.md's "Observability and evaluation" decision it never gates verification
-        # or publication, so a judge-LLM failure here is recorded, not raised.
-        faithfulness_score = None
-        faithfulness_error = ""
-        faithfulness_refs = []
-        if result.passed and self.faithfulness_evaluator is not None:
-            contexts = cited_source_excerpts(state.get("draft", ""), catalog)
-            try:
-                faithfulness_score = self.faithfulness_evaluator(
-                    brief.research_question, state.get("draft", ""), contexts
-                )
-            except Exception as exc:
-                faithfulness_error = str(exc)
-            faithfulness_refs.append(self.vfs.write_json(
-                run_id,
-                f"verification/faithfulness.{result.verification_id}.json",
-                {
-                    "score": faithfulness_score,
-                    "error": faithfulness_error,
-                    "question": brief.research_question,
-                    "context_count": len(contexts),
-                },
-                "faithfulness",
-            ))
-
         return {
             **state,
             "stage": (Stage.AWAITING_APPROVAL if result.passed else Stage.VERIFYING).value,
@@ -419,11 +394,48 @@ class BVFNodes:
             "progress_fingerprint": fingerprint,
             "stall_count": state.get("stall_count", 0) + 1 if stalled else 0,
             "recovery_budget": state.get("recovery_budget", self.recovery_budget),
-            "artifacts": [
-                *state.get("artifacts", []),
-                ref.model_dump(mode="json"),
-                *(r.model_dump(mode="json") for r in faithfulness_refs),
-            ],
+            "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
+        }
+
+    def evaluating_faithfulness(self, state):
+        """RAGAS Faithfulness over the final report only.
+
+        Reached from ``verifying`` exactly once, via the graph edge added only on the PASSED
+        route (see ``build.py``) — never as part of a build/verify/fix attempt, so a report
+        that fails and gets rewritten is never scored along the way, only the one draft that
+        actually left the BVF loop. Observability only, per research.md's "Observability and
+        evaluation" decision: a judge-LLM failure here is recorded, not raised, and never
+        re-enters the loop.
+        """
+        faithfulness_score = None
+        faithfulness_error = ""
+        refs = []
+        if self.faithfulness_evaluator is not None:
+            catalog = self._catalog(state)
+            brief = ResearchBrief.model_validate(state["scoped_request"])
+            draft = state.get("draft", "")
+            contexts = cited_source_excerpts(draft, catalog)
+            verification_id = (state.get("verification") or {}).get("verification_id", "")
+            try:
+                faithfulness_score = self.faithfulness_evaluator(
+                    brief.research_question, draft, contexts
+                )
+            except Exception as exc:
+                faithfulness_error = str(exc)
+            refs.append(self.vfs.write_json(
+                state["run_id"],
+                f"verification/faithfulness.{verification_id}.json",
+                {
+                    "score": faithfulness_score,
+                    "error": faithfulness_error,
+                    "question": brief.research_question,
+                    "context_count": len(contexts),
+                },
+                "faithfulness",
+            ))
+        return {
+            **state,
+            "artifacts": [*state.get("artifacts", []), *(r.model_dump(mode="json") for r in refs)],
             "faithfulness_score": faithfulness_score,
             "faithfulness_error": faithfulness_error,
         }

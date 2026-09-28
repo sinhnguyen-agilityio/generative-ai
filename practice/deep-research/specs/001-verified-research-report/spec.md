@@ -458,6 +458,23 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   question, a concise research-start acknowledgement, or the reviewable report appropriate to that
   turn. Structured JSON, internal state, agent metadata, and tool metadata MUST NOT appear in the
   transcript and MAY appear only in the collapsed `Details` panel.
+- **FR-023d**: The UI MUST offer a "New thread" action that starts a new run and thread identity
+  (fresh `run_id`/`thread_id`, cleared transcript/activity/pipeline state) without discarding cached
+  model, tracer, or graph connections. Starting a new thread MUST NOT alter any previous thread's
+  durable VFS artifacts, checkpoints, or publication record.
+- **FR-023e**: Alongside the transcript, the UI MUST render one row per pipeline agent (Scope
+  Agent, Planner, Researcher, Synthesizer, Verifier), each combining that agent's content on the
+  left with its own running/complete/failed status indicator on the right of that same row,
+  derived from that agent's own lifecycle activity. A row MUST stay hidden until that agent has
+  actually started processing — the pipeline MUST NOT list every agent as pending before a
+  request exists. While an agent is running, its row MUST show a processing indicator; once it
+  completes, its row MUST show that agent's key output for the current run: the Scope Agent's
+  research brief, the Planner's research questions as a list, and, for the Researcher, every
+  completed research question's retrieved source links.
+- **FR-023f**: These rows MUST update live, node by node, while a request is being processed —
+  driven by the graph's own execution stream (not only redrawn once after the entire run
+  completes) — so the operator can watch each agent progress from running to complete during a
+  single request instead of seeing one static summary at the end.
 - **FR-024**: The system MUST distinguish at least the states Scoping, Planning, Researching,
   Synthesizing, Verifying, Awaiting Approval, Published, Failed, and `NEEDS_REVIEW`.
 - **FR-025**: Only a verified artifact MAY enter Awaiting Approval, and explicit human approval of

@@ -646,3 +646,215 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   propagation), `tests/integration/test_bvf_loop.py` (evaluator disabled by default, called exactly
   once only after a passing draft, failure recorded without blocking Awaiting Approval). Full
   suite: 171 passed, 2 skipped.
+- [X] T131 [US1] Add a "New thread" reset action and a per-agent pipeline status/progress view to
+  the Streamlit UI (FR-023d, FR-023e). `app.py::_start_new_thread` generates a fresh
+  `run_id`/`thread_id` and clears `scope_state`/`activity`/`stage`/`progress` without rebuilding the
+  cached model router, scope agent, graph, or tracer (those stay keyed by session, not by thread).
+  Layout split into `st.columns([3, 1])`: a right-hand `_render_agent_status_panel` (one row per
+  agent — Scope Agent, Planner, Researcher, Synthesizer, Verifier, plus Fixer/Publisher once
+  reached) with a pending/running/complete/failed badge derived from `_agent_status`, which groups
+  the existing `activity` lifecycle list by its `agent` field (already set by `_record_lifecycle`
+  via `_NODE_ACTIVITY`, so no new tracking was needed); and a main-panel
+  `_render_pipeline_overview` that shows a "processing" `st.info` while an agent is running, then
+  its key output once complete: the Scope Agent's research brief, the Planner's questions as
+  bullets, and, per the Researcher, an expander per completed research question listing the source
+  links captured for it (read via a new `_todo_sources(vfs, run_id, todo_id)` helper against that
+  todo's evidence bundle — `research/<todo_id>/evidence/result.json`, already written by
+  `agents/worker.py::persist_research`; no new data plumbing). The Scope Agent's status is
+  special-cased (`_scope_agent_status`): a successfully-returned clarifying question is still
+  "running", not "complete" — only an actual research brief (`scoped_request`) counts as done,
+  since otherwise every clarification turn would misreport the agent as finished. `st.chat_input`
+  stays outside the new columns (Streamlit only pins it to the page bottom when called at the
+  script's top level). Updated `tests/ui/test_chat_progress.py`'s
+  `test_unverified_snapshot_never_renders_verified_or_publication_controls`, whose
+  `assert not app.button` predated this feature and would now always fail because of the
+  ever-present "New thread" button; narrowed it to assert no publication "Record decision" button
+  specifically, which was its actual intent. New coverage:
+  `tests/ui/test_pipeline_overview.py` (pending badges on a fresh run, New Thread resets
+  run/thread/activity/stage, Scope Agent gated on a real brief vs. still-running during
+  clarification, Planner bullet list, Researcher per-todo source links read from a real temporary
+  VFS). Verified interactively: `streamlit run app.py` served HTTP 200 with no startup exception.
+  Full suite: 177 passed, 2 skipped.
+- [X] T132 [US1] Correct T131 on user feedback that it "wasn't what I expected" (FR-023e, FR-023f):
+  two real problems, not one. (1) Layout: the user meant one row per agent with its own status
+  badge on the right of that same row, not a separate whole-page status column — reworked
+  `_render_agent_status_panel` + `_render_pipeline_overview` into a single `_render_agent_row`
+  (content in `st.columns([5, 1])`'s left cell, badge in the right cell) plus
+  `_render_agent_pipeline` looping over the 5 core agents; dropped the always-conditional
+  Fixer/Publisher rows (still covered by the existing Recovery/Approval sections) to keep a plain
+  linear list. (2) Liveness: T131's panels only ever read `st.session_state.scope_state` set
+  BEFORE `graph.invoke()` was called, so during the actual (multi-second, multi-node) run the UI
+  showed one static generic status box, never updating per agent until the whole request finished
+  and `st.rerun()` fired — not what "processing indicator... then show the Brief at the end of
+  this process" asked for. Verified LangGraph's actual streaming contract before changing
+  anything: `graph.stream(state, config, stream_mode="values")` yields the FULL accumulated state
+  after every node (confirmed against a real compiled graph — each step's key set strictly grows,
+  and the last yielded value equals what `.invoke()` returns for the same input). Switched
+  `app.py`'s chat-turn handler from `graph.invoke(state, config)` to iterating that stream and
+  calling `_render_agent_pipeline` against the same `st.empty()` placeholders on every step, so
+  each agent's row genuinely updates live as its node completes — not only after the run ends.
+  Updated `tests/ui/test_pipeline_overview.py`'s five affected assertions (removed subheadings
+  like "Pipeline status"/"Planned Research Questions" that no longer exist in the row layout;
+  replaced combined-substring checks like `"Scope Agent** — ✅ Complete" in text` — broken by the
+  label and badge now being separate markdown elements in different columns — with
+  `text.index(a) < text.index(b)` ordering checks proving same-row adjacency). Added
+  `tests/ui/test_pipeline_streaming.py`: a real chat turn through the actual script (fake models
+  via the established `init_chat_model` monkeypatch, a real `Tracer` with a fake Langfuse client
+  since `app._get_tracer` requires one, `PYTHON_DOTENV_DISABLED=1` so a developer's real `.env`
+  can't silently turn on the full research pipeline via `TAVILY_API_KEY` and change what's being
+  tested) proving the `.invoke()` → `.stream()` switch still settles on the same final state.
+  Full suite: 178 passed, 2 skipped.
+- [X] T133 [US1] Correct T132 on user feedback: "The agent info should show when it start to
+  process information. Not show from start." (FR-023e) — every agent row, including ones that
+  hadn't started yet, rendered as a "⚪ Pending" row from the very first page load, before the
+  user had even sent a request. Changed `_render_agent_row` (`app.py`) so a row with `pending`
+  status calls `placeholder.empty()` and returns instead of rendering the row — the pipeline now
+  only reveals an agent once its lifecycle status actually leaves `pending` (running/complete/
+  failed), never lists every agent up front. Updated `tests/ui/test_pipeline_overview.py`:
+  replaced `test_pipeline_status_panel_lists_every_agent_as_pending_initially` (now the opposite
+  of correct behavior) with `test_pipeline_rows_stay_hidden_until_their_agent_starts_processing`
+  (fresh run shows the "Pipeline" header but no agent name or "⚪ Pending" text) and
+  `test_scope_agent_row_appears_once_it_starts_processing`; added `running`-status activity
+  entries for the "next" agent in three existing ordering-assertion tests
+  (`test_scope_agent_brief_appears_only_once_a_research_brief_exists`,
+  `test_planner_section_lists_todo_questions_as_bullets_once_complete`,
+  `test_researcher_section_lists_tavily_sources_for_each_completed_todo`) whose
+  `text.index(...)` chains depended on a downstream agent's row being present even while still
+  pending, which no longer holds. Full suite: 179 passed, 2 skipped.
+- [X] T134 [US1] Fix a real `claims_cited` false-positive in `source_verification.py` reported by
+  the user for a simple factual question ("what is the latest version of python"). Root-caused
+  from an actual failed run's stored artifacts (`.data/vfs/8924f0b5-.../verification/needs_review.json`,
+  `reports/draft.v4.md`): the draft correctly cited every claim (e.g. "...released on Aug. 4, 2026
+  [S1]."), but `_SENTENCE_BREAK`'s naive rule — split after any `.!?` followed by whitespace and
+  an uppercase letter/digit — treated the period in an abbreviated month ("Aug.", "Sept.") as a
+  sentence end because a day number follows it, splitting "...released on Aug." off as its own,
+  uncited "claim" while the citation stayed attached to the trailing "4, 2026 [S1]." fragment.
+  This hit date-heavy factual reports hardest and burned the entire 3-attempt recovery budget
+  rewriting an already-correct draft before landing in `needs_review` — confirmed by inspecting
+  all 3 recorded attempts, which show the identical fingerprint/failure each time despite the
+  Fixer's rewrites. Added `_split_sentences` (a small abbreviation-aware wrapper around
+  `_SENTENCE_BREAK`, checking the word immediately before each candidate split point against a
+  `_ABBREVIATIONS` set of month/other abbreviations) and used it in `extract_claims` in place of
+  the raw `_SENTENCE_BREAK.split(line)` call. Verified directly against the real failing draft
+  (`extract_claims` now reports 0 uncited claims out of 11, down from 2). Added
+  `tests/unit/test_source_verification.py::test_abbreviated_month_before_a_day_number_does_not_split_the_claim_from_its_citation`.
+  Full suite: 180 passed, 2 skipped.
+- [X] T135 [US1] Fix a second real failure for the same user-reported question, surfaced only
+  after T134 by testing against a fresh real run (`.data/vfs/f4c215f3-.../verification/`): with
+  the abbreviated-month split fixed, `claims_cited` now passed, but the run still exhausted its
+  recovery budget into `needs_review` — this time on `claims_grounded`. The draft correctly wrote
+  "Active Python releases ... as of September 28, 2026, include the following versions [S1][S3]:",
+  but the grounding check demanded the digit "28" appear verbatim in the cited Python.org
+  excerpts, which it never will: that date is the report's own generation date (injected via
+  `REPORT_WRITER_PROMPT`'s `{date}` = `date.today()`), not evidence content — no source can be
+  cited for today's date. Two-part fix: (1) `agents/prompts.py`'s `REPORT_WRITER_PROMPT` (bumped
+  `report-writer.v1` -> `v2`) now tells the writer to state "as of {date}" framing once in
+  '## Scope' (already fully exempt from citation/grounding) instead of repeating it in body
+  sentences; (2) a deterministic backstop in `source_verification.py` regardless of whether the
+  model follows that instruction — `_AS_OF_CLAUSE` (matches "as of 2026-09-28" or "as of
+  September 28, 2026"/"as of Sept. 28, 2026") is stripped from a claim's text before extracting
+  the numbers that must be grounded, so an "as of <today>" phrase can never fail `claims_grounded`
+  even if it stays in a body sentence. Verified directly against the actual `needs_review` draft
+  from that run: now passes with zero failed checks (previously failed on `claims_grounded` for
+  the "28"). Added
+  `tests/unit/test_source_verification.py::test_as_of_todays_date_is_not_required_to_be_grounded_in_the_source`.
+  Full suite: 181 passed, 2 skipped.
+- [X] T136 [US1] Move the "New thread" button (FR-023d) from the top-right corner (next to the
+  title) to below `st.chat_input`, styled as an icon button (`icon="➕"`). First attempt placed it
+  directly before the input (the closest position without changing pin behavior), but the user
+  explicitly wanted it literally below — `st.chat_input` called at the script's top level pins to
+  the absolute bottom of the viewport regardless of code order, and nothing in the normal page
+  flow can render below a viewport-pinned element, so achieving a literal below-input placement
+  required giving up that pin. Wrapped both the input and the button in one `st.container()`
+  (chat_input first, button second): inside a container, `st.chat_input` renders in normal
+  in-flow order like any other widget instead of floating to the screen edge, so the button now
+  genuinely appears beneath it. Removed the `title_col`/`new_thread_col` two-column split at the
+  top — the title is now a plain `st.title` call.
+  `tests/ui/test_pipeline_overview.py::test_new_thread_button_starts_a_fresh_run_and_thread` still
+  passes unchanged (it locates the button by label text, unaffected by position, icon, or
+  container nesting). Verified interactively: `streamlit run app.py` served HTTP 200 with no
+  startup exception. Full suite: 181 passed, 2 skipped.
+- [X] T137 [US1] Swap the RAGAS Faithfulness judge (FR-039) from Gemini to OpenAI `gpt-5-nano`,
+  per explicit user request. `observability/evaluation.py`: replaced `_google_judge_llm` (which
+  had to bypass `ragas.llms.llm_factory` entirely — Google's instructor path always patches the
+  client synchronously, breaking async `Faithfulness.ascore()`) with `_openai_judge_llm`, which
+  goes straight through `llm_factory(model, provider="openai", client=AsyncOpenAI(api_key=...))`
+  with no workaround: `instructor.from_openai` correctly detects an `AsyncOpenAI` client and
+  patches it for async use. `config.py`: added `Settings.faithfulness_model` (default
+  `gpt-5-nano`, env `INTELLIGENCE_FAITHFULNESS_MODEL`). `app.py::_get_scope_graph`: the evaluator
+  is now gated on `OPENAI_API_KEY` alone, fully decoupled from `INTELLIGENCE_REASONING_PROVIDER`
+  (previously required the app's own reasoning tier to be `google_genai`) — the judge model is
+  independent of whichever provider the app's own agents use. `.env.example`: updated
+  `OPENAI_API_KEY`'s comment (now actually used, not just an unused override) and documented
+  `INTELLIGENCE_FAITHFULNESS_MODEL`. Updated `tests/evaluation/test_faithfulness_evaluator.py`'s
+  placeholder model name and added
+  `test_openai_judge_llm_builds_an_async_client_and_goes_through_llm_factory` (mocks
+  `openai.AsyncOpenAI`/`ragas.llms.llm_factory`, asserts `provider="openai"` and the right
+  model/key/client are passed through). No live API call was made to verify the real `gpt-5-nano`
+  judge end-to-end (would require reading whether `OPENAI_API_KEY` is set, which the "never read
+  .env" rule forbids even as a presence check) — the user should verify that path themselves.
+  Full suite: 182 passed, 2 skipped.
+- [X] T138 [US1] Extract RAGAS Faithfulness scoring (FR-039) out of `BVFNodes.verifying` into its
+  own graph node, `BVFNodes.evaluating_faithfulness` (`Node.EVALUATE_FAITHFULNESS`), per explicit
+  user feedback that scoring belonged to the loop's node boundaries, not folded into the verify
+  step itself — even though it was already behaviorally gated to run only once (`if
+  result.passed`), embedding it inside `verifying()` made that node responsible for two concerns
+  (the deterministic BVF gate, and a one-shot observability metric), which is what the user was
+  objecting to. `build.py`: the `VERIFY` node's PASSED conditional edge now points to the new
+  node instead of straight to `approval`/`END`: `VERIFY --PASSED--> EVALUATE_FAITHFULNESS -->
+  APPROVE|END`; `FIX`/`NEEDS_REVIEW` routes are unchanged, so a failing draft still never reaches
+  this node — it is structurally unreachable from anywhere except the loop's successful exit,
+  which is a stronger guarantee than the previous `if result.passed` runtime check. `verifying()`
+  reverted to only the deterministic script + acceptance-criteria check, no longer touching
+  `faithfulness_score`/`faithfulness_error`/the `verification/faithfulness.*.json` artifact.
+  `app.py`: added a `_NODE_ACTIVITY` entry for the new node (attributed to the "Verifier" pipeline
+  row, since it is conceptually a continuation of verifying the same report, not a new agent).
+  All of `tests/integration/test_bvf_loop.py`'s faithfulness tests
+  (`test_faithfulness_evaluator_is_disabled_by_default`,
+  `test_faithfulness_score_is_recorded_only_once_verification_passes`,
+  `test_faithfulness_evaluator_failure_is_recorded_but_never_blocks_approval`) passed unchanged —
+  they assert on the graph's final output, not which node produced it. Verified interactively:
+  `streamlit run app.py` served HTTP 200 with no startup exception (confirms the new node compiles
+  cleanly into the graph). Full suite: 182 passed, 2 skipped.
+- [X] T139 [US1] Swap the RAGAS Faithfulness judge (FR-039) from OpenAI to Groq (default
+  `openai/gpt-oss-120b`), per explicit user request. Found and worked around a real bug before
+  wiring it up: `ragas.llms.llm_factory`'s generic provider patcher for `provider="groq"`
+  (`_patch_client_for_provider` in `ragas/llms/base.py`) unconditionally calls
+  `client.messages.create` — an Anthropic-shaped API — but the real `groq.AsyncGroq` client has
+  no `.messages` attribute (confirmed live: `hasattr(AsyncGroq(...), "messages")` is `False`);
+  that branch would raise `AttributeError` immediately. Cross-checked Groq's own SDK
+  (`groq.resources.chat.completions.Completions.create`) and confirmed it posts to exactly
+  `/openai/v1/chat/completions` off `https://api.groq.com` — i.e. genuinely OpenAI-compatible.
+  Fix: `observability/evaluation.py`'s `_openai_judge_llm` -> `_groq_judge_llm`, builds a plain
+  `openai.AsyncOpenAI(api_key=..., base_url="https://api.groq.com/openai/v1")` client and still
+  goes through `llm_factory(model, provider="openai", client=client)` — the already-working
+  OpenAI path, just pointed at Groq's compatible endpoint, instead of the broken
+  `provider="groq"` one. `config.py`: `Settings.faithfulness_model` default changed to
+  `openai/gpt-oss-120b` (matches the project's existing Groq reasoning-tier fallback model, for
+  judge quality). `app.py::_get_scope_graph`: evaluator now gated on `GROQ_API_KEY` instead of
+  `OPENAI_API_KEY`. `.env.example` updated accordingly. Renamed the standalone check script
+  `test_openai_faithfulness.py` -> `test_groq_faithfulness.py` (reads `GROQ_API_KEY`; deleted the
+  old OpenAI-keyed one since it would otherwise silently validate the wrong, no-longer-used
+  path). Updated `tests/evaluation/test_faithfulness_evaluator.py`'s placeholder model name and
+  replaced the OpenAI-wiring unit test with
+  `test_groq_judge_llm_points_an_openai_compatible_client_at_groq` (asserts `base_url` and
+  `provider="openai"` are passed through correctly). Verified interactively: `streamlit run
+  app.py` served HTTP 200 with no startup exception. Full suite: 182 passed, 2 skipped.
+- [X] T140 [US1] Swap the RAGAS Faithfulness judge (FR-039) back from Groq to Gemini (default
+  `gemini-3.7-flash`), per explicit user request ("tôi đã nghỉ lại" — reconsidered). This restores
+  the original `_google_judge_llm` implementation from T130 (the direct
+  `instructor.from_genai(client, use_async=True)` + `InstructorLLM` construction, bypassing
+  `ragas.llms.llm_factory` entirely, since its Google path always patches synchronously and
+  breaks async `Faithfulness.ascore()` — a real bug verified against the live API back in T130)
+  rather than the Groq/OpenAI-compatible workaround from T139. `config.py`:
+  `Settings.faithfulness_model` default -> `gemini-3.7-flash`. `app.py::_get_scope_graph`:
+  evaluator gated on `GOOGLE_API_KEY` again (not `GROQ_API_KEY`). `.env.example` updated
+  accordingly. Renamed the standalone check script `test_groq_faithfulness.py` ->
+  `test_gemini_faithfulness.py` (reads `GOOGLE_API_KEY`; deleted the Groq-keyed one, same
+  reasoning as every prior swap — an unused script would silently validate the wrong path).
+  Updated `tests/evaluation/test_faithfulness_evaluator.py`'s placeholder model name and replaced
+  the Groq-wiring unit test with `test_google_judge_llm_patches_the_client_for_async_use` (mocks
+  `google.genai.Client`/`instructor.from_genai`/`ragas.llms.base.InstructorLLM`, asserts
+  `use_async=True` and `provider="google"` are passed through correctly — restoring T130's
+  original test intent). Verified interactively: `streamlit run app.py` served HTTP 200 with no
+  startup exception. Full suite: 182 passed, 2 skipped.

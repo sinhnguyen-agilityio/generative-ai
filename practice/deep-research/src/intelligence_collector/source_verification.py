@@ -40,8 +40,21 @@ MIN_GAP_DISCLOSURE_OVERLAP = 0.5
 _CITATION = re.compile(r"\[(S\d+(?:\s*[,;]\s*S\d+)*)\]")
 _URL = re.compile(r"https?://[^\s)\]>\"']+")
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
+_ABBREV_WORD = re.compile(r"([A-Za-z]+)\.$")
+# Abbreviations that are frequently followed by a numeral (a day-of-month, a volume number, ...)
+# without ending the sentence — e.g. "released on Aug. 4, 2026 [S1]." is one claim, not two.
+_ABBREVIATIONS = frozenset(
+    "jan feb mar apr jun jul aug sep sept oct nov dec no vol pp".split()
+)
 _LIST_MARKER = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _TOKEN = re.compile(r"[a-z0-9]+(?:[.,][0-9]+)*")
+# "as of <today's date>" is the report's own generation-time framing, never something a source
+# can state; stripped before grounding so it doesn't demand today's date appear in evidence text.
+# Matches "as of 2026-09-28" or "as of September 28, 2026" / "as of Sept. 28, 2026".
+_AS_OF_CLAUSE = re.compile(
+    r"\bas of\b\s+(?:\d{4}-\d{2}-\d{2}|[A-Za-z]+\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s*\d{4})",
+    re.IGNORECASE,
+)
 _STOPWORDS = frozenset(
     "about above after again also among another based because been before being between both "
     "cannot could does doing during each either every from further have having here into itself "
@@ -196,6 +209,23 @@ def _is_exempt(title: str) -> bool:
     return any(title.startswith(name) for name in EXEMPT_SECTIONS)
 
 
+def _split_sentences(line: str) -> list[str]:
+    """Split on sentence-ending punctuation, but not after an abbreviation like "Aug." or
+    "Sept." — those are followed by a day number, not a new sentence, and splitting there would
+    strand the citation (attached to the date that follows) away from the claim it supports."""
+    sentences = []
+    start = 0
+    for match in _SENTENCE_BREAK.finditer(line):
+        before = line[start:match.start()]
+        word = _ABBREV_WORD.search(before)
+        if word and word.group(1).casefold() in _ABBREVIATIONS:
+            continue
+        sentences.append(before)
+        start = match.end()
+    sentences.append(line[start:])
+    return sentences
+
+
 def _cited_ids(text: str) -> list[str]:
     return [sid for group in _CITATION.findall(text) for sid in re.findall(r"S\d+", group)]
 
@@ -226,7 +256,7 @@ def extract_claims(report: str) -> list[Claim]:
             if in_code or not line or line.startswith("#") or re.fullmatch(r"[|:\-\s]+", line):
                 continue
             line = _LIST_MARKER.sub("", line).strip("| ").replace(" | ", " ")
-            for sentence in _SENTENCE_BREAK.split(line):
+            for sentence in _split_sentences(line):
                 words = _strip_markup(sentence).split()
                 if len(words) < MIN_CLAIM_WORDS:
                     continue
@@ -327,7 +357,7 @@ def verify_report(
         if not cited:
             continue
         source_numbers, source_words = _tokens(" ".join(f"{s.title} {s.excerpt}" for s in cited))
-        numbers, words = _tokens(claim.text)
+        numbers, words = _tokens(_AS_OF_CLAUSE.sub(" ", claim.text))
         label = "".join(f"[{s.source_id}]" for s in cited)
         missing = sorted(n for n in numbers if not _number_supported(n, source_numbers))
         if missing:

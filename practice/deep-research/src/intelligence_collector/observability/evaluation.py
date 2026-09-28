@@ -52,7 +52,8 @@ async def _score_report_faithfulness_async(
 
 def make_faithfulness_evaluator(*, model: str, api_key: str) -> FaithfulnessEvaluator:
     """Return a ``(question, report, contexts) -> score`` callable that scores an entire
-    report's RAGAS Faithfulness with the given Gemini model as judge.
+    report's RAGAS Faithfulness with the given Gemini model (e.g. ``gemini-3.7-flash``) as
+    judge.
 
     ``contexts`` should be the excerpt text of every source the report actually cites (see
     ``source_verification.cited_source_excerpts``) -- what the report was supposed to stay
