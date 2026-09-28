@@ -53,5 +53,8 @@ streamlit run app.py
   assert atomic publication exactly matches the approved hash.
 - **Guardrails**: submit prompt injection and disallowed offensive/violent requests; assert safe
   rejection, no checkpoint/artifact/tool mutation, and actionable UI feedback.
-- **Faithfulness**: run the fixed Ragas dataset against stored evidence contexts and record the
-  repeatable score and run configuration in evaluation artifacts.
+- **Faithfulness**: once a report passes verification, score its RAGAS Faithfulness against the
+  excerpts of every source it cites, judged by the configured Gemini reasoning model; the score (or
+  a judge-LLM error) is recorded in `verification/faithfulness.<verification_id>.json` and shown
+  next to the report — it never changes verification's pass/fail outcome or publication
+  eligibility.

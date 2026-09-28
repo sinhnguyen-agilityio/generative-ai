@@ -141,6 +141,20 @@ def catalog_from_bundles(bundles: list[dict]) -> SourceCatalog:
     return catalog
 
 
+def cited_source_excerpts(report: str, catalog: SourceCatalog) -> list[str]:
+    """Excerpt text of every source id actually cited in the report body.
+
+    This is the RAGAS Faithfulness "retrieved_contexts" for a whole-report evaluation: the
+    evidence the report was supposed to stay faithful to is exactly what it cites, not the
+    full (larger, partly unused) catalog the run gathered.
+    """
+    return [
+        catalog.sources[sid].excerpt
+        for sid in dict.fromkeys(_cited_ids(report))
+        if sid in catalog.sources and catalog.sources[sid].excerpt
+    ]
+
+
 def evidence_task_ids(evidence_refs: list[dict]) -> list[str]:
     return list(dict.fromkeys(ref["task_id"] for ref in evidence_refs if ref.get("task_id")))
 

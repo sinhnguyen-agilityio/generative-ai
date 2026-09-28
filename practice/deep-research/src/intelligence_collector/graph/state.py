@@ -26,6 +26,8 @@ class GraphState(TypedDict, total=False):
     previous_draft: str
     verification: dict | None
     verification_history: list[dict]
+    faithfulness_score: float | None
+    faithfulness_error: str
     recovery_attempt: int
     recovery_budget: int
     progress_fingerprint: str

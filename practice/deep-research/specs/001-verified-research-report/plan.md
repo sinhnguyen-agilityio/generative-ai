@@ -12,8 +12,9 @@ automatically enters Planning when scope is bounded, writes todos before retriev
 isolated MCP research workers, persists stage artifacts through a run-scoped VFS, indexes raw
 source data in a local vector store, synthesizes and verifies evidence-linked reports, routes
 typed verification feedback through bounded correction loops, and pauses for human approval before
-atomic publication. Langfuse tracing and repeatable Ragas faithfulness evaluation provide
-observability and quality evidence. The Deep Agents SDK is explicitly excluded.
+atomic publication. Langfuse tracing and RAGAS Faithfulness scoring of each passing report (LLM
+judge, informational only) provide observability and quality evidence. The Deep Agents SDK is
+explicitly excluded.
 
 ## Technical Context
 
@@ -28,8 +29,10 @@ local checkpoint store) for LangGraph checkpoints and run metadata; local vector
 research retrieval; user-configured permanent output directory written only by publication.
 
 **Testing**: pytest unit and contract tests; integration tests with deterministic fake models,
-fake MCP servers, fake vector store, and temporary VFS; Streamlit AppTest for UI behavior; repeatable
-Ragas evaluation dataset for faithfulness.
+fake MCP servers, fake vector store, and temporary VFS; Streamlit AppTest for UI behavior; a
+deterministic local word-overlap baseline plus RAGAS's own `Faithfulness` metric (judge-LLM calls
+mocked in unit tests; the real Gemini judge only runs live, via `app._get_scope_graph`'s injected
+evaluator).
 
 **Target Platform**: Local developer workstation running Python and Streamlit; network access only
 through configured MCP sources and optional Langfuse endpoint.
@@ -192,7 +195,8 @@ alternatives that would violate the constitution or clarified specification.
 | Model Router (`models/router.py`, `models/role_router.py`) | `RoleModelRouter` dispatches each role to one of two profiles: reasoning (`scope`, `planner`, `verify`) or standard (`researcher`, `research_compressor`, `synthesizer`, `fixer`) — the "Reasoning Sandwich": a high-effort model plans and verifies around standard-tier implementation work. Live app default: Gemini for both tiers (`INTELLIGENCE_REASONING_MODEL/PROVIDER` = `gemini-3.8-flash`/`google_genai` at `reasoning_effort=high`, the ceiling `ChatGoogleGenerativeAI` accepts — neither Gemini nor OpenAI's SDK has an "xhigh" literal, that word is only this tier's name; `INTELLIGENCE_STANDARD_MODEL/PROVIDER` = `gemini-3.5-flash-lite`/`google_genai` at `reasoning_effort=low`), each with a Groq fallback (`openai/gpt-oss-120b` for reasoning, `openai/gpt-oss-20b` for standard), built once via `app._get_role_router` and shared by every agent | Retries bounded per profile; fallback event traced; final failure is visible | All model-using nodes, Langfuse |
 | Checkpointer | Persist typed graph state and resume points | Atomic checkpoint; invalid latest checkpoint falls back or NEEDS_REVIEW | LangGraph, VFS metadata |
 | Approval/Publisher | Bind approval to artifact hash and atomically publish | Reject/stale/unverified writes nothing permanent | Streamlit interrupt, VFS, output path |
-| Tracing/Evaluation | Create root execution traces grouped by thread, nested node spans, model generations, validation/fallback events, and evaluate faithfulness | Missing live tracing config blocks execution; export/flush failure is surfaced without exposing credentials | Langfuse v4 SDK and LangChain callback, Ragas dataset |
+| Tracing/Evaluation | Create root execution traces grouped by thread, nested node spans, model generations, and validation/fallback events | Missing live tracing config blocks execution; export/flush failure is surfaced without exposing credentials | Langfuse v4 SDK and LangChain callback |
+| Faithfulness Evaluator (`observability/evaluation.py`) | `make_faithfulness_evaluator` scores a whole passing report's RAGAS Faithfulness (`ragas.metrics.collections.Faithfulness`) against `source_verification.cited_source_excerpts` (the excerpt text of every source the report cites), judged by the reasoning-tier Gemini model via a `google.genai.Client` patched async through `instructor.from_genai(..., use_async=True)` (bypassing `ragas.llms.llm_factory`, whose Google path always patches synchronously and breaks `Faithfulness.ascore()`) | Called from `BVFNodes.verifying` only after `VerificationResult.passed`; a judge-LLM failure is caught and recorded (`faithfulness_error`), never raised into the graph; score/error persist to `verification/faithfulness.<verification_id>.json` and render in the UI next to the report; disabled (`None`) unless the reasoning tier is `google_genai` with a `GOOGLE_API_KEY` set | `ragas`, `instructor[google-genai]` (needs the `jsonref` package), `google-genai` |
 
 ## Project Structure
 

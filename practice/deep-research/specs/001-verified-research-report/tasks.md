@@ -590,3 +590,59 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   `tests/integration/test_scope_guardrail.py` (blocked content never reaches the Scope model,
   allowed content proceeds, guardrail role/prompt-version wiring). Full suite: 158 passed, 2 skipped
   (FR-002a, FR-002b).
+- [X] T129 [US1] Fix `ragas` being uninstallable in this environment: `ragas==0.4.3` (latest,
+  already pinned) hard-imports `ChatVertexAI` from `langchain_community.chat_models.vertexai` at
+  module load, purely to populate a static `isinstance()` list; that submodule no longer exists in
+  `langchain-community==0.4.2` (Vertex AI integrations moved to `langchain-google-vertexai`, and
+  `langchain-community` itself is being sunset), so `import ragas` crashed with
+  `ModuleNotFoundError` before any evaluation code could run. Downgrading `langchain-community` was
+  rejected: an old-enough version needs a `langchain-core` incompatible with the modern
+  `langchain`/`langchain-openai`/`langchain-google-genai`/`langchain-groq` this project's model
+  router depends on. Fixed with a zero-dependency-change shim,
+  `observability/_ragas_compat.py::ensure_ragas_importable()`, which registers a harmless stub
+  `ChatVertexAI` in `sys.modules` only if the real module is missing (this project never uses
+  Vertex AI). Called once at the top of `observability/evaluation.py`. Verified with
+  `tests/evaluation/test_ragas_compat.py`, which runs in fresh subprocesses so module caching can't
+  hide the real behavior: one test proves `import ragas` genuinely crashes without the shim
+  (asserting the exact missing-module message), the other two prove it succeeds with the shim,
+  including via `evaluation.py`'s own import as a side effect. `pyproject.toml`/`uv.lock`
+  untouched; full suite unaffected (161 passed, 2 skipped at the time of this fix).
+- [X] T130 [US1] Wire real RAGAS Faithfulness scoring for the whole final report, judged by the
+  configured reasoning-tier Gemini model, surfaced in the UI next to the report, and never gating
+  verification/publication (FR-039, FR-039a). Investigated two ragas APIs first: the legacy
+  `ragas.metrics.Faithfulness` + `LangchainLLMWrapper` (reuses the existing LangChain model
+  directly, but deprecated, removal planned for ragas v1.0) vs. the newer
+  `ragas.metrics.collections.Faithfulness` + `ragas.llms.llm_factory` (future-proof, but needs a
+  separate native provider client, not a LangChain model). User chose the newer `llm_factory`-style
+  API. Live-tested against the real Gemini API before wiring anything in (burned real quota
+  confirming this, see below) and found `llm_factory`'s own Google path unusable for Faithfulness:
+  it always calls `instructor.from_genai(client)` with no `use_async`, producing a synchronous
+  instructor client, while `Faithfulness.ascore()` requires `agenerate()` — every attempt raised
+  `TypeError: Cannot use agenerate() with a synchronous client`. Fixed by bypassing `llm_factory`
+  for Google and building the pieces directly:
+  `instructor.from_genai(genai.Client(api_key=...), use_async=True)` patched client, wrapped in
+  `ragas.llms.base.InstructorLLM` (`observability/evaluation.py::_google_judge_llm`). This also
+  surfaced a genuinely missing dependency, not a version conflict: instructor's Gemini structured
+  output needs the `jsonref` package (`instructor[google-genai]` extra) — added as a plain new
+  leaf dependency (`uv add jsonref`), no existing version changed. A live end-to-end run after
+  fixing both issues reached the real Gemini API successfully (confirmed by the pipeline failing
+  only on transient `503 UNAVAILABLE` / `429 RESOURCE_EXHAUSTED` responses, i.e. real quota/load,
+  never a code error).
+  `source_verification.py::cited_source_excerpts(report, catalog)` answers "where do
+  `retrieved_contexts` come from": the excerpt text of every source id the report actually cites
+  (via the existing `_cited_ids` extractor), not the full, partly-unused catalog. Wired into
+  `graph/nodes.py::BVFNodes.verifying`: only when `VerificationResult.passed` (never on a draft
+  about to be revised), it calls the injected `faithfulness_evaluator(question, report,
+  contexts)`, catches any exception into `faithfulness_error` instead of raising (a judge-LLM
+  failure must never block Awaiting Approval), and persists both score and error to
+  `verification/faithfulness.<verification_id>.json`. `faithfulness_score`/`faithfulness_error`
+  added to `GraphState`. `app.py::_get_scope_graph` builds the evaluator via
+  `make_faithfulness_evaluator(model=INTELLIGENCE_REASONING_MODEL, api_key=GOOGLE_API_KEY)` only
+  when the reasoning tier's provider is `google_genai` and a key is present, reusing the same
+  single model-config surface as the rest of the app; the UI (`_render_details_content`) shows the
+  score as a metric plus a warning under 90%, or the error, next to the report. New coverage:
+  `tests/unit/test_source_verification.py` (`cited_source_excerpts` dedup/empty/filter),
+  `tests/evaluation/test_faithfulness_evaluator.py` (evaluator wrapping, mocked judge calls, error
+  propagation), `tests/integration/test_bvf_loop.py` (evaluator disabled by default, called exactly
+  once only after a passing draft, failure recorded without blocking Awaiting Approval). Full
+  suite: 171 passed, 2 skipped.

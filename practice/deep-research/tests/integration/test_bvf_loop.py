@@ -27,7 +27,7 @@ def _uncited(sentence: str) -> str:
 
 
 def _run(stores, report_model, *, research_model=None, budget=3, run_id="bvf",
-          acceptance_verifier=None, acceptance_criteria=None):
+          acceptance_verifier=None, acceptance_criteria=None, faithfulness_evaluator=None):
     vfs, index = stores
     researcher = ResearchAgent(
         ModelRouter(research_model or FakeResearchModel(), mode="fake"),
@@ -40,6 +40,7 @@ def _run(stores, report_model, *, research_model=None, budget=3, run_id="bvf",
         report_writer=ReportWriter(ModelRouter(report_model, mode="fake")),
         acceptance_verifier=acceptance_verifier,
         recovery_budget=budget,
+        faithfulness_evaluator=faithfulness_evaluator,
     )
     todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
     return build_graph(research_nodes=nodes).invoke({
@@ -238,3 +239,52 @@ def test_acceptance_check_is_skipped_without_a_configured_verifier(stores):
 
     assert result["stage"] == "Awaiting Approval"
     assert "acceptance_criteria" not in result["verification"]["checks"]
+
+
+def test_faithfulness_evaluator_is_disabled_by_default(stores):
+    """No evaluator injected: behaves exactly as before this feature — no score, no error."""
+    result = _run(stores, FakeReportModel([GOOD]))
+
+    assert result["stage"] == "Awaiting Approval"
+    assert result["faithfulness_score"] is None
+    assert result["faithfulness_error"] == ""
+
+
+def test_faithfulness_score_is_recorded_only_once_verification_passes(stores):
+    vfs, _ = stores
+    calls = []
+
+    def evaluator(question, report, contexts):
+        calls.append((question, report, contexts))
+        return 0.95
+
+    model = FakeReportModel([_uncited("Caches also make every workload faster overall."), GOOD])
+
+    result = _run(stores, model, faithfulness_evaluator=evaluator)
+
+    assert result["stage"] == "Awaiting Approval"
+    # Called once, only for the passing draft — never for the failed first attempt.
+    assert len(calls) == 1
+    question, report, contexts = calls[0]
+    assert question == BRIEF["research_question"]
+    assert report == GOOD
+    assert contexts == ["A cache stores reusable data for later access."]
+    assert result["faithfulness_score"] == 0.95
+    assert result["faithfulness_error"] == ""
+    verification_id = result["verification"]["verification_id"]
+    persisted = json.loads(vfs.read("bvf", f"verification/faithfulness.{verification_id}.json"))
+    assert persisted["score"] == 0.95
+    assert persisted["question"] == BRIEF["research_question"]
+    assert persisted["context_count"] == 1
+
+
+def test_faithfulness_evaluator_failure_is_recorded_but_never_blocks_approval(stores):
+    def failing_evaluator(question, report, contexts):
+        raise RuntimeError("judge LLM rate limited")
+
+    result = _run(stores, FakeReportModel([GOOD]), faithfulness_evaluator=failing_evaluator)
+
+    assert result["stage"] == "Awaiting Approval"
+    assert result["verification"]["passed"] is True
+    assert result["faithfulness_score"] is None
+    assert "rate limited" in result["faithfulness_error"]

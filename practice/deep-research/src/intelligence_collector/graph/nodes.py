@@ -31,7 +31,9 @@ from intelligence_collector.contracts import (
     VerificationResult,
 )
 from intelligence_collector.graph.state import GraphState
+from intelligence_collector.observability.evaluation import FaithfulnessEvaluator
 from intelligence_collector.source_verification import (
+    cited_source_excerpts,
     failure_fingerprint,
     load_catalog,
     save_catalog_state,
@@ -160,6 +162,7 @@ class ResearchNodes:
         max_concurrent_researchers: int = DEFAULT_MAX_CONCURRENT_RESEARCHERS,
         recovery_budget: int = DEFAULT_RECOVERY_BUDGET,
         evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
+        faithfulness_evaluator: FaithfulnessEvaluator | None = None,
     ):
         self.vfs = vfs
         self.index = index
@@ -177,6 +180,7 @@ class ResearchNodes:
             acceptance_verifier=acceptance_verifier,
             recovery_budget=recovery_budget,
             evidence_top_k=evidence_top_k,
+            faithfulness_evaluator=faithfulness_evaluator,
         )
 
     def researching(self, state):
@@ -283,6 +287,7 @@ class BVFNodes:
         acceptance_verifier: AcceptanceVerifier | None = None,
         recovery_budget: int,
         evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
+        faithfulness_evaluator: FaithfulnessEvaluator | None = None,
     ):
         self.vfs = vfs
         self.index = index
@@ -291,6 +296,7 @@ class BVFNodes:
         self.acceptance_verifier = acceptance_verifier
         self.recovery_budget = recovery_budget
         self.evidence_top_k = evidence_top_k
+        self.faithfulness_evaluator = faithfulness_evaluator
 
     def _catalog(self, state):
         """Full, unfiltered catalog — used by Verify and gap research, never narrowed."""
@@ -346,8 +352,8 @@ class BVFNodes:
         result = verify_report(state.get("draft", ""),
                                catalog, researched_gaps=researched)
         criteria = list(state.get("acceptance_criteria", []))
+        brief = ResearchBrief.model_validate(state["scoped_request"])
         if result.passed and self.acceptance_verifier is not None and criteria:
-            brief = ResearchBrief.model_validate(state["scoped_request"])
             verdict = self.acceptance_verifier.verify(
                 brief,
                 criteria,
@@ -369,6 +375,33 @@ class BVFNodes:
             "verification",
         )
         failed = [check.name for check in result.check_results if not check.passed]
+
+        # RAGAS Faithfulness over the whole (now-passing) report — observability only, per
+        # research.md's "Observability and evaluation" decision it never gates verification
+        # or publication, so a judge-LLM failure here is recorded, not raised.
+        faithfulness_score = None
+        faithfulness_error = ""
+        faithfulness_refs = []
+        if result.passed and self.faithfulness_evaluator is not None:
+            contexts = cited_source_excerpts(state.get("draft", ""), catalog)
+            try:
+                faithfulness_score = self.faithfulness_evaluator(
+                    brief.research_question, state.get("draft", ""), contexts
+                )
+            except Exception as exc:
+                faithfulness_error = str(exc)
+            faithfulness_refs.append(self.vfs.write_json(
+                run_id,
+                f"verification/faithfulness.{result.verification_id}.json",
+                {
+                    "score": faithfulness_score,
+                    "error": faithfulness_error,
+                    "question": brief.research_question,
+                    "context_count": len(contexts),
+                },
+                "faithfulness",
+            ))
+
         return {
             **state,
             "stage": (Stage.AWAITING_APPROVAL if result.passed else Stage.VERIFYING).value,
@@ -386,7 +419,13 @@ class BVFNodes:
             "progress_fingerprint": fingerprint,
             "stall_count": state.get("stall_count", 0) + 1 if stalled else 0,
             "recovery_budget": state.get("recovery_budget", self.recovery_budget),
-            "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
+            "artifacts": [
+                *state.get("artifacts", []),
+                ref.model_dump(mode="json"),
+                *(r.model_dump(mode="json") for r in faithfulness_refs),
+            ],
+            "faithfulness_score": faithfulness_score,
+            "faithfulness_error": faithfulness_error,
         }
 
     def fixing(self, state):

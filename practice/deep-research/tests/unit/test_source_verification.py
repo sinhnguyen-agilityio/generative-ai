@@ -1,6 +1,7 @@
 from intelligence_collector.contracts import IssueType
 from intelligence_collector.source_verification import (
     catalog_from_bundles,
+    cited_source_excerpts,
     failure_fingerprint,
     gap_id,
     verify_report,
@@ -158,3 +159,25 @@ def test_fingerprint_tracks_what_failed_not_the_draft_hash():
     assert first.artifact_hash != reworded_elsewhere.artifact_hash
     assert failure_fingerprint(first) == failure_fingerprint(reworded_elsewhere)
     assert failure_fingerprint(first) != failure_fingerprint(different)
+
+
+def test_cited_source_excerpts_returns_only_the_excerpts_the_report_actually_cites():
+    other_bundle = _bundle(task_id="t2", question="How is data evicted?", url="https://docs.test/evict")
+    catalog = catalog_from_bundles([_bundle(), other_bundle])
+
+    report = cited_report([GOOD_CLAIM], {"S1": URL})  # cites only S1, never S2
+
+    assert cited_source_excerpts(report, catalog) == [catalog.sources["S1"].excerpt]
+
+
+def test_cited_source_excerpts_deduplicates_repeated_citations():
+    catalog = catalog_from_bundles([_bundle()])
+    report = cited_report([GOOD_CLAIM, "Version 3.13 added 2 storage tiers [S1]."], {"S1": URL})
+
+    assert cited_source_excerpts(report, catalog) == [catalog.sources["S1"].excerpt]
+
+
+def test_cited_source_excerpts_is_empty_when_nothing_is_cited():
+    catalog = catalog_from_bundles([_bundle()])
+
+    assert cited_source_excerpts("# Report\n\nNo citations here.", catalog) == []

@@ -14,6 +14,7 @@ from intelligence_collector.guardrails import GuardrailViolation, normalize_text
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import Node, ResearchNodes
 from intelligence_collector.models.factory import ModelFactory
+from intelligence_collector.observability.evaluation import make_faithfulness_evaluator
 from intelligence_collector.observability.tracing import Tracer
 from intelligence_collector.publication import approval_for, can_request_approval
 from intelligence_collector.storage.chroma_vector_index import ChromaVectorIndex
@@ -91,6 +92,16 @@ def _get_scope_graph(st, agent, tracer):
             ),
             max_search_calls=settings.max_search_calls,
         )
+        faithfulness_evaluator = None
+        google_api_key = os.getenv("GOOGLE_API_KEY", "").strip()
+        reasoning_model = os.getenv("INTELLIGENCE_REASONING_MODEL", "").strip()
+        if os.getenv("INTELLIGENCE_REASONING_PROVIDER", "").strip() == "google_genai" and google_api_key:
+            # RAGAS Faithfulness judge reuses the same reasoning-tier model/provider config as
+            # the rest of the app (single model-config surface); disabled entirely on any other
+            # provider until that judge-LLM path is wired up too.
+            faithfulness_evaluator = make_faithfulness_evaluator(
+                model=reasoning_model, api_key=google_api_key,
+            )
         research_nodes = ResearchNodes(
             vfs,
             # Real semantic retrieval: Gemini embeddings, persisted locally via Chroma. Used to
@@ -108,6 +119,7 @@ def _get_scope_graph(st, agent, tracer):
             max_concurrent_researchers=settings.max_concurrent_researchers,
             recovery_budget=settings.recovery_attempts,
             evidence_top_k=settings.evidence_top_k,
+            faithfulness_evaluator=faithfulness_evaluator,
         )
     graph = build_graph(
         scope_agent=agent,
@@ -213,6 +225,17 @@ def _render_details_content(st, snapshot):
                 st.write(verification.repair_details)
         if verification.checks:
             st.write("Checks: " + ", ".join(verification.checks))
+
+    faithfulness_score = snapshot.get("faithfulness_score")
+    faithfulness_error = snapshot.get("faithfulness_error")
+    if faithfulness_score is not None or faithfulness_error:
+        st.subheader("Faithfulness (RAGAS)")
+        if faithfulness_score is not None:
+            st.metric("Faithfulness score", f"{faithfulness_score:.0%}")
+            if faithfulness_score < 0.9:
+                st.warning("Below the 90% faithfulness target.")
+        if faithfulness_error:
+            st.caption(f"Faithfulness scoring unavailable: {faithfulness_error}")
 
     evidence = list(snapshot.get("evidence") or [])
     if evidence:
