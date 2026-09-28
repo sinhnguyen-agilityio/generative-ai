@@ -315,6 +315,15 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   and refine a technical research request.
 - **FR-002**: The system MUST validate each user input for required content, supported size and
   format, and unsafe or malformed values before it changes durable state or initiates research.
+- **FR-002a**: Every user request MUST be normalized (Unicode compatibility folding, confusable/
+  homoglyph folding to their common-script equivalent, and removal of invisible/control characters)
+  before guardrail checks, storage, or any model call, so lookalike characters cannot evade keyword
+  filters, hide payloads later indexed into the vector store, or disguise sensitive patterns.
+- **FR-002b**: Before the Scope Agent's clarification model runs, a pre-model content-safety
+  guardrail MUST classify the user's latest message on the standard model tier and block it, without
+  invoking the Scope Agent's model, when the message itself contains vulgar/obscene language or
+  directly requests prohibited content; legitimate research about a sensitive real-world topic MUST
+  remain allowed.
 - **FR-003**: The Scope Agent MUST consider a request ready for Planning only when its objective,
   research boundaries, constraints, success criteria, and deliverable format are explicit,
   internally consistent, and testable.

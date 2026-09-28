@@ -10,7 +10,7 @@ from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.scope import ScopeAgent
 from intelligence_collector.config import RoleModelSettings, Settings, load_local_env
 from intelligence_collector.contracts import Stage, VerificationResult
-from intelligence_collector.guardrails import validate_request
+from intelligence_collector.guardrails import GuardrailViolation, normalize_text, validate_request
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import Node, ResearchNodes
 from intelligence_collector.models.factory import ModelFactory
@@ -358,6 +358,7 @@ def render():
                 st.info("Rejection recorded; permanent output was not changed.")
     text = st.chat_input("What should we research?")
     if text:
+        text = normalize_text(text)
         try:
             decision = validate_request(text)
             if not decision.allowed:
@@ -419,6 +420,10 @@ def render():
                 else:
                     st.session_state.progress = "Scope clear; Planning started"
                 st.rerun()
+        except GuardrailViolation as exc:
+            if st.session_state.activity:
+                st.session_state.activity[-1]["status"] = "failure"
+            st.error(f"Request blocked: {exc}")
         except Exception as exc:
             if st.session_state.activity:
                 st.session_state.activity[-1]["status"] = "failure"

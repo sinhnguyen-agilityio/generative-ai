@@ -10,17 +10,20 @@ from tests.integration.test_langchain_scope import (
     RecordingChatModel,
     _brief_payload,
     _clear_payload,
+    _guardrail_payload,
     _plan_payload,
 )
 
 
 def test_scope_clarification_checkpoint_resumes_after_process_restart(tmp_path):
     model = RecordingChatModel([
+        _guardrail_payload(),
         {
             "need_clarification": True,
             "question": "Which versions and workload should be compared?",
             "verification": "",
         },
+        _guardrail_payload(),
         _clear_payload(),
         _brief_payload(),
         _plan_payload(),

@@ -567,3 +567,26 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   `tests/contract/test_model_router_contract.py::test_invoke_messages_uses_provider_native_structured_output`
   and the `tool_choices == ["any", None, None]` assertion in
   `tests/integration/test_worker_mcp.py` (FR-032b).
+- [X] T128 [US1] Harden request intake against evasion, poisoning, and disallowed content. Added
+  `guardrails.normalize_text` (`src/intelligence_collector/guardrails.py`): NFKC normalization, a
+  Cyrillic/Greek/other-script confusable-to-Latin translation table, and stripping of zero-width and
+  control characters, so a homoglyph (e.g. Cyrillic "о" in "bоmb") can no longer slip a banned
+  keyword past `validate_request`'s regexes or smuggle invisible payloads into stored/indexed text.
+  Wired into `app.py`'s chat-input handler before `validate_request` runs. Added a pre-model
+  content-safety guardrail: `ScopeAgent.check_content_safety` (`src/intelligence_collector/agents/
+  scope.py`) classifies the user's last message with a new `guardrail` role (added to
+  `STANDARD_ROLES` in `models/role_router.py`, `GUARDRAIL_TEMPLATE`/`GUARDRAIL_PROMPT_VERSION` in
+  `agents/prompts.py`) against the structured `ContentSafetyVerdict` schema (`allowed`, `reason`).
+  `clarify_with_user` calls it first and raises `GuardrailViolation` on a block, so vulgar or
+  directly-prohibited requests never reach the reasoning-tier Scope model; legitimate research on a
+  sensitive topic remains allowed per the prompt's explicit carve-out. `app.py` catches
+  `GuardrailViolation` separately from generic scope failures for a clearer UI message. Adding a
+  call ahead of every existing `clarify_with_user` invocation shifted call counts/trace sequences in
+  seven existing test files (`test_langchain_scope.py`, `test_scope_llm.py`,
+  `test_scope_checkpoint.py`, `test_full_graph_workflow.py`, `test_graph_transitions.py`,
+  `test_langfuse_tracing.py`); all were updated to seed an `{"allowed": true}` guardrail response
+  and, where indices were asserted directly, to account for the extra call. New coverage:
+  `tests/integration/test_guardrails.py` (homoglyph evasion, normalization folding/idempotence) and
+  `tests/integration/test_scope_guardrail.py` (blocked content never reaches the Scope model,
+  allowed content proceeds, guardrail role/prompt-version wiring). Full suite: 158 passed, 2 skipped
+  (FR-002a, FR-002b).

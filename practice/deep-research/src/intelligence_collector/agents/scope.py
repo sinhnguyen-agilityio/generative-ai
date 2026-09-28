@@ -9,9 +9,12 @@ from intelligence_collector.contracts import (
 from intelligence_collector.agents.prompts import (
     BRIEF_PROMPT_VERSION,
     BRIEF_TEMPLATE,
+    GUARDRAIL_PROMPT_VERSION,
+    GUARDRAIL_TEMPLATE,
     PROMPT_VERSION,
     SCOPE_TEMPLATE,
 )
+from intelligence_collector.guardrails import ContentSafetyVerdict, GuardrailViolation
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from intelligence_collector.storage.vfs import VFS
 
@@ -73,6 +76,26 @@ class ScopeAgent:
             for i, turn in enumerate(prior_turns)
         ]
 
+    def check_content_safety(
+        self,
+        request: str,
+        *,
+        run_id: str = "",
+        thread_id: str = "",
+    ) -> ContentSafetyVerdict:
+        """Pre-model guardrail: classify the user's last message before it reaches the scope
+        model. Runs on the cheap standard-tier model so a blocked message never pays for the
+        deep-reasoning scope call."""
+        messages = GUARDRAIL_TEMPLATE.format_messages(message=request)
+        return self.router.invoke_messages(
+            "guardrail",
+            messages,
+            ContentSafetyVerdict,
+            prompt_version=GUARDRAIL_PROMPT_VERSION,
+            run_id=run_id,
+            thread_id=thread_id,
+        )
+
     def clarify_with_user(
         self,
         request: str,
@@ -81,6 +104,9 @@ class ScopeAgent:
         run_id: str = "",
         thread_id: str = "",
     ) -> ScopeAssessment:
+        verdict = self.check_content_safety(request, run_id=run_id, thread_id=thread_id)
+        if not verdict.allowed:
+            raise GuardrailViolation(verdict.reason or "This request cannot be researched.")
         conversation = self._messages(prior_turns) + [HumanMessage(content=request)]
         messages = SCOPE_TEMPLATE.format_messages(
             conversation=conversation,

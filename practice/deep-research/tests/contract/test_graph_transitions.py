@@ -48,6 +48,7 @@ def _brief():
 
 def test_invalid_scope_cannot_traverse_to_planning(tmp_path):
     model = SequencedModel([
+        {"allowed": True, "reason": ""},
         {
             "need_clarification": True,
             "question": "Which databases and workload should be compared?",
@@ -77,6 +78,7 @@ def test_failed_todo_write_cannot_traverse_to_research(tmp_path):
             return super().write_json(run_id, relative_path, payload, kind, **kwargs)
 
     model = SequencedModel([
+        {"allowed": True, "reason": ""},
         _clear_scope(),
         _brief(),
         {

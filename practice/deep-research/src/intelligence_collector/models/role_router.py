@@ -6,7 +6,7 @@ from collections.abc import Mapping
 # "verify" is the LLM acceptance-criteria check (agents/acceptance_verifier.py); the
 # source-verification script itself makes no LLM call and so has no role here.
 DEEP_REASONING_ROLES = frozenset({"scope", "planner", "verify"})
-STANDARD_ROLES = frozenset({"researcher", "research_compressor", "synthesizer", "fixer"})
+STANDARD_ROLES = frozenset({"researcher", "research_compressor", "synthesizer", "fixer", "guardrail"})
 
 
 class RoleModelRouter:

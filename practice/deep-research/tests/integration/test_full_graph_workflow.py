@@ -26,6 +26,7 @@ class SequencedModel:
 def test_full_graph_executes_guarded_research_to_approval_ready(stores):
     vfs, index = stores
     model = SequencedModel([
+        {"allowed": True, "reason": ""},
         {
             "need_clarification": False,
             "question": "",

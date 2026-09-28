@@ -3,10 +3,15 @@ import pytest
 from intelligence_collector.agents.scope import ScopeAgent
 from intelligence_collector.contracts import ResearchBrief, ScopeAssessment
 from intelligence_collector.models.router import ModelRouter
-from tests.integration.test_langchain_scope import RecordingChatModel, _brief_payload, _clear_payload
+from tests.integration.test_langchain_scope import (
+    RecordingChatModel,
+    _brief_payload,
+    _clear_payload,
+    _guardrail_payload,
+)
 
 def test_scope_llm_asks_one_focused_question_for_ambiguous_request():
-    fake = RecordingChatModel([{
+    fake = RecordingChatModel([_guardrail_payload(), {
         "need_clarification": True,
         "question": "Which databases and workload? Choose two named databases for one workload.",
         "verification": "",
@@ -16,7 +21,7 @@ def test_scope_llm_asks_one_focused_question_for_ambiguous_request():
     assert result.question
 
 def test_scope_llm_returns_clear_brief():
-    fake = RecordingChatModel([_clear_payload(), _brief_payload()])
+    fake = RecordingChatModel([_guardrail_payload(), _clear_payload(), _brief_payload()])
     result = ScopeAgent(ModelRouter(fake, fake, mode="fake")).assess("Compare PostgreSQL and SQLite")
     assert isinstance(result, ResearchBrief) and result.research_question.startswith("I want")
 
@@ -27,7 +32,7 @@ def test_clarification_without_a_question_is_rejected():
         "question": "",
         "verification": "",
     }
-    fake = RecordingChatModel([invalid, invalid])
+    fake = RecordingChatModel([_guardrail_payload(), invalid, invalid])
 
     with pytest.raises(ValueError, match="invalid structured output"):
         ScopeAgent(ModelRouter(fake, mode="fake")).assess("Compare databases")

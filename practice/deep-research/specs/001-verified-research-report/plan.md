@@ -102,9 +102,13 @@ alternatives that would violate the constitution or clarified specification.
 
 ## End-to-End Execution Sequence
 
-1. Streamlit accepts a chat turn, validates its shape, and runs the guardrail. Rejected input is
-   displayed without mutating the run.
-2. `clarify_with_user` adds the current `HumanMessage` to checkpointed conversation history and
+1. Streamlit accepts a chat turn, normalizes it (`guardrails.normalize_text`: Unicode/confusable
+   folding, invisible-character stripping) to close homoglyph evasion, then validates its
+   shape/size/regex guardrail. Rejected input is displayed without mutating the run.
+2. `clarify_with_user` first runs a pre-model content-safety guardrail (`ScopeAgent
+   .check_content_safety`, `guardrail` role, standard tier): a blocked message raises
+   `GuardrailViolation` and never reaches the Scope model. An allowed message is added as the current
+   `HumanMessage` to checkpointed conversation history and
    passes that actual history through `MessagesPlaceholder` to a structured Scope LLM decision. A
    clarification result appends exactly one focused `AIMessage` and ends the invocation in Scoping.
 3. A clear result appends exactly one concise verification `AIMessage` and routes to
@@ -173,8 +177,8 @@ alternatives that would violate the constitution or clarified specification.
 | Component | Responsibility | Contract / failure behavior | Integration points |
 |---|---|---|---|
 | Streamlit UI | Chat, stage/progress display, report/evidence review, approval decision | Renders typed state; never writes authoritative artifacts; displays actionable errors | Graph runner, VFS read API |
-| Input Validator + Guardrail | Validate shape/size and reject prompt injection or disallowed offensive/violent requests | Returns typed `GuardrailDecision`; rejection has no state mutation | Scope entry edge, audit event |
-| Scope Agent | `clarify_with_user` evaluates actual message history; `write_research_brief` creates a dedicated validated `ResearchBrief` after a clear decision | One-question clarification or complete brief; model/validation/persistence failure cannot become clear | LangChain chat model/router, LangGraph thread state, checkpoint, brief VFS artifact |
+| Input Normalizer + Guardrail (`guardrails.py`) | Fold homoglyphs/compatibility forms and strip invisible characters (`normalize_text`); validate shape/size and reject prompt injection or disallowed offensive/violent requests via regex | Returns typed `GuardrailDecision`; rejection has no state mutation | Scope entry edge, audit event |
+| Scope Agent | `check_content_safety` runs a pre-model LLM guardrail (`guardrail` role, standard tier) that blocks vulgar/prohibited messages before any Scope call; `clarify_with_user` evaluates actual message history; `write_research_brief` creates a dedicated validated `ResearchBrief` after a clear decision | Blocked content raises `GuardrailViolation` with zero Scope-model calls; otherwise one-question clarification or complete brief; model/validation/persistence failure cannot become clear | Model router (`guardrail` role, standard tier; `scope` role, reasoning tier), LangGraph thread state, checkpoint, brief VFS artifact |
 | Planner Agent + `write_todos` | `PlannerAgent.define_plan` turns the `ResearchBrief` into research questions and acceptance criteria; `PlannerAgent.write_todos` converts the questions to `planned` todos, persists them, and persists the criteria | `TodoPlan` (questions and acceptance_criteria, 1–5 each, non-blank, unique); invalid output or failed write blocks Research | Model router (`planner` role, reasoning tier), VFS, graph state |
 | Acceptance Verifier (`agents/acceptance_verifier.py`) | Judge the passing report against each planner-defined acceptance criterion, only after source-verification passes | `AcceptanceVerdict` (met/unmet + justification per criterion); any unmet criterion folds into `VerificationResult` as a `DRAFT_DEFECT` | Model router (`verify` role, reasoning tier), graph state (`acceptance_criteria`) |
 | Research Supervisor (`agents/supervisor.py`) | Delegate one sub-agent per todo (bounded thread pool), persist outcomes in plan order, use `think_tool`, assess readiness | `ProgressAssessment` with blockers; a failing sub-agent becomes a FAILED task outcome, never cancels siblings; cannot ResearchComplete until all todos complete and artifacts indexed | `ResearchAgent`, VFS, vector store |

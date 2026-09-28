@@ -8,6 +8,7 @@ from tests.integration.test_langchain_scope import (
     RecordingChatModel,
     _brief_payload,
     _clear_payload,
+    _guardrail_payload,
     _plan_payload,
 )
 
@@ -27,7 +28,7 @@ def test_scope_execution_has_root_nodes_model_events_callbacks_and_flush(monkeyp
     client = FakeLangfuseClient()
     callback = object()
     tracer = Tracer(client=client, callback_handler=callback)
-    model = CallbackAwareModel([_clear_payload(), _brief_payload(), _plan_payload()])
+    model = CallbackAwareModel([_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()])
     router = ModelRouter(
         model,
         mode="live",
@@ -50,6 +51,7 @@ def test_scope_execution_has_root_nodes_model_events_callbacks_and_flush(monkeyp
     assert names == [
         "research.execution",
         "graph.clarify_with_user",
+        "model.validation.guardrail",
         "model.validation.scope",
         "graph.write_research_brief",
         "model.validation.scope",
@@ -57,7 +59,7 @@ def test_scope_execution_has_root_nodes_model_events_callbacks_and_flush(monkeyp
         "model.validation.planner",
     ]
     assert all(record["parent"] for record in client.records[1:])
-    assert len(model.configs) == 3
+    assert len(model.configs) == 4
     assert all(config["callbacks"] == [callback] for config in model.configs)
     assert all(config["metadata"]["langfuse_session_id"] == "thread" for config in model.configs)
     model_records = [record for record in client.records if record["name"] == "model.validation.scope"]

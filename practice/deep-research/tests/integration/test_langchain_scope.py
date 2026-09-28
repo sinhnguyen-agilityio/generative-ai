@@ -23,6 +23,10 @@ class RecordingChatModel:
         return AIMessage(content=json.dumps(next(self.responses)))
 
 
+def _guardrail_payload():
+    return {"allowed": True, "reason": ""}
+
+
 def _clear_payload():
     return {
         "need_clarification": False,
@@ -61,7 +65,7 @@ def _plan_payload():
 
 def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch, tmp_path):
     calls = []
-    model = RecordingChatModel([_clear_payload(), _brief_payload(), _plan_payload()])
+    model = RecordingChatModel([_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()])
     monkeypatch.setattr(
         "intelligence_collector.models.factory.init_chat_model",
         lambda *args, **kwargs: calls.append((args, kwargs)) or model,
@@ -77,14 +81,15 @@ def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch,
     assert result["stage"] == "Planning"
     question = result["scoped_request"]["research_question"]
     assert question.startswith("I want to compare PostgreSQL")
-    assert len(model.calls) == 3
+    assert len(model.calls) == 4
     assert all(isinstance(messages[0], SystemMessage) for messages in model.calls)
     assert any(isinstance(message, HumanMessage) for message in model.calls[0])
-    assert question in model.calls[2][-1].content
-    assert traces[0]["prompt_version"] == "scope.v1"
-    assert traces[1]["prompt_version"] == "scope-brief.v1"
-    assert traces[2]["prompt_version"] == "planner.v3"
-    assert traces[2]["role"] == "planner"
+    assert question in model.calls[3][-1].content
+    assert traces[0]["prompt_version"] == "guardrail.v1"
+    assert traces[1]["prompt_version"] == "scope.v1"
+    assert traces[2]["prompt_version"] == "scope-brief.v1"
+    assert traces[3]["prompt_version"] == "planner.v3"
+    assert traces[3]["role"] == "planner"
     assert traces[0]["selected_model"] == "fake-live-scope"
     assert len(result["messages"]) == 2
     assert isinstance(result["messages"][0], HumanMessage)
@@ -101,6 +106,7 @@ def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch,
 def test_invalid_planner_output_does_not_write_todos(tmp_path):
     duplicate = "What are the documented locking differences between PostgreSQL and SQLite?"
     model = RecordingChatModel([
+        _guardrail_payload(),
         _clear_payload(),
         _brief_payload(),
         {"questions": [duplicate, duplicate]},
@@ -114,16 +120,19 @@ def test_invalid_planner_output_does_not_write_todos(tmp_path):
 
 def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
     model = RecordingChatModel([
+        _guardrail_payload(),
         {
             "need_clarification": True,
             "question": "Which database versions and workload should be compared?",
             "verification": "",
         },
+        _guardrail_payload(),
         {
             "need_clarification": True,
             "question": "What evidence standard should the report meet?",
             "verification": "",
         },
+        _guardrail_payload(),
         _clear_payload(),
         _brief_payload(),
         _plan_payload(),
@@ -155,18 +164,19 @@ def test_primary_model_failure_uses_fallback_without_silent_clear(tmp_path):
         def invoke(self, messages):
             raise TimeoutError("primary timed out")
 
-    fallback = RecordingChatModel([_clear_payload(), _brief_payload(), _plan_payload()])
+    fallback = RecordingChatModel([_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()])
     router = ModelRouter(FailingModel(), fallback, mode="live")
     result = build_graph(scope_agent=ScopeAgent(router), vfs=VFS(tmp_path)).invoke(
         {"run_id": "fallback", "thread_id": "fallback", "request": "A fully bounded request"}
     )
     assert result["stage"] == "Planning"
-    assert len(router.events) == 3
+    assert len(router.events) == 4
     assert router.fallback_used
 
 
 def test_malformed_structured_output_never_routes_to_planning(tmp_path):
     model = RecordingChatModel([
+        _guardrail_payload(),
         {"need_clarification": False},
         {"need_clarification": False},
     ])
