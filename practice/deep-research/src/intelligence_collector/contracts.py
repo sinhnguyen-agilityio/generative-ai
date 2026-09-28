@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 try:
@@ -296,6 +296,17 @@ class PublicationRecord(Model):
     published_at: datetime | None = None
 
 
+class FeedbackDecision(Model):
+    """Structured output of the human-rejection-feedback classifier (see
+    agents/feedback_router.py). Decides whether a reviewer's rejection reads as a
+    wording/citation-level fix (route back to the report writer) or as a sign that the
+    research itself went in the wrong direction (route back to the planner for a fresh set
+    of research questions)."""
+
+    route: Literal["writer", "planner"]
+    reason: str = ""
+
+
 class ProgressAssessment(Model):
     completed_todos: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
@@ -328,3 +339,5 @@ class ResearchGraphState(Model):
     approval: ApprovalDecision | None = None
     publication: PublicationRecord | None = None
     last_error: str = ""
+    human_feedback: str = ""
+    feedback_route: str = ""

@@ -106,6 +106,41 @@ def test_graph_snapshot_renders_verification_evidence_links_and_report():
     assert "SQLite provides documented transaction semantics" in text
 
 
+def test_review_and_publish_section_shown_while_awaiting_approval():
+    app = _app_with_snapshot({
+        "run_id": "run-ui",
+        "thread_id": "thread-ui",
+        "stage": "Awaiting Approval",
+        "verification": {"passed": True, "artifact_hash": "verified-hash", "checks": []},
+        "report": "# Report",
+    })
+
+    assert "Review and publish" in _visible_text(app)
+    assert any("Record decision" in b.label for b in app.button)
+
+
+def test_review_and_publish_section_hidden_once_published():
+    """Once published, the (immutable) verification result still says passed=True -- the
+    section must be gated on the live stage too, or a published report would keep offering
+    another Approve/Reject decision forever."""
+    app = _app_with_snapshot({
+        "run_id": "run-ui",
+        "thread_id": "thread-ui",
+        "stage": "Published",
+        "verification": {"passed": True, "artifact_hash": "verified-hash", "checks": []},
+        "publication": {
+            "destination": "exports/run-ui.md", "artifact_hash": "verified-hash",
+            "approval_id": "a1", "published": True,
+        },
+        "report": "# Report",
+    })
+
+    text = _visible_text(app)
+    assert "Review and publish" not in text
+    assert not any("Record decision" in b.label for b in app.button)
+    assert "Published to exports/run-ui.md" in text
+
+
 def test_unverified_snapshot_never_renders_verified_or_publication_controls():
     app = _app_with_snapshot({
         "run_id": "run-ui",

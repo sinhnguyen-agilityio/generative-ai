@@ -82,10 +82,15 @@ class ModelRouter:
 
     @staticmethod
     def _bind_schema(model, schema):
-        # Provider-native structured output (Gemini response schema, Groq tool/json mode) instead
+        # Provider-native structured output (Gemini response schema, Groq json_schema) instead
         # of trusting free-text JSON, which Gemini often wraps in Markdown fences.
         if model is None or not hasattr(model, "with_structured_output"):
             return model
+        if type(model).__name__ == "ChatGroq":
+            # ChatGroq defaults to function calling, and gpt-oss models there sometimes call a
+            # tool literally named "json" instead of the bound schema tool, which Groq rejects
+            # server-side (400 tool_use_failed). Its response_format path has no tools to misname.
+            return model.with_structured_output(schema, method="json_schema")
         return model.with_structured_output(schema)
 
     @staticmethod
@@ -243,7 +248,14 @@ class ModelRouter:
             self.events.append(event)
             if self.on_fallback:
                 self.on_fallback(event)
-            return self._invoke_model(fallback, role, prompt, config)
+            try:
+                return self._invoke_model(fallback, role, prompt, config)
+            except Exception as fallback_exc:
+                # Surface both causes: the fallback's error alone hides why it was needed.
+                raise RuntimeError(
+                    f"primary {self._model_name(primary)} failed: {_redact_text(exc)} | "
+                    f"fallback {self.last_model} failed: {_redact_text(fallback_exc)}"
+                ) from fallback_exc
 
     def invoke_structured(self, role: str, prompt: str, schema: type[T], *, prompt_version: str, run_id: str = "", thread_id: str = "") -> T:
         return self._invoke_and_parse(role, prompt, schema, prompt_version, run_id, thread_id)

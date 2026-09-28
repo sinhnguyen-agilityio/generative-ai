@@ -5,7 +5,9 @@ import sqlite3
 import time
 from pathlib import Path
 from uuid import uuid4
+from langgraph.types import Command
 from intelligence_collector.agents.acceptance_verifier import AcceptanceVerifier
+from intelligence_collector.agents.feedback_router import FeedbackRouter
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.scope import ScopeAgent
 from intelligence_collector.config import RoleModelSettings, Settings, load_local_env
@@ -16,7 +18,7 @@ from intelligence_collector.graph.nodes import Node, ResearchNodes
 from intelligence_collector.models.factory import ModelFactory
 from intelligence_collector.observability.evaluation import make_faithfulness_evaluator
 from intelligence_collector.observability.tracing import Tracer
-from intelligence_collector.publication import approval_for, can_request_approval
+from intelligence_collector.publication import can_request_approval
 from intelligence_collector.storage.chroma_vector_index import ChromaVectorIndex
 from intelligence_collector.storage.vfs import VFS
 from intelligence_collector.tools.mcp import TavilyMCP
@@ -91,6 +93,7 @@ def _get_scope_graph(st, agent, tracer):
                 max_calls=settings.max_search_calls,
             ),
             max_search_calls=settings.max_search_calls,
+            max_sources=settings.max_sources_per_task,
         )
         faithfulness_evaluator = None
         google_api_key = os.getenv("GOOGLE_API_KEY", "").strip()
@@ -129,6 +132,10 @@ def _get_scope_graph(st, agent, tracer):
         lifecycle=lambda node, status: st.session_state.get(
             "_lifecycle_callback", lambda *_: None
         )(node, status),
+        with_approval=True,
+        output_dir=settings.output_dir,
+        # Shares the scope/planner/verify reasoning-tier model, same as AcceptanceVerifier above.
+        feedback_router=FeedbackRouter(agent.router),
     )
     st.session_state.scope_checkpoint_connection = connection
     st.session_state.scope_graph = graph
@@ -485,6 +492,21 @@ def _record_lifecycle(st, node: str, status: str):
     return item
 
 
+def _stream_graph_turn(st, graph, config, graph_input, placeholders, vfs_for_ui):
+    """Drive one turn of the graph live: `graph_input` is either a fresh state dict (a new chat
+    request) or a `Command(resume=...)` continuing a thread paused at the human-in-the-loop
+    approval gate. Every step redraws the pipeline placeholders immediately. Returns the clean
+    final state dict — LangGraph's own `"__interrupt__"` marker (present only when this turn
+    paused at the approval gate) is stripped out, since its meaning is already captured by
+    `stage` staying "Awaiting Approval"."""
+    result: dict = {}
+    for chunk in graph.stream(graph_input, config, stream_mode="values"):
+        result = {key: value for key, value in chunk.items() if key != "__interrupt__"}
+        live_snapshot = {**result, "activity": list(st.session_state.activity)}
+        _render_agent_pipeline(st, placeholders, live_snapshot, vfs_for_ui)
+    return result
+
+
 def render():
     load_local_env()
     try:
@@ -514,32 +536,79 @@ def render():
     placeholders = {agent_key: st.empty() for _, agent_key in _AGENT_ROWS}
     _render_agent_pipeline(st, placeholders, st.session_state.scope_state, vfs_for_ui)
     snapshot_verification = _render_graph_snapshot(st, st.session_state.scope_state)
-    if st.session_state.scope_state.get("stage") == Stage.NEEDS_REVIEW.value:
+    current_stage = st.session_state.scope_state.get("stage")
+    if current_stage == Stage.NEEDS_REVIEW.value:
         st.error("This run needs human review before it can be treated as verified or published.")
         st.caption(
             st.session_state.scope_state.get("current_action")
             or st.session_state.scope_state.get("last_error")
             or "Unresolved verification feedback is stored with the run."
         )
+    elif current_stage == Stage.PUBLISHED.value:
+        publication = st.session_state.scope_state.get("publication") or {}
+        st.success(f"Published to {publication.get('destination', '(unknown destination)')}")
     verification = snapshot_verification or st.session_state.get("verification")
-    if verification is not None and can_request_approval(verification):
+    # Gated on the live stage, not just the (immutable) verification result: once published or
+    # routed to a revision, this section must not keep offering another decision on a report
+    # that already moved on.
+    if (
+        verification is not None
+        and can_request_approval(verification)
+        and current_stage == Stage.AWAITING_APPROVAL.value
+    ):
         st.subheader("Review and publish")
         decision = st.radio("Publication decision", ["Approve", "Reject"], key="publication_decision")
-        if st.button("Record decision"):
-            approval = approval_for(
-                verification.artifact_hash,
-                verification.verification_id,
-                decision == "Approve",
-                "local-user",
+        feedback_text = ""
+        if decision == "Reject":
+            feedback_text = st.text_area(
+                "Feedback — used to decide whether this needs a wording/citation revision "
+                "(writer) or a different research direction (replanning)",
+                key="rejection_feedback",
             )
-            st.session_state.scope_state = {
-                **st.session_state.scope_state,
-                "approval": approval.model_dump(mode="json"),
-            }
-            if approval.approved:
-                st.success("Approval recorded; publication remains hash-bound.")
-            else:
-                st.info("Rejection recorded; permanent output was not changed.")
+        if st.button("Record decision"):
+            try:
+                tracer = _get_tracer(st)
+                agent = _get_scope_agent(st, tracer)
+                if agent is None:
+                    raise RuntimeError(
+                        "Reasoning-tier model is not configured. "
+                        "Set INTELLIGENCE_REASONING_MODEL and retry."
+                    )
+                graph = _get_scope_graph(st, agent, tracer)
+                thread_id = st.session_state.scope_thread_id
+                run_id = st.session_state.scope_state.get("run_id", "")
+                config = {"configurable": {"thread_id": thread_id}}
+                resume_payload = {"approved": decision == "Approve", "actor": "local-user"}
+                if decision == "Reject":
+                    resume_payload["feedback"] = feedback_text.strip()
+                with st.status("Processing decision", expanded=False):
+                    with tracer.execution(
+                        run_id, thread_id, input={"approval_decision": resume_payload},
+                    ) as execution:
+                        result = _stream_graph_turn(
+                            st, graph, config, Command(resume=resume_payload),
+                            placeholders, vfs_for_ui,
+                        )
+                        execution.output = json.dumps({
+                            "stage": result.get("stage"),
+                            "approval": result.get("approval"),
+                            "feedback_route": result.get("feedback_route"),
+                            "publication": result.get("publication"),
+                        }, ensure_ascii=False, indent=2, default=str)
+                result["activity"] = list(st.session_state.activity)
+                st.session_state.scope_state = result
+                st.session_state.stage = result.get("stage", st.session_state.stage)
+                if result.get("stage") == Stage.PUBLISHED.value:
+                    st.session_state.progress = "Published"
+                elif result.get("stage") == Stage.NEEDS_REVIEW.value:
+                    st.session_state.progress = "Needs human review"
+                elif result.get("stage") == Stage.AWAITING_APPROVAL.value:
+                    st.session_state.progress = "Publication failed; still awaiting a decision"
+                else:
+                    st.session_state.progress = "Reviewer feedback routed back into the pipeline"
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Recording the decision failed: {exc}")
     # Wrapping chat_input in a container (instead of calling it at the script's top level)
     # trades away its viewport-pinned/floating placement so the New Thread button can render
     # in normal flow right below it.
@@ -585,16 +654,17 @@ def render():
                     }
                     config = {"configurable": {"thread_id": thread_id}}
                     graph = _get_scope_graph(st, agent, tracer)
-                    result = state
                     try:
                         # stream_mode="values" yields the full accumulated state after each
                         # node finishes (not just its delta), so every step can be redrawn
                         # straight into the pipeline placeholders for live, node-by-node
                         # progress instead of one static view after the whole run completes.
-                        for chunk in graph.stream(state, config, stream_mode="values"):
-                            result = chunk
-                            live_snapshot = {**result, "activity": list(st.session_state.activity)}
-                            _render_agent_pipeline(st, placeholders, live_snapshot, vfs_for_ui)
+                        # A turn that reaches a fully-passing report pauses here at the
+                        # human-in-the-loop approval gate (see the "Review and publish"
+                        # section above), rather than publishing automatically.
+                        result = _stream_graph_turn(
+                            st, graph, config, state, placeholders, vfs_for_ui,
+                        )
                     finally:
                         st.session_state.pop("_lifecycle_callback", None)
                     execution.output = json.dumps({
@@ -617,6 +687,10 @@ def render():
                 st.session_state.stage = result.get("stage", "Scoping")
                 if st.session_state.stage == "Scoping":
                     st.session_state.progress = "Waiting for your response"
+                elif st.session_state.stage == Stage.AWAITING_APPROVAL.value:
+                    st.session_state.progress = "Report ready — review and publish below"
+                elif st.session_state.stage == Stage.NEEDS_REVIEW.value:
+                    st.session_state.progress = "Needs human review"
                 else:
                     st.session_state.progress = "Scope clear; Planning started"
                 st.rerun()

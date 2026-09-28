@@ -33,9 +33,13 @@ from intelligence_collector.agents.prompts import (
 )
 from intelligence_collector.contracts import ResearchFindings
 from intelligence_collector.tools.mcp import MCPResearchPort, redact_mcp_error
-from intelligence_collector.tools.url_tracking import normalize_url
+from intelligence_collector.tools.url_tracking import UrlClaims, normalize_url
 
 HARD_SEARCH_LIMIT = 5
+# Distinct pages one sub-agent may keep for its single research question (todo), across all of
+# its searches — not per search call.
+DEFAULT_MAX_SOURCES = 5
+HARD_SOURCE_LIMIT = 10
 TOOL_RESULT_CHARS = 1500
 COMPRESS_SOURCE_CHARS = 4000
 
@@ -104,8 +108,12 @@ def _format_search_results(query: str, rows: list[dict[str, Any]], repeated: lis
     else:
         blocks = [f'Search results for "{query}":']
         for number, row in enumerate(rows, start=1):
+            linked = (
+                " (already retrieved by another research task: linked, does not use your "
+                "source budget)" if row.get("_covered_by") else ""
+            )
             blocks.append(
-                f"[{number}] {row.get('title') or 'Untitled'}\n"
+                f"[{number}] {row.get('title') or 'Untitled'}{linked}\n"
                 f"URL: {row.get('url', '')}\n"
                 f"{str(row.get('content', ''))[:TOOL_RESULT_CHARS]}"
             )
@@ -113,6 +121,11 @@ def _format_search_results(query: str, rows: list[dict[str, Any]], repeated: lis
         blocks.append(
             "Already retrieved earlier, not repeated: " + ", ".join(repeated)
             + ". Change the query if you need new sources."
+        )
+    if any(row.get("_covered_by") for row in rows):
+        blocks.append(
+            "Pages marked as linked were found by another research task; prefer searching for "
+            "sources specific to your own question."
         )
     return "\n\n".join(blocks)
 
@@ -136,12 +149,22 @@ class ResearchAgent:
         mcp_factory: Callable[[], MCPResearchPort],
         *,
         max_search_calls: int = HARD_SEARCH_LIMIT,
+        max_sources: int = DEFAULT_MAX_SOURCES,
     ):
         self.router = router
         self.mcp_factory = mcp_factory
         self.max_search_calls = min(max(1, max_search_calls), HARD_SEARCH_LIMIT)
+        self.max_sources = min(max(1, max_sources), HARD_SOURCE_LIMIT)
 
-    def research(self, question: str, *, run_id: str = "", thread_id: str = "") -> ResearchOutcome:
+    def research(
+        self,
+        question: str,
+        *,
+        run_id: str = "",
+        thread_id: str = "",
+        task_id: str = "",
+        claims: UrlClaims | None = None,
+    ) -> ResearchOutcome:
         # A fresh MCP client per sub-agent keeps search budgets and request logs per task.
         mcp = self.mcp_factory()
         budget = min(self.max_search_calls, getattr(mcp, "max_calls", HARD_SEARCH_LIMIT))
@@ -151,7 +174,9 @@ class ResearchAgent:
             mcp_server=getattr(mcp, "server_name", "controlled"),
             mcp_tool=getattr(mcp, "tool_name", "search"),
         )
-        graph = self._build_graph(mcp, outcome, run_id=run_id, thread_id=thread_id)
+        graph = self._build_graph(
+            mcp, outcome, run_id=run_id, thread_id=thread_id, task_id=task_id, claims=claims,
+        )
         final = graph.invoke({
             "research_question": question,
             "messages": [HumanMessage(content=f"Research question:\n{question}")],
@@ -164,18 +189,25 @@ class ResearchAgent:
         outcome.findings = final.get("findings")
         return outcome
 
-    def _build_graph(self, mcp: MCPResearchPort, outcome: ResearchOutcome, *, run_id, thread_id):
+    def _build_graph(
+        self, mcp: MCPResearchPort, outcome: ResearchOutcome, *,
+        run_id, thread_id, task_id="", claims: UrlClaims | None = None,
+    ):
         budget = outcome.search_budget
+        source_budget = self.max_sources
         # Allow a couple of non-search turns (e.g. a malformed tool call) without looping forever.
         max_llm_calls = budget + 2
-        # URLs this sub-agent has already retrieved; repeats are not re-shown or re-collected.
+        # URLs this sub-agent has kept; repeats are not re-shown or re-collected.
         seen_urls: set[str] = set()
+        # The subset this task retrieved first; only these count toward its source budget.
+        owned_urls: set[str] = set()
 
         def llm_call(state: ResearcherState) -> ResearcherState:
             messages = RESEARCHER_TEMPLATE.format_messages(
                 messages=state["messages"],
                 date=date.today().isoformat(),
                 max_search_calls=budget,
+                max_sources=source_budget,
             )
             response = self.router.invoke_with_tools(
                 "researcher",
@@ -204,25 +236,57 @@ class ResearchAgent:
                     content = "A non-empty query is required."
                 elif calls >= budget:
                     content = "Search budget exhausted. Finish with the evidence you already have."
+                elif len(owned_urls) >= source_budget:
+                    content = (
+                        f"Source budget reached ({source_budget} pages). "
+                        "Finish with the evidence you already have."
+                    )
                 else:
                     calls += 1
+                    remaining = source_budget - len(owned_urls)
                     try:
-                        rows = mcp.search(query, server=outcome.mcp_server, tool=outcome.mcp_tool)
+                        rows = mcp.search(
+                            query,
+                            server=outcome.mcp_server,
+                            tool=outcome.mcp_tool,
+                            max_results=remaining,
+                        )
                     except Exception as exc:  # retrieval failures are task outcomes, not crashes
                         error = redact_mcp_error(exc)
                         errors.append(error)
                         content = f"Search failed: {error}"
                     else:
-                        fresh, repeated = [], []
+                        fresh: list[dict[str, Any]] = []
+                        repeated: list[str] = []
                         for row in rows:
-                            key = normalize_url(row.get("url", ""))
+                            url = str(row.get("url", ""))
+                            key = normalize_url(url)
                             if key in seen_urls:
-                                repeated.append(str(row.get("url", "")))
+                                repeated.append(url)
+                                continue
+                            has_room = len(owned_urls) < source_budget
+                            if claims is None:
+                                owner = task_id if has_room else None
+                            elif has_room:
+                                owner = claims.claim(url, task_id)
                             else:
+                                # Full: never claim a page this task would then drop.
+                                owner = claims.owner(url)
+                            if owner is not None and owner != task_id:
+                                # Another task already has this page: link it, free of charge.
                                 seen_urls.add(key)
+                                fresh.append({**row, "_covered_by": owner})
+                            elif owner == task_id and has_room:
+                                seen_urls.add(key)
+                                owned_urls.add(key)
                                 fresh.append(row)
                         sources.extend({**row, "_query": query} for row in fresh)
                         content = _format_search_results(query, fresh, repeated)
+                        if len(owned_urls) >= source_budget:
+                            content += (
+                                f"\n\nSource budget reached ({source_budget} pages). "
+                                "Finish with the evidence you already have."
+                            )
                 replies.append(ToolMessage(content=content, tool_call_id=call["id"]))
             return {"messages": replies, "search_calls": calls, "sources": sources, "errors": errors}
 
@@ -255,6 +319,7 @@ class ResearchAgent:
             if (
                 wants_search
                 and state.get("search_calls", 0) < budget
+                and sum(not s.get("_covered_by") for s in state.get("sources", [])) < source_budget
                 and state.get("llm_calls", 0) < max_llm_calls
             ):
                 return "tool_node"

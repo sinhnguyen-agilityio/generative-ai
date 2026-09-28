@@ -27,6 +27,7 @@ class MCPResearchPort(Protocol):
         *,
         server: str = "controlled",
         tool: str = "search",
+        max_results: int | None = None,
     ) -> list[dict[str, Any]]: ...
 
 
@@ -42,13 +43,14 @@ class ControlledMCP:
         self.tool_name = "search"
         self.requests: list[dict[str, str]] = []
 
-    def search(self, query, *, server="controlled", tool="search"):
+    def search(self, query, *, server="controlled", tool="search", max_results=None):
         if self.calls >= self.max_calls:
             raise RuntimeError("search budget exhausted")
         response_index = min(self.calls, len(self._responses) - 1)
         self.calls += 1
         self.requests.append({"query": query, "server": server, "tool": tool})
-        return list(self._responses[response_index])
+        rows = list(self._responses[response_index])
+        return rows if max_results is None else rows[:max_results]
 
 
 class TavilyMCP:
@@ -87,13 +89,13 @@ class TavilyMCP:
             f"max_calls={self.max_calls!r})"
         )
 
-    async def _search(self, query: str):
+    async def _search(self, query: str, max_results: int):
         async with streamable_http_client(self._url) as streams:
             async with ClientSession(*streams) as session:
                 await session.initialize()
                 return await session.call_tool(
                     self.tool_name,
-                    {"query": query, "max_results": self.max_results},
+                    {"query": query, "max_results": max_results},
                     read_timeout_seconds=self.timeout_seconds,
                 )
 
@@ -125,11 +127,12 @@ class TavilyMCP:
             })
         return normalized
 
-    def search(self, query, *, server="tavily", tool="tavily_search"):
+    def search(self, query, *, server="tavily", tool="tavily_search", max_results=None):
         if self.calls >= self.max_calls:
             raise RuntimeError("search budget exhausted")
         if not str(query).strip():
             raise ValueError("Tavily MCP search query must not be blank")
+        limit = self.max_results if max_results is None else min(max(1, max_results), self.max_results)
         self.calls += 1
         self.requests.append({"query": str(query), "server": server, "tool": tool})
-        return self._result_payload(anyio.run(self._search, str(query)))
+        return self._result_payload(anyio.run(self._search, str(query), limit))

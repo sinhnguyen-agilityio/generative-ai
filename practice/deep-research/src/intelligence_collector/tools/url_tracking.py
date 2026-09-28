@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 REGISTRY_PATH = "research/url_registry.json"
@@ -69,9 +70,41 @@ class UrlRegistry:
     def __len__(self) -> int:
         return len(self._entries)
 
+    def owners(self) -> dict[str, str]:
+        """Normalized URL -> id of the task that first captured it."""
+        return {key: str(entry.get("task_id", "")) for key, entry in self._entries.items()}
+
     def save(self, vfs, run_id: str):
         """Persist only when something new was registered; returns the artifact ref or None."""
         if not self._dirty:
             return None
         self._dirty = False
         return vfs.write_json(run_id, REGISTRY_PATH, self._entries, "url_registry")
+
+
+class UrlClaims:
+    """Which research task first retrieved each URL, shared by concurrently running sub-agents.
+
+    ``UrlRegistry`` only dedupes at persistence time, after every sub-agent has finished, so a page
+    parallel sub-agents both found would take a source slot in each of them. Claiming at search
+    time means the first task to retrieve a page owns it; any other task links to it instead of
+    spending its own source budget on it (``UrlRegistry`` still stores and indexes it only once).
+    Seeded from the persisted registry, so gap research and resumed runs treat pages captured
+    earlier in the run the same way.
+    """
+
+    def __init__(self, owners: dict[str, str] | None = None):
+        self._owners = dict(owners or {})
+        self._lock = threading.Lock()
+
+    def claim(self, url: str, task_id: str) -> str:
+        """Atomically claim a page; returns its owner (``task_id`` itself if it was unclaimed)."""
+        key = normalize_url(url)
+        with self._lock:
+            return self._owners.setdefault(key, task_id)
+
+    def owner(self, url: str) -> str | None:
+        """Current owner without claiming — for a task with no budget left to keep the page."""
+        key = normalize_url(url)
+        with self._lock:
+            return self._owners.get(key)

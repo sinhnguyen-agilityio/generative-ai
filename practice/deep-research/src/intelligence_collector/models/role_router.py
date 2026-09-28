@@ -5,7 +5,10 @@ from collections.abc import Mapping
 
 # "verify" is the LLM acceptance-criteria check (agents/acceptance_verifier.py); the
 # source-verification script itself makes no LLM call and so has no role here.
-DEEP_REASONING_ROLES = frozenset({"scope", "planner", "verify"})
+# "feedback_router" classifies human rejection feedback (agents/feedback_router.py) as needing
+# a writer revision or a planner replan — a consequential routing decision, so it gets the
+# reasoning tier rather than the cheap standard one (unlike "guardrail", a cheap binary check).
+DEEP_REASONING_ROLES = frozenset({"scope", "planner", "verify", "feedback_router"})
 STANDARD_ROLES = frozenset({"researcher", "research_compressor", "synthesizer", "fixer", "guardrail"})
 
 

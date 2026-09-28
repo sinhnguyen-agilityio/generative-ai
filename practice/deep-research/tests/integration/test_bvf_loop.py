@@ -154,6 +154,7 @@ def test_evidence_selection_narrows_the_build_prompt_but_not_verification(stores
     researcher = ResearchAgent(
         ModelRouter(FakeResearchModel(), mode="fake"),
         lambda: ControlledMCP([sources]),
+        max_sources=8,  # this test needs more captured pages than the default per-task budget
     )
     report_model = FakeReportModel([GOOD])
     nodes = ResearchNodes(

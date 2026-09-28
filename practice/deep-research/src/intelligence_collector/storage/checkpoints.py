@@ -26,6 +26,8 @@ CHECKPOINT_DEFAULTS: dict[str, Any] = {
     "progress_fingerprint": "",
     "approval": None,
     "publication": None,
+    "human_feedback": "",
+    "feedback_route": "",
 }
 
 

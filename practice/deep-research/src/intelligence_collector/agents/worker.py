@@ -81,7 +81,8 @@ def persist_research(
     refs, chunks, evidence_sources = [], [], []
     reused = 0
     for i, source in enumerate(sources):
-        payload = {key: value for key, value in source.items() if key != "_query"}
+        # Underscore keys (_query, _covered_by) are sub-agent bookkeeping, not page provenance.
+        payload = {key: value for key, value in source.items() if not key.startswith("_")}
         record = SourceRecord(
             locator=source["url"],
             mcp_server=outcome.mcp_server,

@@ -38,6 +38,10 @@ class GraphState(TypedDict, total=False):
     fix_strategy: str
     researched_gaps: list[str]
     publication: dict | None
+    # Human-in-the-loop rejection: the reviewer's free-text feedback and where the
+    # feedback-router classifier decided it should be addressed (see ApprovalNodes).
+    human_feedback: str
+    feedback_route: str
     input_turns: list[str]
     scope_questions: list[str]
     checkpoint_metadata: dict[str, Any]

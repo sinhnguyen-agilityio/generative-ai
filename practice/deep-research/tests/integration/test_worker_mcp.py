@@ -39,7 +39,7 @@ def test_research_agent_searches_broad_then_narrow_and_persists_provenance(store
     assert [event["role"] for event in traces] == [
         "researcher", "researcher", "researcher", "research_compressor",
     ]
-    assert traces[0]["prompt_version"] == "researcher.v2"
+    assert traces[0]["prompt_version"] == "researcher.v3"
     assert traces[-1]["prompt_version"] == "research-compress.v1"
     assert {ref.kind for ref in refs} == {
         "raw_capture", "url_registry", "notes", "excerpts", "evidence_bundle",
@@ -89,6 +89,63 @@ def test_search_budget_is_a_hard_per_task_limit_and_gaps_are_recorded(stores):
     assert evidence["sufficient"] is False
     assert evidence["unresolved_gaps"] == ["cross-platform confirmation"]
     assert evidence["search_calls"] == 5
+
+
+def test_source_budget_caps_distinct_pages_per_todo_across_all_searches(stores):
+    """One todo whose searches each return 5 new pages (the case that previously kept 17 pages
+    over 4 searches) keeps at most 5 in total, asks each search only for the slots left, and
+    stops searching once the budget is full."""
+    vfs, index = stores
+    todo = ResearchTodo(research_question="What is the latest version of TypeScript?")
+    model = FakeResearchModel(queries={todo.research_question: [f"query {n}" for n in range(4)]})
+    pages = [
+        [{"url": f"https://page.test/{batch}-{n}", "content": f"page {batch}-{n}"} for n in range(5)]
+        for batch in range(4)
+    ]
+    mcp = ControlledMCP(pages)
+    requested_limits = []
+    original_search = mcp.search
+
+    def recording_search(query, **kwargs):
+        requested_limits.append(kwargs.get("max_results"))
+        return original_search(query, **kwargs)
+
+    mcp.search = recording_search
+
+    completed, _, _ = run_worker(vfs, index, "budget", todo, _researcher(model, lambda: mcp))
+
+    evidence = json.loads(vfs.read("budget", f"research/{todo.todo_id}/evidence/result.json"))
+    assert completed.status == TodoStatus.COMPLETED
+    assert len(evidence["sources"]) == 5
+    assert requested_limits == [5]  # first search filled the budget; no further searches ran
+    assert mcp.calls == 1
+
+
+def test_source_budget_requests_only_the_remaining_slots(stores):
+    vfs, index = stores
+    todo = ResearchTodo(research_question="Compare two release notes")
+    model = FakeResearchModel(queries={todo.research_question: ["broad", "gap"]})
+    mcp = ControlledMCP([
+        [{"url": f"https://first.test/{n}", "content": "first"} for n in range(3)],
+        [{"url": f"https://second.test/{n}", "content": "second"} for n in range(5)],
+    ])
+    requested_limits = []
+    original_search = mcp.search
+
+    def recording_search(query, **kwargs):
+        requested_limits.append(kwargs.get("max_results"))
+        return original_search(query, **kwargs)
+
+    mcp.search = recording_search
+
+    run_worker(vfs, index, "remaining", todo, _researcher(model, lambda: mcp))
+
+    evidence = json.loads(vfs.read("remaining", f"research/{todo.todo_id}/evidence/result.json"))
+    assert requested_limits == [5, 2]
+    assert [s["locator"] for s in evidence["sources"]] == [
+        "https://first.test/0", "https://first.test/1", "https://first.test/2",
+        "https://second.test/0", "https://second.test/1",
+    ]
 
 
 def test_mcp_failure_is_persisted_as_task_outcome_without_leaking_key(stores):
@@ -206,6 +263,51 @@ def test_url_found_by_several_tasks_is_captured_and_indexed_once(stores):
         )
     registry = json.loads(vfs.read("shared", "research/url_registry.json"))
     assert list(registry) == ["https://primary.test/shared"]
+
+
+def test_page_already_found_by_another_todo_is_linked_without_using_a_source_slot(stores):
+    """Todo 2's first search returns the page todo 1 already found plus 4 new ones: the shared
+    page is linked (not a new capture) and does not take a slot, so todo 2's second search still
+    has one slot left to fill — ending with 5 pages of its own plus the linked one."""
+    vfs, index = stores
+    first, second = ResearchTodo(research_question="First"), ResearchTodo(research_question="Second")
+    shared = {"url": "https://primary.test/shared", "content": "Shared evidence"}
+    own = [{"url": f"https://second.test/{n}", "content": f"own {n}"} for n in range(5)]
+    clients = iter([  # one client per sub-agent, in plan order (one worker)
+        ControlledMCP([shared]),
+        ControlledMCP([[shared, *own[:4]], [own[4]]]),
+    ])
+    model = FakeResearchModel(queries={"Second": ["second q1", "second q2"]})
+    requested = []
+
+    def factory():
+        client = next(clients)
+        original = client.search
+
+        def recording(query, **kwargs):
+            requested.append((query, kwargs.get("max_results")))
+            return original(query, **kwargs)
+
+        client.search = recording
+        return client
+
+    supervisor = ResearchSupervisor(
+        _researcher(model, factory), vfs, index,
+        max_concurrent_researchers=1,  # deterministic: todo 1 claims the shared page first
+    )
+    results = supervisor.delegate("linked", [first, second])
+
+    assert [todo.status for todo, _, _ in results] == [TodoStatus.COMPLETED] * 2
+    # The linked page did not use a slot: after 4 own pages, the next search asks for 1 more.
+    assert requested[1:] == [("second q1", 5), ("second q2", 1)]
+    second_bundle = json.loads(vfs.read("linked", f"research/{second.todo_id}/evidence/result.json"))
+    locators = [s["locator"] for s in second_bundle["sources"]]
+    assert locators[0] == "https://primary.test/shared"
+    assert second_bundle["sources"][0]["reused_from_task"] == first.todo_id
+    assert locators[1:] == [f"https://second.test/{n}" for n in range(5)]  # full 5 own slots
+    assert all("_covered_by" not in s["provenance"] for s in second_bundle["sources"])
+    registry = json.loads(vfs.read("linked", "research/url_registry.json"))
+    assert list(registry).count("https://primary.test/shared") == 1
 
 
 def test_failing_sub_agent_does_not_cancel_siblings(stores):

@@ -32,11 +32,23 @@ class PlannerAgent:
         self,
         brief: ResearchBrief,
         *,
+        guidance: str = "",
         run_id: str = "",
         thread_id: str = "",
     ) -> TodoPlan:
-        """Structured LLM decision: standalone research questions plus acceptance criteria."""
-        messages = PLANNER_TEMPLATE.format_messages(brief=brief.research_question)
+        """Structured LLM decision: standalone research questions plus acceptance criteria.
+
+        ``guidance``, when non-empty, is a human reviewer's replanning feedback on a previous
+        report built from an earlier plan — see ``FEEDBACK_ROUTER_PROMPT``/``graph/nodes.py``'s
+        ``ApprovalNodes``. Empty by default (the normal, first-time planning call).
+        """
+        messages = PLANNER_TEMPLATE.format_messages(
+            brief=brief.research_question,
+            guidance=(
+                f"Reviewer replanning guidance (a previous report was rejected because):\n{guidance}"
+                if guidance else ""
+            ),
+        )
         return self.router.invoke_messages(
             "planner",
             messages,
@@ -53,9 +65,10 @@ class PlannerAgent:
         run_id: str,
         *,
         thread_id: str = "",
+        guidance: str = "",
     ) -> tuple[list[ResearchTodo], list[str]]:
         """Define the plan, then durably record the todos and acceptance criteria."""
-        plan = self.define_plan(brief, run_id=run_id, thread_id=thread_id)
+        plan = self.define_plan(brief, guidance=guidance, run_id=run_id, thread_id=thread_id)
         todos = create_todos(vfs, run_id, plan.questions)
         vfs.write_json(
             run_id,

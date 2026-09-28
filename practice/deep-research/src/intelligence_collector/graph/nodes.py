@@ -23,6 +23,7 @@ from intelligence_collector.agents.supervisor import (
 )
 from intelligence_collector.agents.synthesis import persist_report
 from intelligence_collector.contracts import (
+    FeedbackDecision,
     IssueType,
     ResearchBrief,
     ResearchTodo,
@@ -129,20 +130,35 @@ class PlannerNodes:
         self.vfs = vfs
 
     def planning(self, state: GraphState) -> GraphState:
+        """First-time planning, or a full replan requested by a human reviewer's rejection
+        feedback (``state["human_feedback"]``, set by ``ApprovalNodes.approval`` when the
+        feedback-router classifies it as needing a different research direction). Either way,
+        the resulting ``todos`` fully replace the previous list — but ``evidence``/
+        ``index_refs`` are deliberately left to accumulate rather than reset: the run-scoped
+        ``UrlRegistry`` (``agents/worker.py::persist_research``) already dedupes a URL the new
+        research re-finds, pointing it at its first capture instead of re-indexing it, so
+        discarding old refs here would make that reused, already-good evidence invisible to
+        ``research_complete``'s readiness check. ``draft``/``verification`` are reset: those are
+        genuinely stale once the questions change."""
         if self.vfs is None:
             raise RuntimeError("Planning requires an injected VFS")
         brief = ResearchBrief.model_validate(state["scoped_request"])
+        guidance = state.get("human_feedback", "")
         todos, acceptance_criteria = self.planner_agent.write_todos(
             brief,
             self.vfs,
             state["run_id"],
             thread_id=state.get("thread_id", ""),
+            guidance=guidance,
         )
         return {
             **state,
             "stage": Stage.PLANNING.value,
             "todos": [todo.model_dump(mode="json") for todo in todos],
             "acceptance_criteria": acceptance_criteria,
+            "human_feedback": "",
+            "draft": "",
+            "verification": None,
         }
 
 
@@ -304,11 +320,25 @@ class BVFNodes:
         return load_catalog(self.vfs, state["run_id"], state.get("evidence", []))
 
     def synthesizing(self, state):
-        """Build the first draft, or a Fix revision that applies every lesson learned so far."""
+        """Build the first draft, a Fix revision applying every automated lesson learned so
+        far, or a revision addressing a human reviewer's rejection feedback (routed here by
+        ``ApprovalNodes.approval`` via the feedback-router classifier — see
+        ``state["human_feedback"]``). The human-feedback case takes priority: it only reaches
+        this node on a report that already fully PASSED verification, so there is no automated
+        failure to also incorporate."""
         brief = ResearchBrief.model_validate(state["scoped_request"])
         previous = state.get("verification")
+        human_feedback = state.get("human_feedback", "")
         revision = None
-        if previous and not previous.get("passed") and state.get("draft"):
+        if human_feedback:
+            revision = RevisionContext(
+                attempt=state.get("recovery_attempt", 0),
+                failures=f"Human reviewer feedback (not an automated check):\n{human_feedback}",
+                previous_draft=state.get("draft", ""),
+                lessons=list(state.get("bvf_lessons", [])),
+                strategy="Revise the report to directly address the reviewer's feedback above.",
+            )
+        elif previous and not previous.get("passed") and state.get("draft"):
             revision = RevisionContext(
                 attempt=state.get("recovery_attempt", 0),
                 failures=previous.get("repair_details", ""),
@@ -342,6 +372,7 @@ class BVFNodes:
             "draft": report,
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
             "verification": None,  # a changed artifact never inherits a previous verification
+            "human_feedback": "",  # consumed
         }
 
     def verifying(self, state):
@@ -566,6 +597,93 @@ def approval(state: GraphState) -> GraphState:
     stage = Stage.PUBLISHED if decision.get(
         "approved") else Stage.AWAITING_APPROVAL
     return {**state, "approval": decision, "stage": stage.value}
+
+
+class ApprovalNodes:
+    """The human-in-the-loop publication gate, reached only once a report has fully passed
+    verification (and faithfulness scoring). Interrupts the graph for one decision:
+
+    * Approve: writes the exact verified artifact (hash-bound to the passing
+      ``VerificationResult``) to the permanent output location and ends the run.
+    * Reject, with feedback: a classifier (``feedback_router``) decides whether the feedback
+      reads as a wording-level fix — routed back to ``synthesizing`` with the feedback folded
+      into a revision context — or a sign the research direction itself was wrong — routed
+      back to ``planning`` for a fresh set of research questions. Either path re-enters the
+      normal Build-Verify-Fix loop and can reach this same gate again once it passes.
+    """
+
+    def __init__(self, vfs, output_dir: str, feedback_router=None):
+        self.vfs = vfs
+        self.output_dir = output_dir
+        self.feedback_router = feedback_router
+
+    def approval(self, state: GraphState) -> GraphState:
+        from langgraph.types import interrupt
+
+        from intelligence_collector.publication import approval_for, publish
+
+        decision = interrupt({"kind": "publication_approval", "run_id": state.get("run_id")})
+        verification = VerificationResult.model_validate(state["verification"])
+        approval = approval_for(
+            verification.artifact_hash,
+            verification.verification_id,
+            bool(decision.get("approved")),
+            str(decision.get("actor") or "local-user"),
+        )
+        run_id = state["run_id"]
+
+        if approval.approved:
+            destination = f"{self.output_dir.rstrip('/')}/{run_id}.md"
+            record = publish(state.get("draft", ""), destination, approval, verification)
+            ref = self.vfs.write_json(
+                run_id, "publication/record.json", record.model_dump(mode="json"), "publication_record",
+            )
+            return {
+                **state,
+                "approval": approval.model_dump(mode="json"),
+                "publication": record.model_dump(mode="json"),
+                "stage": (Stage.PUBLISHED if record.published else Stage.AWAITING_APPROVAL).value,
+                "current_action": (
+                    f"Published to {destination}" if record.published
+                    else f"Publication failed: {record.error}"
+                ),
+                "activity": _activity(
+                    state, "Publishing report", "success" if record.published else "failure"
+                ),
+                "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
+            }
+
+        feedback = str(decision.get("feedback") or "").strip()
+        if self.feedback_router is not None and feedback:
+            verdict = self.feedback_router.route(
+                feedback, state.get("draft", ""), run_id=run_id, thread_id=state.get("thread_id", ""),
+            )
+        else:
+            # No classifier configured, or the reviewer rejected without feedback: default to
+            # the cheaper writer path rather than discarding the whole research plan.
+            verdict = FeedbackDecision(route="writer", reason="No feedback to classify; defaulting to writer.")
+
+        attempt = state.get("recovery_attempt", 0) + 1
+        history = [*state.get("bvf_history", []), {
+            "attempt": attempt,
+            "issue_type": "HUMAN_FEEDBACK",
+            "route": verdict.route,
+            "feedback": feedback,
+            "reason": verdict.reason,
+        }]
+        next_stage = Stage.SYNTHESIZING if verdict.route == "writer" else Stage.PLANNING
+        return {
+            **state,
+            "approval": approval.model_dump(mode="json"),
+            "human_feedback": feedback,
+            "feedback_route": verdict.route,
+            "recovery_attempt": attempt,
+            "recovery_budget": state.get("recovery_budget", DEFAULT_RECOVERY_BUDGET),
+            "stage": next_stage.value,
+            "current_action": f"Reviewer rejected — routing to {verdict.route}: {verdict.reason or feedback[:120]}",
+            "activity": _activity(state, f"Reviewer feedback routed to {verdict.route}", "failure"),
+            "bvf_history": history,
+        }
 
 
 # ===== STAGE-ONLY STUBS =====

@@ -858,3 +858,156 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   `use_async=True` and `provider="google"` are passed through correctly — restoring T130's
   original test intent). Verified interactively: `streamlit run app.py` served HTTP 200 with no
   startup exception. Full suite: 182 passed, 2 skipped.
+- [X] T141 [US1] Implement the real human-in-the-loop approval gate (FR-025, FR-026,
+  FR-026a/b), per explicit user request: Approve writes the report to the permanent output
+  location; Reject accepts feedback and routes it to either the report writer or the planner
+  based on what the feedback says. Previously `app.py`'s "Review and publish" section only ever
+  recorded an `ApprovalDecision` locally in `session_state` — it never called `publication.publish`
+  and a rejection did nothing but set a flag; `with_approval=True` was never passed to
+  `build_graph`, so the graph's own pre-existing `interrupt()`-based approval node (present from
+  the project's initial scaffold, exercised only by `test_graph_interrupt.py`'s stub graph) was
+  never used in the live app.
+  - `graph/nodes.py`: new `ApprovalNodes` class (`Node.APPROVE`, wired only in the full-BVF
+    branch of `build_graph`, leaving the pre-existing bare `approval()` function untouched for
+    the stub-graph path `test_graph_interrupt.py` already covers). Approve calls
+    `publication.publish` with the exact passing draft, hash-bound via `ApprovalDecision`, to
+    `{output_dir}/{run_id}.md`. Reject reads optional feedback and, when a `feedback_router` is
+    configured, classifies it via a new `FeedbackDecision` (`route: "writer"|"planner"`); no
+    router or no feedback defaults to `"writer"`.
+  - `agents/feedback_router.py` (new): `FeedbackRouter.route(feedback, report, ...)`, prompt
+    `FEEDBACK_ROUTER_PROMPT`/`_TEMPLATE` (new role `"feedback_router"`, added to
+    `DEEP_REASONING_ROLES` — a consequential routing decision, not a cheap check like
+    `"guardrail"`).
+  - `graph/routing.py`: `route_after_approval` — a conditional edge over `stage`/
+    `feedback_route`, mapped in `build.py` to `END` (published), `Node.SYNTHESIZE` (writer),
+    `Node.PLAN` (planner); a defensive `APPROVAL_UNRESOLVED` fallback (e.g. an approved decision
+    whose publish failed) also ends the run rather than looping on an outcome
+    `ApprovalNodes.approval` never actually produces.
+  - `graph/nodes.py::BVFNodes.synthesizing`: now also builds a `RevisionContext` from
+    `state["human_feedback"]` when present (takes priority over an automated-failure revision,
+    since this path is only reached from a report that already fully passed).
+  - `graph/nodes.py::PlannerNodes.planning`: accepts replanning guidance
+    (`state["human_feedback"]`) and always produces a fresh `todos` list — but, discovered via a
+    real integration-test failure (not by inspection), does **not** reset `evidence`/
+    `index_refs` on replan: the run-scoped `UrlRegistry`
+    (`agents/worker.py::persist_research`) already dedupes a URL the new research re-finds by
+    pointing it at its first capture instead of re-indexing it, so discarding those refs made
+    already-good, reused evidence invisible to `research_complete`'s readiness check
+    (`ResearchComplete denied: No research data indexed`) — only `draft`/`verification` are
+    reset, since those are the fields genuinely stale once the questions change.
+  - `agents/planner.py`/`agents/prompts.py`: `PlannerAgent.define_plan`/`write_todos` gained a
+    `guidance` parameter; `PLANNER_TEMPLATE` gained a `{guidance}` slot defaulted via
+    `.partial(guidance="")` (verified directly: renders correctly both with and without
+    guidance) so the many existing callers that only ever passed `brief` — including the
+    separate legacy `SemanticRoles`/`ROLE_TEMPLATES` dispatch path in `agents/llm_roles.py`,
+    unrelated to this feature but sharing the same template — keep working unchanged;
+    `PLANNER_PROMPT_VERSION` bumped `v3` -> `v4` for the new guidance-handling rule.
+  - `contracts.py`: new `FeedbackDecision` model; `human_feedback`/`feedback_route` added to
+    `GraphState` (`graph/state.py`) and to `ResearchGraphState` (needed too — the JSON
+    `Checkpoints` store's `CHECKPOINT_DEFAULTS` now includes them and `ResearchGraphState` has
+    `extra="forbid"`, caught by `test_resume_stages.py`).
+  - `graph/instrumentation.py`: fixed a real bug this uncovered — `node_wrapper`'s generic
+    `except Exception: notify(name, "failure")` also caught LangGraph's own `GraphInterrupt`
+    (confirmed it subclasses `Exception`, not just `BaseException`), so pausing at any
+    interrupt-based node — the pre-existing stub-graph approval included — marked that node's
+    UI lifecycle activity as "failure" even though it was merely pausing correctly for a human
+    decision. Never visible before since `with_approval=True` was never used live. Now
+    `GraphInterrupt` is re-raised without that notification.
+  - `app.py`: `_get_scope_graph` now passes `with_approval=True`, `output_dir=settings.output_dir`,
+    `feedback_router=FeedbackRouter(agent.router)` (shares the scope/planner/verify
+    reasoning-tier model, same pattern as `AcceptanceVerifier`). New `_stream_graph_turn` helper
+    factors the "stream the graph live into the pipeline placeholders" loop out of the chat-turn
+    handler so both a fresh chat request and an approval-decision resume
+    (`Command(resume=...)`) use it identically; it strips LangGraph's `"__interrupt__"` marker
+    from the state it returns (its meaning is already captured by `stage` staying "Awaiting
+    Approval"). The "Review and publish" section now collects feedback via `st.text_area` on
+    Reject and, on "Record decision", resumes the paused graph via
+    `graph.stream(Command(resume=resume_payload), ...)` instead of only mutating local
+    `session_state`. Fixed two real UX bugs surfaced while wiring this up: (1) the section was
+    gated only on the immutable `VerificationResult.passed`, so a published report would keep
+    offering another Approve/Reject decision forever — now also gated on the live `stage ==
+    "Awaiting Approval"`; (2) added a persistent "Published to {destination}" success banner
+    (a transient `st.success()` before the trailing `st.rerun()` would never be visible).
+  - Tests: `tests/integration/test_approval_gate.py` (new) — four real interrupt/`Command(resume=...)`
+    cycles through the full graph with fake models: approve publishes the exact verified content
+    to disk; reject-with-writer-feedback revises and re-verifies then can still be approved
+    (asserts the feedback text reached the revision prompt); reject with no feedback router
+    configured defaults to writer; reject-with-planner-feedback drives a full
+    scope->brief->plan->research->synthesize->verify->interrupt cycle, rejects with feedback,
+    confirms the replan call's prompt actually contained the reviewer's guidance, and that the
+    second approval cycle also succeeds. `tests/ui/test_chat_progress.py`: two new tests for the
+    stage-gating and published-banner fixes. Updated `test_langchain_scope.py`/
+    `test_semantic_roles.py`/`test_resume_stages.py` for the `planner.v3` -> `v4` bump and the
+    new `ResearchGraphState` fields. Verified interactively: `streamlit run app.py` served HTTP
+    200 with no startup exception, three separate times across the debugging process. Full
+    suite: 188 passed, 2 skipped.
+- [X] T142 [US1] Fix a live failure reported by the user: "Scope decision failed: invalid
+  structured output for guardrail ... 400 tool_use_failed: attempted to call tool 'json' which
+  was not in request.tools". The guardrail call had fallen back to Groq (`openai/gpt-oss-*`),
+  and `ModelRouter._bind_schema` used `with_structured_output(schema)`, which on `ChatGroq`
+  defaults to function calling; gpt-oss models sometimes emit a tool call named `json` instead
+  of the bound schema tool, which Groq rejects server-side, so both retry attempts failed.
+  `_bind_schema` now passes `method="json_schema"` for `ChatGroq` (Groq's native
+  `response_format` structured outputs — no tools are sent, so none can be misnamed); every
+  other provider keeps the default binding. Verified offline that the bound Groq request
+  carries `response_format.type == "json_schema"` and no `tools` for `ContentSafetyVerdict`,
+  `TodoPlan`, and `FeedbackDecision`. Added `tests/unit/test_router_schema_binding.py`. Full
+  suite: 190 passed, 2 skipped.
+- [X] T143 [US1] Diagnose the next live failure: "invalid structured output for synthesizer ...
+  400 json_validate_failed, failed_generation: ''". Replayed the exact failing revision prompt
+  (rebuilt from run `503b5488-...`'s stored brief, 13-source catalog, draft v1, failures, and
+  lessons — ~20K chars) against the Groq fallback with every structured-output method: plain and
+  `json_mode` return `413 Request too large for model openai/gpt-oss-20b ... tokens per minute
+  (TPM): Limit 8000, Requested ~8050`; `json_schema` surfaces the same oversized request as the
+  misleading empty `json_validate_failed`. Root cause is the account's Groq on-demand TPM cap,
+  not output formatting — a short prompt succeeds with all three methods. Also found the router
+  hid the primary (Gemini) error whenever the fallback failed too, so the user never saw why the
+  fallback was needed: `ModelRouter._invoke_with` now raises one error naming both
+  (`primary <model> failed: ... | fallback <model> failed: ...`). Added
+  `test_when_primary_and_fallback_both_fail_both_reasons_are_reported`. The TPM limit itself is
+  an account/config decision left to the user. Full suite: 191 passed, 2 skipped.
+- [X] T144 [US1] Make the Tavily result limit a per-todo source budget (FR-008b), per user
+  report: one todo ("latest version of TypeScript") kept 17 pages, because `max_results=5`
+  applied to each search call and the sub-agent ran 4 searches (confirmed from the run's stored
+  evidence bundle: 4 distinct queries, 17 sources after URL dedup). The user's expectation — one
+  sub-agent per todo, a bounded reading list — is now enforced in `agents/researcher.py`:
+  `ResearchAgent(max_sources=5)` (new `Settings.max_sources_per_task`,
+  `INTELLIGENCE_MAX_SOURCES_PER_TASK`, default 5, max 10) caps distinct pages kept across all of
+  the sub-agent's searches; each search passes `max_results=<slots left>` through the MCP
+  boundary (`MCPResearchPort.search`/`TavilyMCP.search`/`ControlledMCP.search` gained the
+  optional per-call `max_results`, never above the adapter's own ceiling), so Tavily is never
+  asked for pages that would be discarded; once full, further searches are refused and
+  `route_after_llm` goes straight to compression. `researcher.v2` -> `v3`: the prompt states
+  both budgets and replaces "start with a broad search" (which would spend the whole source
+  budget on a vague query) with "make the first query precise and aimed at primary sources".
+  Tests: `test_source_budget_caps_distinct_pages_per_todo_across_all_searches` (the user's case:
+  4 scripted searches of 5 new pages each keeps exactly 5 and stops after one search),
+  `test_source_budget_requests_only_the_remaining_slots` (3 kept, then the next search asks for
+  2), `test_tavily_adapter_requests_only_the_remaining_source_slots`;
+  `test_evidence_selection_narrows_the_build_prompt_but_not_verification` now sets
+  `max_sources=8` explicitly since it needs 8 captured pages. Smaller per-todo evidence also
+  shrinks the report writer's prompt, which was hitting the Groq fallback's 8000 TPM cap (T143).
+  Full suite: 194 passed, 2 skipped.
+- [X] T145 [US1] Cross-todo URL dedup at search time (FR-008c), per user request that a URL
+  already fetched for one todo must not be fetched again for another. Before: `UrlRegistry`
+  deduped only at persistence, after every parallel sub-agent had finished, so a shared page
+  still took a source slot in each sub-agent that found it. New `UrlClaims`
+  (`tools/url_tracking.py`): a thread-safe run-wide owner map, seeded from the persisted registry
+  (`UrlRegistry.owners()`), created once per `ResearchSupervisor.delegate` and passed to every
+  sub-agent (`ResearchAgent.research(..., task_id=, claims=)`). In the researcher's tool step, the
+  first task to retrieve a URL claims it; a task that finds a URL another task owns links it
+  (marked `_covered_by`) — no new capture/index (still `UrlRegistry`'s reuse path at persist) and
+  no source-budget slot; the tool message tells the model the page is covered and to prefer
+  question-specific sources. A task with no slot left only looks up ownership (`owner()`) and
+  never claims a page it would then drop. Design choice, deliberately not "hide the page": a todo
+  whose only relevant page belongs to another todo would otherwise end with 0 sources, become
+  FAILED, and block `research_complete` for the whole run (the existing
+  `test_url_found_by_several_tasks_is_captured_and_indexed_once` exercises exactly this and still
+  passes). Tavily search returns page content inside the search response and can only exclude
+  whole domains, so a shared page can still appear in a response; what is no longer duplicated is
+  its capture, indexing, and source slot. `worker.persist_research` now drops every underscore
+  bookkeeping key (not just `_query`) from stored provenance. Tests: `tests/unit/test_url_claims.py`
+  (ownership across URL spellings, `owner()` never claims, seeding, an 8-thread race yields one
+  owner), `test_page_already_found_by_another_todo_is_linked_without_using_a_source_slot` (linked
+  page, 5 own pages, the second search asks only for the 1 remaining slot). Full suite: 199
+  passed, 2 skipped.

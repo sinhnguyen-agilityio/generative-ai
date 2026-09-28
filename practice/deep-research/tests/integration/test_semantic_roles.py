@@ -40,7 +40,7 @@ def test_all_semantic_roles_use_structured_router():
 
 def test_every_semantic_role_prompt_is_versioned_and_instructive():
     expected = {
-        "planner": "planner.v3",
+        "planner": "planner.v4",
         "supervisor": "supervisor.v1",
         "worker": "worker.v1",
         "synthesizer": "synthesis.v1",

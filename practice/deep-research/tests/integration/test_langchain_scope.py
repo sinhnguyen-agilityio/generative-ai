@@ -88,7 +88,7 @@ def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch,
     assert traces[0]["prompt_version"] == "guardrail.v1"
     assert traces[1]["prompt_version"] == "scope.v1"
     assert traces[2]["prompt_version"] == "scope-brief.v1"
-    assert traces[3]["prompt_version"] == "planner.v3"
+    assert traces[3]["prompt_version"] == "planner.v4"
     assert traces[3]["role"] == "planner"
     assert traces[0]["selected_model"] == "fake-live-scope"
     assert len(result["messages"]) == 2

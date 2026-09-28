@@ -12,6 +12,11 @@ from intelligence_collector.graph.state import GraphState
 # Outcomes of route_after_verify; build.py maps "passed" to approval or END.
 PASSED, FIX, NEEDS_REVIEW = "passed", "fix", "needs_review"
 
+# Outcomes of route_after_approval; build.py maps these to END, SYNTHESIZE, or PLAN.
+APPROVED, TO_WRITER, TO_PLANNER, APPROVAL_UNRESOLVED = (
+    "approved", "writer", "planner", "approval_unresolved",
+)
+
 # ===== CONDITIONAL EDGE ROUTERS =====
 
 
@@ -34,6 +39,23 @@ def route_after_verify(state: GraphState) -> str:
     if state.get("stall_count", 0) >= MAX_STALLED_ATTEMPTS:
         return NEEDS_REVIEW
     return FIX
+
+
+def route_after_approval(state: GraphState) -> str:
+    """Post-HITL-gate routing: published ends the run; a rejection routes to whichever node
+    the feedback-router classifier chose. ``ApprovalNodes.approval`` always sets exactly one
+    of these outcomes when it runs, so ``APPROVAL_UNRESOLVED`` is only a defensive fallback
+    (e.g. an approved decision whose publish failed, such as a stale-hash race) that ends the
+    run rather than looping — a reject-shaped outcome without a decision is never inferred.
+    """
+    if state.get("stage") == Stage.PUBLISHED.value:
+        return APPROVED
+    route = state.get("feedback_route")
+    if route == "writer":
+        return TO_WRITER
+    if route == "planner":
+        return TO_PLANNER
+    return APPROVAL_UNRESOLVED
 
 
 def route_after_fix(state: GraphState) -> str:

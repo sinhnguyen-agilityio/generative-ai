@@ -9,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from intelligence_collector.agents.planner import PlannerAgent
 from intelligence_collector.graph.instrumentation import node_wrapper
 from intelligence_collector.graph.nodes import (
+    ApprovalNodes,
     Node,
     PlannerNodes,
     ScopeNodes,
@@ -16,9 +17,14 @@ from intelligence_collector.graph.nodes import (
     stage_only,
 )
 from intelligence_collector.graph.routing import (
+    APPROVAL_UNRESOLVED,
+    APPROVED,
     FIX,
     NEEDS_REVIEW,
     PASSED,
+    TO_PLANNER,
+    TO_WRITER,
+    route_after_approval,
     route_after_clarify,
     route_after_fix,
     route_after_verify,
@@ -45,6 +51,8 @@ def build_graph(
     vfs=None,
     tracer=None,
     lifecycle=None,
+    output_dir: str = "exports",
+    feedback_router=None,
 ):
     """Build the research workflow graph.
 
@@ -59,6 +67,10 @@ def build_graph(
                                                         \\-(EVIDENCE_GAP)-> researching_gaps
                                                                             -> synthesizing
                       --(budget exhausted / no progress)--> needs_review -> END
+            approval (human-in-the-loop gate) --(approve)--> publish to output_dir -> END
+                     --(reject, feedback -> writer)--> synthesizing
+                     --(reject, feedback -> planner)--> planning (fresh plan, discards prior
+                                                          research/draft/verification)
 
         Scope only (scope_agent):
             START -> clarify_with_user -> write_research_brief -> planning -> END
@@ -149,7 +161,17 @@ def build_graph(
 
     # ===== APPROVAL =====
     if with_approval:
-        add_node(Node.APPROVE, approval)
-        graph.add_edge(Node.APPROVE, END)
+        approval_nodes = ApprovalNodes(vfs, output_dir, feedback_router)
+        add_node(Node.APPROVE, approval_nodes.approval)
+        graph.add_conditional_edges(
+            Node.APPROVE,
+            route_after_approval,
+            {
+                APPROVED: END,
+                TO_WRITER: Node.SYNTHESIZE,
+                TO_PLANNER: Node.PLAN,
+                APPROVAL_UNRESOLVED: END,
+            },
+        )
 
     return graph.compile(checkpointer=checkpointer)

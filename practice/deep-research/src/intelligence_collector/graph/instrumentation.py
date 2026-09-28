@@ -7,6 +7,8 @@ lifecycle notifications (UI progress), checkpoint load/save, and tracing.
 from collections.abc import Callable
 import json
 
+from langgraph.errors import GraphInterrupt
+
 from intelligence_collector.graph.state import GraphState
 
 NodeFn = Callable[[GraphState], GraphState]
@@ -77,6 +79,12 @@ def node_wrapper(
 
         try:
             result = run(current)
+        except GraphInterrupt:
+            # An intentional pause for a human decision (see graph/nodes.py's ApprovalNodes),
+            # not a failure — GraphInterrupt is a real Exception subclass (so a bare `except
+            # Exception` below would catch it too), and LangGraph's own resume mechanism
+            # handles it; don't mark this node's lifecycle activity as failed.
+            raise
         except Exception:
             notify(name, "failure")
             raise

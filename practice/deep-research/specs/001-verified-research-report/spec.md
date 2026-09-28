@@ -347,6 +347,16 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   sub-agent and MAY run at most a configurable number of sub-agents concurrently (default 3,
   maximum 5). A failing sub-agent MUST become that task's recorded outcome without cancelling its
   siblings. Each sub-agent MUST have its own MCP client, so search budgets apply per task.
+- **FR-008b**: Each research sub-agent MUST keep at most a configurable number of distinct source
+  pages for its todo in total, across all of its searches (default 5, maximum 10) — the limit is per
+  task, not per search call. Each search MUST request only the number of pages still available in
+  that budget, and once the budget is full the sub-agent MUST stop searching and proceed to
+  compressing its findings.
+- **FR-008c**: A page is retrieved into a run once. While sub-agents search (including in
+  parallel), the first to retrieve a URL owns it; another sub-agent whose search returns that URL
+  MUST link to the existing capture instead of capturing or indexing it again, and the linked page
+  MUST NOT count toward that sub-agent's source budget. This also applies to gap research and
+  resumed runs for pages captured earlier in the same run.
 - **FR-009c**: A research sub-agent MUST follow an LLM tool-calling loop: an LLM decision either
   requests `tavily_search` calls or gives a final note; a tool step executes the searches through
   the Tavily MCP connection; routing continues only while the LLM requests searches and budget
@@ -481,6 +491,18 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   its exact version MUST be recorded before publication.
 - **FR-026**: Rejecting publication MUST leave the permanent output location unchanged and record
   the rejection without representing the artifact as published.
+- **FR-026a**: Rejection MAY include free-text reviewer feedback. When present, the system MUST
+  classify it as needing either a report-writer revision (the underlying research stands; only the
+  written report changes) or a full replan (the research direction itself was wrong), and route the
+  run back to the corresponding stage accordingly. Rejection without feedback, or without a
+  classifier configured, MUST default to the report-writer revision path rather than discarding the
+  existing research plan.
+- **FR-026b**: A rejection routed to the report writer MUST NOT re-plan or re-research; a rejection
+  routed to a replan MUST produce a fresh set of research questions from the classified feedback and
+  MUST NOT reuse the previous plan's questions unchanged. Either path re-enters the normal
+  Build-Verify-Fix loop and MUST return to Awaiting Approval only once the revised or replanned
+  artifact fully passes verification again — it MUST NOT publish or re-offer the prior, rejected
+  artifact.
 - **FR-027**: The system MUST deny publication for an unverified, changed-after-approval, failed, or
   `NEEDS_REVIEW` artifact and provide an actionable reason.
 - **FR-028**: Publication MUST place only the exact approved artifact version in the permanent output

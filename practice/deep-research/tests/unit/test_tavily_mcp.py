@@ -9,7 +9,7 @@ def test_tavily_adapter_normalizes_results_without_exposing_key(monkeypatch):
     secret = "test-secret-value"
     adapter = TavilyMCP("https://mcp.tavily.com/mcp/", secret, max_calls=5)
 
-    async def fake_search(query):
+    async def fake_search(query, max_results):
         return SimpleNamespace(
             structured_content={
                 "results": [{
@@ -34,6 +34,22 @@ def test_tavily_adapter_normalizes_results_without_exposing_key(monkeypatch):
     }]
     assert secret not in repr(adapter)
     assert secret not in str(adapter.requests)
+
+
+def test_tavily_adapter_requests_only_the_remaining_source_slots(monkeypatch):
+    adapter = TavilyMCP("https://mcp.tavily.com/mcp/", "key", max_results=5)
+    requested = []
+
+    async def fake_search(query, max_results):
+        requested.append(max_results)
+        return SimpleNamespace(structured_content={"results": []}, content=[])
+
+    monkeypatch.setattr(adapter, "_search", fake_search)
+    adapter.search("q1")
+    adapter.search("q2", max_results=2)
+    adapter.search("q3", max_results=50)  # never above the adapter's own ceiling
+
+    assert requested == [5, 2, 5]
 
 
 def test_tavily_adapter_rejects_embedded_or_missing_credentials():
