@@ -22,8 +22,8 @@ from intelligence_collector.graph.routing import (
     FIX,
     NEEDS_REVIEW,
     PASSED,
-    TO_PLANNER,
-    TO_WRITER,
+    TO_FORMAT,
+    TO_SCOPE,
     route_after_approval,
     route_after_clarify,
     route_after_fix,
@@ -68,9 +68,9 @@ def build_graph(
                                                                             -> synthesizing
                       --(budget exhausted / no progress)--> needs_review -> END
             approval (human-in-the-loop gate) --(approve)--> publish to output_dir -> END
-                     --(reject, feedback -> writer)--> synthesizing
-                     --(reject, feedback -> planner)--> planning (fresh plan, discards prior
-                                                          research/draft/verification)
+                     --(reject, format-only feedback)--> synthesizing (edit the text's formatting)
+                     --(reject, scope-change feedback)--> clarify_with_user -> brief -> planning
+                                                          (fresh plan, discards prior draft/verification)
 
         Scope only (scope_agent):
             START -> clarify_with_user -> write_research_brief -> planning -> END
@@ -168,8 +168,9 @@ def build_graph(
             route_after_approval,
             {
                 APPROVED: END,
-                TO_WRITER: Node.SYNTHESIZE,
-                TO_PLANNER: Node.PLAN,
+                TO_FORMAT: Node.SYNTHESIZE,
+                # A scope change re-enters scoping (the stub scope node when no scope agent).
+                TO_SCOPE: Node.CLARIFY if scope_agent is not None else Node.STUB_SCOPE,
                 APPROVAL_UNRESOLVED: END,
             },
         )

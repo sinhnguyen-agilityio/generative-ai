@@ -96,13 +96,13 @@ class ModelRouter:
 
     def invoke_messages(
         self, role: str, messages: list[BaseMessage], schema: type[T], *,
-        prompt_version: str, run_id: str = "", thread_id: str = "",
+        run_id: str = "", thread_id: str = "",
     ) -> T:
         """Call the model and return its output validated as `schema`.
 
         Retries up to `max_attempts` when the output is invalid; every attempt is traced.
         """
-        config = self._config(role, run_id, thread_id, prompt_version)
+        config = self._config(role, run_id, thread_id)
         chain = self._chain(_bind_schema(self.primary, schema), _bind_schema(self.fallback, schema), role, config)
         errors = []
         for attempt in range(1, self.max_attempts + 1):
@@ -113,12 +113,12 @@ class ModelRouter:
                 # The raw error text is withheld from the trace: it can echo model output.
                 message = f"{type(exc).__name__}: invalid structured output"
                 self._emit(
-                    role, prompt_version, run_id, thread_id, attempt, messages,
+                    role, run_id, thread_id, attempt, messages,
                     output_text=message, validation_error=message,
                 )
                 continue
             self._emit(
-                role, prompt_version, run_id, thread_id, attempt, messages,
+                role, run_id, thread_id, attempt, messages,
                 output_text=redact_text(result.model_dump_json(indent=2)),
                 decision=redact_value(result.model_dump(mode="json")),
                 message_count=len(messages),
@@ -128,10 +128,10 @@ class ModelRouter:
 
     def invoke_with_tools(
         self, role: str, messages: list[BaseMessage], tools: list, *,
-        prompt_version: str, run_id: str = "", thread_id: str = "", tool_choice: str | None = None,
+        run_id: str = "", thread_id: str = "", tool_choice: str | None = None,
     ) -> AIMessage:
         """Tool-calling decision: the returned AIMessage carries a final answer or tool calls."""
-        config = self._config(role, run_id, thread_id, prompt_version)
+        config = self._config(role, run_id, thread_id)
         chain = self._chain(
             _bind_tools(self.primary, tools, tool_choice),
             None if self.fallback is None else _bind_tools(self.fallback, tools, tool_choice),
@@ -145,7 +145,7 @@ class ModelRouter:
             "tool_calls": [{"name": call["name"], "args": call["args"]} for call in raw.tool_calls],
         })
         self._emit(
-            role, prompt_version, run_id, thread_id, 1, messages,
+            role, run_id, thread_id, 1, messages,
             output_text=json.dumps(decision, ensure_ascii=False, indent=2, default=str),
             decision=decision,
             message_count=len(messages),
@@ -154,7 +154,7 @@ class ModelRouter:
 
     # ----- internals -----
 
-    def _config(self, role: str, run_id: str, thread_id: str, prompt_version: str) -> dict | None:
+    def _config(self, role: str, run_id: str, thread_id: str) -> dict | None:
         """LangChain run config so callbacks (Langfuse) group model runs by session and role.
         None when no callbacks are configured."""
         if not self.callbacks:
@@ -166,7 +166,6 @@ class ModelRouter:
                 "langfuse_session_id": thread_id,
                 "run_id": run_id,
                 "thread_id": thread_id,
-                "prompt_version": prompt_version,
                 "role": role,
             },
         }
@@ -198,13 +197,12 @@ class ModelRouter:
             return schema.model_validate(json.loads(raw))
         raise TypeError(f"model output for {role} is not structured")
 
-    def _emit(self, role, prompt_version, run_id, thread_id, attempt, messages, **fields) -> None:
+    def _emit(self, role, run_id, thread_id, attempt, messages, **fields) -> None:
         """Send one trace event. Rendering the prompt is skipped when nobody is listening."""
         if not self.trace:
             return
         self.trace(
             role=role,
-            prompt_version=prompt_version,
             run_id=run_id,
             thread_id=thread_id,
             selected_model=self.model_name,

@@ -546,14 +546,14 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-026**: Rejecting publication MUST leave the permanent output location unchanged and record
   the rejection without representing the artifact as published.
 - **FR-026a**: Rejection MAY include free-text reviewer feedback. When present, the system MUST
-  classify it as needing either a report-writer revision (the underlying research stands; only the
-  written report changes) or a full replan (the research direction itself was wrong), and route the
-  run back to the corresponding stage accordingly. Rejection without feedback, or without a
-  classifier configured, MUST default to the report-writer revision path rather than discarding the
-  existing research plan.
-- **FR-026b**: A rejection routed to the report writer MUST NOT re-plan or re-research; a rejection
-  routed to a replan MUST produce a fresh set of research questions from the classified feedback and
-  MUST NOT reuse the previous plan's questions unchanged. Either path re-enters the normal
+  classify it as either a formatting-only request (`format`: only the presentation of the existing
+  report changes) or a scope change (`scope`: what the report should cover changes), and route the
+  run accordingly. Rejection without feedback, or without a classifier configured, MUST default to
+  the `format` path rather than discarding the existing research plan.
+- **FR-026b**: A `format` rejection MUST NOT re-plan or re-research and MUST NOT change any claim,
+  number or citation of the report; a `scope` rejection MUST re-enter scope clarification with the
+  feedback as a new user turn (the scope agent MAY ask a clarifying question), rewrite the research
+  brief, and produce a fresh set of research questions, restarting the attempt counters. Either path re-enters the normal
   Build-Verify-Fix loop and MUST return to Awaiting Approval only once the revised or replanned
   artifact fully passes verification again — it MUST NOT publish or re-offer the prior, rejected
   artifact.
@@ -573,11 +573,11 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   decision over typed workflow state, and a missing or empty verification result MUST NOT route to
   Awaiting Approval.
 - **FR-031**: Semantic decisions made by Scope, Planning, Supervision, Research, Synthesis,
-  Verification, and Fixer roles MUST use a real LLM call in live mode with a versioned prompt and a
+  Verification, and Fixer roles MUST use a real LLM call in live mode with a prompt template and a
   typed, validated output. Deterministic fakes MAY be selected explicitly for offline tests but MUST
   NOT silently replace the live model.
 - **FR-032**: The model router MUST centralize primary/fallback models, reasoning settings, timeouts,
-  retry limits, prompt versions, primary model name, errors, and structured decisions in
+  retry limits, primary model name, errors, and structured decisions in
   run traces (a fallback model's run is captured by the LangChain callback trace) without recording secrets.
 - **FR-032a**: The opt-in live LLM/MCP smoke tests MUST reuse the reasoning profile's
   `INTELLIGENCE_REASONING_MODEL`/`INTELLIGENCE_REASONING_PROVIDER` rather than a standalone
@@ -615,7 +615,8 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-034**: All LLM-powered roles MUST use LangChain chat models initialized through
   `langchain.chat_models.init_chat_model` via the central model factory/router. LangGraph remains the
   workflow orchestrator; the Deep Agents SDK is prohibited.
-- **FR-035**: Role prompts MUST be versioned `ChatPromptTemplate` instances using
+- **FR-035**: Role prompts MUST be `ChatPromptTemplate` instances (no manual version labels; the
+  trace records the full rendered prompt) using
   `MessagesPlaceholder` for prior turns where applicable. User text and retrieved evidence MUST be
   passed as data variables, not interpolated into system instructions.
 - **FR-036**: Every model output that can change workflow state MUST be parsed into its Pydantic schema
@@ -625,7 +626,7 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   planned research todo, and successfully persist it through `write_todos` before any edge can enter
   Researching or invoke external retrieval. Brief or todo persistence failure MUST end the current
   invocation visibly without enabling retrieval.
-- **FR-037a**: The Planner Agent MUST decompose the `ResearchBrief` with a structured, versioned LLM
+- **FR-037a**: The Planner Agent MUST decompose the `ResearchBrief` with a structured LLM
   call whose output is a list of research questions (`TodoPlan.questions`, 1–5 items). Each
   question MUST be standalone, non-blank, and not duplicate another (case-insensitive). The LLM
   MUST NOT set todo IDs or statuses; the system converts each question into a `planned` todo and
@@ -634,13 +635,13 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-038**: Every live workflow execution MUST emit one complete Langfuse trace before it may be
   treated as successfully observed. Each execution trace MUST be grouped under the LangGraph
   `thread_id`, correlated with `run_id`, and contain a root execution observation, child graph-node
-  spans, and nested LangChain model-generation observations including model identity, prompt version,
+  spans, and nested LangChain model-generation observations including model identity,
   attempts, fallback status, validated result or safe error metadata, and final stage. Missing or
   invalid tracing configuration MUST fail a live execution before any model call. Credentials and
   secret values MUST never appear in trace inputs, outputs, metadata, errors, or logs.
 - **FR-038a**: Every Langfuse observation input and output MUST be human-readable text. Structured
   model observations MUST contain the complete rendered instructions and conversation supplied to
-  the model plus the validated response serialized as JSON text. Prompt versions, hashes, IDs, and
+  the model plus the validated response serialized as JSON text. Hashes, IDs, and
   dispatch statuses MAY remain metadata but MUST NOT replace semantic input or output content.
 - **FR-039**: Once a draft passes verification (FR-016c), the system MUST score the whole report's
   RAGAS Faithfulness against the excerpt

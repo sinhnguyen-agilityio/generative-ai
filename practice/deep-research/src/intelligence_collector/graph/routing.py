@@ -12,9 +12,9 @@ from intelligence_collector.graph.state import GraphState
 # Outcomes of route_after_verify; build.py maps "passed" to approval or END.
 PASSED, FIX, NEEDS_REVIEW = "passed", "fix", "needs_review"
 
-# Outcomes of route_after_approval; build.py maps these to END, SYNTHESIZE, or PLAN.
-APPROVED, TO_WRITER, TO_PLANNER, APPROVAL_UNRESOLVED = (
-    "approved", "writer", "planner", "approval_unresolved",
+# Outcomes of route_after_approval; build.py maps these to END, SYNTHESIZE, or CLARIFY.
+APPROVED, TO_FORMAT, TO_SCOPE, APPROVAL_UNRESOLVED = (
+    "approved", "format", "scope", "approval_unresolved",
 )
 
 # ===== CONDITIONAL EDGE ROUTERS =====
@@ -42,8 +42,9 @@ def route_after_verify(state: GraphState) -> str:
 
 
 def route_after_approval(state: GraphState) -> str:
-    """Post-HITL-gate routing: published ends the run; a rejection routes to whichever node
-    the feedback-router classifier chose. ``ApprovalNodes.approval`` always sets exactly one
+    """Post-HITL-gate routing: published ends the run; a rejection routes to whichever path
+    the feedback-router classifier chose: a formatting edit (writer) or a scope change (back
+    to scope clarification). ``ApprovalNodes.approval`` always sets exactly one
     of these outcomes when it runs, so ``APPROVAL_UNRESOLVED`` is only a defensive fallback
     (e.g. an approved decision whose publish failed, such as a stale-hash race) that ends the
     run rather than looping — a reject-shaped outcome without a decision is never inferred.
@@ -51,10 +52,10 @@ def route_after_approval(state: GraphState) -> str:
     if state.get("stage") == Stage.PUBLISHED.value:
         return APPROVED
     route = state.get("feedback_route")
-    if route == "writer":
-        return TO_WRITER
-    if route == "planner":
-        return TO_PLANNER
+    if route == "format":
+        return TO_FORMAT
+    if route == "scope":
+        return TO_SCOPE
     return APPROVAL_UNRESOLVED
 
 

@@ -20,7 +20,6 @@ from __future__ import annotations
 import hashlib
 
 from intelligence_collector.agents.prompts import (
-    REPORT_JUDGE_PROMPT_VERSION,
     REPORT_JUDGE_TEMPLATE,
 )
 from intelligence_collector.contracts import (
@@ -84,7 +83,6 @@ class ReportJudge:
             "verify",
             messages,
             ReportJudgeVerdict,
-            prompt_version=REPORT_JUDGE_PROMPT_VERSION,
             run_id=run_id,
             thread_id=thread_id,
         )

@@ -81,11 +81,7 @@ def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch,
     assert all(isinstance(messages[0], SystemMessage) for messages in model.calls)
     assert any(isinstance(message, HumanMessage) for message in model.calls[0])
     assert question in model.calls[3][-1].content
-    assert traces[0]["prompt_version"] == "guardrail.v1"
-    assert traces[1]["prompt_version"] == "scope.v1"
-    assert traces[2]["prompt_version"] == "scope-brief.v1"
-    assert traces[3]["prompt_version"] == "planner.v5"
-    assert traces[3]["role"] == "planner"
+    assert [trace["role"] for trace in traces[:4]] == ["guardrail", "scope", "scope", "planner"]
     assert traces[0]["selected_model"] == "fake-live-scope"
     assert len(result["messages"]) == 2
     assert isinstance(result["messages"][0], HumanMessage)

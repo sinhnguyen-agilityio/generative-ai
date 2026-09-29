@@ -1033,3 +1033,17 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   `DRAFT_DEFECT`/`EVIDENCE_GAP` routing kept). Tests: `tests/unit/test_report_judge.py`,
   `tests/contract/test_semantic_decision_contracts.py`, `tests/integration/test_bvf_loop.py`. Full suite:
   206 passed, 2 skipped.
+- [X] T149 Rework HITL rejection routing: `FeedbackDecision.route` is now `format` | `scope`
+  (`feedback-router.v2`). `format` -> `synthesizing` with a formatting-only revision strategy; `scope`
+  -> `clarify_with_user` (feedback becomes the next user turn) -> brief -> planning, counters reset.
+  Planner `guidance` removed (`planner.v6`). The classifier now runs on the standard tier and receives
+  only a 3000-char report excerpt (`MAX_REPORT_EXCERPT_CHARS`) to reduce rate-limit failures.
+  `route_after_approval` outcomes are `TO_FORMAT`/`TO_SCOPE`. Tests:
+  `tests/integration/test_approval_gate.py`, `tests/unit/test_feedback_router.py`. Full suite: 207
+  passed, 2 skipped.
+- [X] T150 Remove manual prompt versioning: dropped every `*_PROMPT_VERSION` constant, the
+  "Prompt version: x." sentence inside each prompt, and the `prompt_version` argument of
+  `ModelRouter.invoke_messages`/`invoke_with_tools`, agents and trace events (the trace already stores
+  the full rendered prompt as `input_text`). Test fakes that keyed on version markers now match a
+  distinctive phrase of the prompt. FR-031/032/035/037a/038 and plan.md updated accordingly. Full
+  suite: 207 passed, 2 skipped.

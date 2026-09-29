@@ -36,7 +36,7 @@ class FakeResearchModel:
         question = self._question(messages)
         if question in self.fail_questions:
             raise RuntimeError(f"forced research failure for {question}")
-        if "research-compress.v1" in messages[0].content:
+        if "compress raw web search results" in messages[0].content:
             return AIMessage(content=json.dumps(self.findings.get(question, {
                 "summary": f"Findings for {question} [https://controlled.test]",
                 "sufficient": True,
@@ -75,7 +75,7 @@ class FakeReportModel:
         return items.pop(0) if len(items) > 1 else items[0]
 
     def invoke(self, messages, config=None):
-        if "bvf-reflect.v1" in messages[0].content:
+        if "Fix planner in a Build-Verify-Fix loop" in messages[0].content:
             self.calls.append(("reflect", messages))
             return AIMessage(content=json.dumps(self._next(self.reflections)))
         self.calls.append(("write", messages))

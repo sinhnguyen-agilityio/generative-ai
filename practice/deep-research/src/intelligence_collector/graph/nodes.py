@@ -136,32 +136,28 @@ class PlannerNodes:
         self.vfs = vfs
 
     def planning(self, state: GraphState) -> GraphState:
-        """First-time planning, or a full replan requested by a human reviewer's rejection
-        feedback (``state["human_feedback"]``, set by ``ApprovalNodes.approval`` when the
-        feedback-router classifies it as needing a different research direction). Either way,
-        the resulting ``todos`` fully replace the previous list — but ``evidence``/
-        ``index_refs`` are deliberately left to accumulate rather than reset: the run-scoped
-        ``UrlRegistry`` (``agents/worker.py::persist_research``) already dedupes a URL the new
-        research re-finds, pointing it at its first capture instead of re-indexing it, so
-        discarding old refs here would make that reused, already-good evidence invisible to
-        ``research_complete``'s readiness check. ``draft``/``verification`` are reset: those are
-        genuinely stale once the questions change."""
+        """Plan the research questions for the current brief. Also reached after a reviewer's
+        scope change (``ApprovalNodes.approval`` -> scope clarification -> new brief -> here): the
+        resulting ``todos`` fully replace the previous list, but ``evidence``/``index_refs`` are
+        deliberately left to accumulate rather than reset: the run-scoped ``UrlRegistry``
+        (``agents/worker.py::persist_research``) already dedupes a URL the new research re-finds,
+        pointing it at its first capture instead of re-indexing it, so discarding old refs here
+        would make that reused, already-good evidence invisible to ``research_complete``'s
+        readiness check. ``draft``/``verification`` are reset: those are genuinely stale once
+        the questions change."""
         if self.vfs is None:
             raise RuntimeError("Planning requires an injected VFS")
         brief = ResearchBrief.model_validate(state["scoped_request"])
-        guidance = state.get("human_feedback", "")
         todos = self.planner_agent.write_todos(
             brief,
             self.vfs,
             state["run_id"],
             thread_id=state.get("thread_id", ""),
-            guidance=guidance,
         )
         return {
             **state,
             "stage": Stage.PLANNING.value,
             "todos": [todo.model_dump(mode="json") for todo in todos],
-            "human_feedback": "",
             "draft": "",
             "verification": None,
         }
@@ -332,7 +328,7 @@ class BVFNodes:
 
     def synthesizing(self, state):
         """Build the first draft, a Fix revision applying every automated lesson learned so
-        far, or a revision addressing a human reviewer's rejection feedback (routed here by
+        far, or a formatting-only edit requested by a human reviewer (routed here by
         ``ApprovalNodes.approval`` via the feedback-router classifier — see
         ``state["human_feedback"]``). The human-feedback case takes priority: it only reaches
         this node on a report that already fully PASSED verification, so there is no automated
@@ -344,10 +340,14 @@ class BVFNodes:
         if human_feedback:
             revision = RevisionContext(
                 attempt=state.get("recovery_attempt", 0),
-                failures=f"Human reviewer feedback (not an automated check):\n{human_feedback}",
+                failures=f"Human reviewer formatting request (not an automated check):\n{human_feedback}",
                 previous_draft=state.get("draft", ""),
                 lessons=list(state.get("bvf_lessons", [])),
-                strategy="Revise the report to directly address the reviewer's feedback above.",
+                strategy=(
+                    "Apply ONLY the formatting or presentation changes the reviewer asked for to "
+                    "the previous draft. Keep every claim, number, source and citation exactly "
+                    "as it is: do not add, remove or reword any fact."
+                ),
             )
         elif previous and not previous.get("passed") and state.get("draft"):
             revision = RevisionContext(
@@ -618,11 +618,14 @@ class ApprovalNodes:
 
     * Approve: writes the exact verified artifact (hash-bound to the passing
       ``VerificationResult``) to the permanent output location and ends the run.
-    * Reject, with feedback: a classifier (``feedback_router``) decides whether the feedback
-      reads as a wording-level fix — routed back to ``synthesizing`` with the feedback folded
-      into a revision context — or a sign the research direction itself was wrong — routed
-      back to ``planning`` for a fresh set of research questions. Either path re-enters the
-      normal Build-Verify-Fix loop and can reach this same gate again once it passes.
+    * Reject, with feedback: a classifier (``feedback_router``) decides what the reviewer asked for:
+      - ``format`` (presentation only): back to ``synthesizing``, where the writer edits the
+        existing report's formatting without touching any claim or citation;
+      - ``scope`` (a change in what the report covers): back to ``clarify_with_user``, with the
+        feedback as a new user turn, so the scope agent re-assesses it (it may ask a clarifying
+        question first), rewrites the research brief, and the planner then plans new questions.
+      Either path re-enters the normal Build-Verify-Fix loop and can reach this same gate again
+      once it passes.
     """
 
     def __init__(self, vfs, output_dir: str, feedback_router=None):
@@ -673,8 +676,8 @@ class ApprovalNodes:
             )
         else:
             # No classifier configured, or the reviewer rejected without feedback: default to
-            # the cheaper writer path rather than discarding the whole research plan.
-            verdict = FeedbackDecision(route="writer", reason="No feedback to classify; defaulting to writer.")
+            # the cheaper format path rather than discarding the whole research plan.
+            verdict = FeedbackDecision(route="format", reason="No feedback to classify; defaulting to format.")
 
         attempt = state.get("recovery_attempt", 0) + 1
         history = [*state.get("bvf_history", []), {
@@ -684,18 +687,30 @@ class ApprovalNodes:
             "feedback": feedback,
             "reason": verdict.reason,
         }]
-        next_stage = Stage.SYNTHESIZING if verdict.route == "writer" else Stage.PLANNING
-        return {
-            **state,
+        update = {
             "approval": approval.model_dump(mode="json"),
-            "human_feedback": feedback,
             "feedback_route": verdict.route,
-            "recovery_attempt": attempt,
-            "recovery_budget": state.get("recovery_budget", DEFAULT_RECOVERY_BUDGET),
-            "stage": next_stage.value,
             "current_action": f"Reviewer rejected — routing to {verdict.route}: {verdict.reason or feedback[:120]}",
             "activity": _activity(state, f"Reviewer feedback routed to {verdict.route}", "failure"),
             "bvf_history": history,
+            "recovery_budget": state.get("recovery_budget", DEFAULT_RECOVERY_BUDGET),
+        }
+        if verdict.route == "format":
+            return {
+                **state, **update,
+                "human_feedback": feedback,  # consumed by synthesizing()
+                "recovery_attempt": attempt,
+                "stage": Stage.SYNTHESIZING.value,
+            }
+        # Scope change: the feedback becomes the next user turn of the scope conversation. The
+        # new brief starts a fresh Build-Verify-Fix cycle, so the attempt/stall counters restart.
+        return {
+            **state, **update,
+            "request": feedback,
+            "human_feedback": "",
+            "recovery_attempt": 0,
+            "stall_count": 0,
+            "stage": Stage.SCOPING.value,
         }
 
 

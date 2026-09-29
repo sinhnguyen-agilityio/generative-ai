@@ -34,7 +34,7 @@ def test_allowed_content_proceeds_to_the_scope_model():
     assert len(fake.calls) == 2
 
 
-def test_check_content_safety_uses_the_guardrail_role_and_prompt_version():
+def test_check_content_safety_uses_the_guardrail_role():
     traces = []
     fake = RecordingChatModel([_guardrail_payload()])
     router = ModelRouter(fake, trace=lambda **event: traces.append(event))
@@ -44,4 +44,3 @@ def test_check_content_safety_uses_the_guardrail_role_and_prompt_version():
 
     assert verdict.allowed is True
     assert traces[0]["role"] == "guardrail"
-    assert traces[0]["prompt_version"] == "guardrail.v1"

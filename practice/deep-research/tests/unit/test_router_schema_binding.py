@@ -49,7 +49,7 @@ def test_when_primary_and_fallback_both_fail_the_primary_reason_is_reported():
     )
 
     with pytest.raises(ValueError) as info:
-        router.invoke_messages("synthesizer", [], ContentSafetyVerdict, prompt_version="v")
+        router.invoke_messages("synthesizer", [], ContentSafetyVerdict)
 
     message = str(info.value)
     assert "429 RESOURCE_EXHAUSTED" in message

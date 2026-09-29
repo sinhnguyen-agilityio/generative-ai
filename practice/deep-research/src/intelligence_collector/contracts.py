@@ -297,12 +297,11 @@ class PublicationRecord(Model):
 
 class FeedbackDecision(Model):
     """Structured output of the human-rejection-feedback classifier (see
-    agents/feedback_router.py). Decides whether a reviewer's rejection reads as a
-    wording/citation-level fix (route back to the report writer) or as a sign that the
-    research itself went in the wrong direction (route back to the planner for a fresh set
-    of research questions)."""
+    agents/feedback_router.py). Decides whether a reviewer's rejection only asks for a
+    formatting change ("format": the report writer edits the existing text) or asks for a change
+    in what the report covers ("scope": back to scope clarification, the brief and the planner)."""
 
-    route: Literal["writer", "planner"]
+    route: Literal["format", "scope"]
     reason: str = ""
 
 

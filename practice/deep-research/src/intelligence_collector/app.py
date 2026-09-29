@@ -136,8 +136,8 @@ def _get_scope_graph(st, agent, tracer):
         )(node, status),
         with_approval=True,
         output_dir=settings.output_dir,
-        # Same reasoning-tier model as ReportJudge above.
-        feedback_router=FeedbackRouter(agent.router),
+        # A cheap binary classification, so the standard tier (fewer rate-limit failures).
+        feedback_router=FeedbackRouter(st.session_state.model_routers.standard),
     )
     st.session_state.scope_checkpoint_connection = connection
     st.session_state.scope_graph = graph
@@ -618,8 +618,8 @@ def render():
                 _resume_with_decision({"approved": True, "actor": "local-user"})
         else:
             feedback_text = st.text_area(
-                "Feedback — used to decide whether this needs a wording/citation revision "
-                "(writer) or a different research direction (replanning)",
+                "Feedback — a formatting request edits the current report; a change to what "
+                "it covers goes back to scoping and re-plans the research",
                 key="rejection_feedback",
             )
             feedback_stripped = feedback_text.strip()

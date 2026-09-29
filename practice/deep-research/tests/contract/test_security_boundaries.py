@@ -90,8 +90,7 @@ def test_model_budget_and_trace_redaction_are_enforced():
     router.invoke_messages(
         "test",
         [HumanMessage(content=f"authorization=Bearer-{secret}")],
-        Decision,
-        prompt_version="security-v1",
+        Decision
     )
 
     assert secret not in repr(events)

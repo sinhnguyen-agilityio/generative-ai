@@ -14,9 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from intelligence_collector.agents.prompts import (
-    REFLECTION_PROMPT_VERSION,
     REFLECTION_TEMPLATE,
-    REPORT_WRITER_PROMPT_VERSION,
     REPORT_WRITER_TEMPLATE,
     REVISION_BLOCK,
 )
@@ -169,7 +167,6 @@ class ReportWriter:
             "synthesizer",
             messages,
             DraftAssessment,
-            prompt_version=REPORT_WRITER_PROMPT_VERSION,
             run_id=run_id,
             thread_id=thread_id,
         )
@@ -201,7 +198,6 @@ class ReportWriter:
             "fixer",
             messages,
             Reflection,
-            prompt_version=REFLECTION_PROMPT_VERSION,
             run_id=run_id,
             thread_id=thread_id,
         )

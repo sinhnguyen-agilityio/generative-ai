@@ -8,7 +8,7 @@ def test_model_router_falls_back_once():
     def primary(role, prompt): raise RuntimeError("timeout")
     def fallback(role, prompt): return {"ok": True}
     router=ModelRouter(primary, fallback)
-    result = router.invoke_messages("scope", [HumanMessage(content="hello")], _Decision, prompt_version="t.v1")
+    result = router.invoke_messages("scope", [HumanMessage(content="hello")], _Decision)
     assert result == _Decision(ok=True)
 
 
@@ -31,7 +31,7 @@ def test_invoke_messages_parses_multi_block_thinking_content():
     router = ModelRouter(ThinkingModel())
 
     result = router.invoke_messages(
-        "scope", [HumanMessage(content="hi")], _Decision, prompt_version="test.v1",
+        "scope", [HumanMessage(content="hi")], _Decision
     )
 
     assert result == _Decision(ok=True)
@@ -55,7 +55,7 @@ def test_invoke_messages_uses_provider_native_structured_output():
     router = ModelRouter(StructuredModel())
 
     result = router.invoke_messages(
-        "research_compressor", [HumanMessage(content="hi")], _Decision, prompt_version="t.v1",
+        "research_compressor", [HumanMessage(content="hi")], _Decision
     )
 
     assert result == _Decision(ok=True)

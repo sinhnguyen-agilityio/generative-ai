@@ -1,4 +1,4 @@
-from intelligence_collector.agents.prompts import PLANNER_PROMPT_VERSION, PLANNER_TEMPLATE
+from intelligence_collector.agents.prompts import PLANNER_TEMPLATE
 from intelligence_collector.contracts import (
     ResearchBrief,
     ResearchGraphState,
@@ -32,28 +32,15 @@ class PlannerAgent:
         self,
         brief: ResearchBrief,
         *,
-        guidance: str = "",
         run_id: str = "",
         thread_id: str = "",
     ) -> TodoPlan:
-        """Structured LLM decision: the standalone research questions for the brief.
-
-        ``guidance``, when non-empty, is a human reviewer's replanning feedback on a previous
-        report built from an earlier plan — see ``FEEDBACK_ROUTER_PROMPT``/``graph/nodes.py``'s
-        ``ApprovalNodes``. Empty by default (the normal, first-time planning call).
-        """
-        messages = PLANNER_TEMPLATE.format_messages(
-            brief=brief.research_question,
-            guidance=(
-                f"Reviewer replanning guidance (a previous report was rejected because):\n{guidance}"
-                if guidance else ""
-            ),
-        )
+        """Structured LLM decision: the standalone research questions for the brief."""
+        messages = PLANNER_TEMPLATE.format_messages(brief=brief.research_question)
         return self.router.invoke_messages(
             "planner",
             messages,
             TodoPlan,
-            prompt_version=PLANNER_PROMPT_VERSION,
             run_id=run_id,
             thread_id=thread_id,
         )
@@ -65,10 +52,9 @@ class PlannerAgent:
         run_id: str,
         *,
         thread_id: str = "",
-        guidance: str = "",
     ) -> list[ResearchTodo]:
         """Define the plan, then durably record the todos."""
-        plan = self.define_plan(brief, guidance=guidance, run_id=run_id, thread_id=thread_id)
+        plan = self.define_plan(brief, run_id=run_id, thread_id=thread_id)
         return create_todos(vfs, run_id, plan.questions)
 
 

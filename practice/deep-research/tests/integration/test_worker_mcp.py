@@ -40,8 +40,6 @@ def test_research_agent_searches_broad_then_narrow_and_persists_provenance(store
     assert [event["role"] for event in traces] == [
         "researcher", "researcher", "researcher", "research_compressor",
     ]
-    assert traces[0]["prompt_version"] == "researcher.v3"
-    assert traces[-1]["prompt_version"] == "research-compress.v1"
     assert {ref.kind for ref in refs} == {
         "raw_capture", "url_registry", "notes", "excerpts", "evidence_bundle",
     }

@@ -37,15 +37,7 @@ def test_all_semantic_roles_use_structured_router():
                                                 "supervisor", "worker", "synthesizer", "verifier", "fixer"}
 
 
-def test_every_semantic_role_prompt_is_versioned_and_instructive():
-    expected = {
-        "planner": "planner.v5",
-        "supervisor": "supervisor.v1",
-        "worker": "worker.v1",
-        "synthesizer": "synthesis.v1",
-        "verifier": "verifier.v1",
-        "fixer": "fixer.v1",
-    }
+def test_every_semantic_role_prompt_is_instructive():
     variables = {
         "planner": {"brief": "brief"},
         "supervisor": {"context": "context"},
@@ -55,10 +47,9 @@ def test_every_semantic_role_prompt_is_versioned_and_instructive():
         "fixer": {"feedback": "feedback"},
     }
 
-    for role, version in expected.items():
+    for role, values in variables.items():
         rendered = "\n".join(
             str(message.content)
-            for message in ROLE_TEMPLATES[role].format_messages(**variables[role])
+            for message in ROLE_TEMPLATES[role].format_messages(**values)
         )
-        assert version in rendered
         assert "Return only" in rendered

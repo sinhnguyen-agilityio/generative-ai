@@ -7,11 +7,8 @@ from intelligence_collector.contracts import (
     ScopedRequest,
 )
 from intelligence_collector.agents.prompts import (
-    BRIEF_PROMPT_VERSION,
     BRIEF_TEMPLATE,
-    GUARDRAIL_PROMPT_VERSION,
     GUARDRAIL_TEMPLATE,
-    PROMPT_VERSION,
     SCOPE_TEMPLATE,
 )
 from intelligence_collector.guardrails import ContentSafetyVerdict, GuardrailViolation
@@ -92,7 +89,6 @@ class ScopeAgent:
             "guardrail",
             messages,
             ContentSafetyVerdict,
-            prompt_version=GUARDRAIL_PROMPT_VERSION,
             run_id=run_id,
             thread_id=thread_id,
         )
@@ -117,7 +113,6 @@ class ScopeAgent:
             "scope",
             messages,
             ScopeAssessment,
-            prompt_version=PROMPT_VERSION,
             run_id=run_id,
             thread_id=thread_id,
         )
@@ -143,7 +138,6 @@ class ScopeAgent:
             "scope",
             messages,
             ResearchBrief,
-            prompt_version=BRIEF_PROMPT_VERSION,
             run_id=run_id,
             thread_id=thread_id,
         )

@@ -26,9 +26,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from intelligence_collector.agents.prompts import (
-    COMPRESS_PROMPT_VERSION,
     COMPRESS_TEMPLATE,
-    RESEARCHER_PROMPT_VERSION,
     RESEARCHER_TEMPLATE,
 )
 from intelligence_collector.contracts import ResearchFindings
@@ -213,7 +211,6 @@ class ResearchAgent:
                 "researcher",
                 messages,
                 [SEARCH_TOOL],
-                prompt_version=RESEARCHER_PROMPT_VERSION,
                 run_id=run_id,
                 thread_id=thread_id,
                 # Without a forced first search, lighter models answer from prior knowledge and
@@ -305,7 +302,6 @@ class ResearchAgent:
                     "research_compressor",
                     messages,
                     ResearchFindings,
-                    prompt_version=COMPRESS_PROMPT_VERSION,
                     run_id=run_id,
                     thread_id=thread_id,
                 )

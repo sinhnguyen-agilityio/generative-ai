@@ -119,9 +119,9 @@ def test_approve_publishes_the_verified_report_to_output_dir(stores, tmp_path):
     assert published.read_text(encoding="utf-8") == GOOD
 
 
-def test_reject_with_writer_route_revises_the_report_then_can_be_approved(stores, tmp_path):
+def test_reject_with_format_route_edits_the_report_then_can_be_approved(stores, tmp_path):
     report_model = FakeReportModel([GOOD, GOOD])
-    feedback_model = FakeFeedbackRouterModel([{"route": "writer", "reason": "Just wording."}])
+    feedback_model = FakeFeedbackRouterModel([{"route": "format", "reason": "Just formatting."}])
     graph = _bvf_graph(
         stores, report_model,
         feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
@@ -131,25 +131,26 @@ def test_reject_with_writer_route_revises_the_report_then_can_be_approved(stores
 
     graph.invoke(_initial_state(), config)
     paused_again = graph.invoke(
-        Command(resume={"approved": False, "feedback": "Please tighten the wording."}), config,
+        Command(resume={"approved": False, "feedback": "Please use bullet points."}), config,
     )
 
     assert paused_again.get("__interrupt__")
     assert paused_again["stage"] == "Awaiting Approval"
-    assert paused_again["feedback_route"] == "writer"
+    assert paused_again["feedback_route"] == "format"
     assert paused_again["human_feedback"] == ""  # consumed by synthesizing()
     assert feedback_model.calls
     write_prompts = report_model.prompts("write")
     assert len(write_prompts) == 2
-    assert "Please tighten the wording." in write_prompts[1]
+    assert "Please use bullet points." in write_prompts[1]
+    assert "ONLY the formatting" in write_prompts[1]  # the writer is told not to touch content
     human_entries = [e for e in paused_again["bvf_history"] if e["issue_type"] == "HUMAN_FEEDBACK"]
-    assert human_entries and human_entries[0]["route"] == "writer"
+    assert human_entries and human_entries[0]["route"] == "format"
 
     result = graph.invoke(Command(resume={"approved": True}), config)
     assert result["stage"] == "Published"
 
 
-def test_reject_without_a_feedback_router_defaults_to_writer(stores, tmp_path):
+def test_reject_without_a_feedback_router_defaults_to_format(stores, tmp_path):
     report_model = FakeReportModel([GOOD, GOOD])
     graph = _bvf_graph(stores, report_model, feedback_router=None, output_dir=tmp_path / "exports")
     config = {"configurable": {"thread_id": "approval-run"}}
@@ -159,18 +160,19 @@ def test_reject_without_a_feedback_router_defaults_to_writer(stores, tmp_path):
         Command(resume={"approved": False, "feedback": "not great"}), config,
     )
 
-    assert paused_again["feedback_route"] == "writer"
+    assert paused_again["feedback_route"] == "format"
 
 
-def test_reject_with_planner_route_triggers_a_full_replan(stores, tmp_path):
+def test_reject_with_scope_route_goes_back_through_scoping_and_replans(stores, tmp_path):
     vfs, index = stores
     shared_model = RecordingChatModel([
         _guardrail_payload(), _clear_payload(), _brief_payload(),
         _single_question_plan(),  # initial plan
-        _single_question_plan(),  # replan after rejection
+        _guardrail_payload(), _clear_payload(), _brief_payload(),  # feedback re-enters scoping
+        _single_question_plan(),  # replan after the scope change
     ])
     shared_router = ModelRouter(shared_model)
-    feedback_model = FakeFeedbackRouterModel([{"route": "planner", "reason": "Wrong direction."}])
+    feedback_model = FakeFeedbackRouterModel([{"route": "scope", "reason": "Changes what is covered."}])
 
     researcher = ResearchAgent(
         ModelRouter(FakeResearchModel()),
@@ -204,21 +206,21 @@ def test_reject_with_planner_route_triggers_a_full_replan(stores, tmp_path):
     assert paused["stage"] == "Awaiting Approval"
 
     paused_again = graph.invoke(
-        Command(resume={"approved": False, "feedback": "The research answered the wrong angle."}),
+        Command(resume={"approved": False, "feedback": "Also cover the wrong angle: eviction policies."}),
         config,
     )
 
     assert paused_again.get("__interrupt__")
     assert paused_again["stage"] == "Awaiting Approval"
-    assert paused_again["feedback_route"] == "planner"
-    assert paused_again["human_feedback"] == ""  # consumed by planning()
+    assert paused_again["feedback_route"] == "scope"
+    assert paused_again["human_feedback"] == ""
     assert paused_again["todos"]
     human_entries = [e for e in paused_again["bvf_history"] if e["issue_type"] == "HUMAN_FEEDBACK"]
-    assert human_entries and human_entries[0]["route"] == "planner"
-    # The replan call actually received the reviewer's guidance in its prompt.
-    replan_call = shared_model.calls[-1]
-    rendered = "\n".join(str(m.content) for m in replan_call)
-    assert "wrong angle" in rendered
+    assert human_entries and human_entries[0]["route"] == "scope"
+    # The feedback re-entered scoping as a new user turn, before the brief and plan were redone.
+    scope_prompts = ["\n".join(str(m.content) for m in call) for call in shared_model.calls[4:]]
+    assert any("eviction policies" in prompt for prompt in scope_prompts)
+    assert paused_again["recovery_attempt"] == 0  # a new scope starts a fresh Build-Verify-Fix cycle
 
     result = graph.invoke(Command(resume={"approved": True}), config)
 
