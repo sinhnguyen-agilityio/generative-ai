@@ -77,7 +77,7 @@ def test_targeted_gap_research_preserves_prior_evidence(stores):
         verification=failed_verification(),
     )
     mcp = ControlledMCP([{"url": "https://fixture", "content": "target evidence"}])
-    researcher = ResearchAgent(ModelRouter(FakeResearchModel(), mode="fake"), lambda: mcp)
+    researcher = ResearchAgent(ModelRouter(FakeResearchModel()), lambda: mcp)
 
     updated = targeted_research_node(state, vfs, index, "target gap", researcher)
 

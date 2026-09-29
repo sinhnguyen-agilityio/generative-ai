@@ -1,6 +1,9 @@
+import json
 from pathlib import Path
 
-from intelligence_collector.config import LangfuseSettings, load_local_env
+import pytest
+
+from intelligence_collector.config import DEFAULT_REPORT_GUIDELINES, LangfuseSettings, Settings, load_local_env
 
 
 def test_local_env_does_not_override_process_environment(monkeypatch, tmp_path):
@@ -36,3 +39,27 @@ def test_langfuse_settings_use_base_url_and_trim_values(monkeypatch):
     assert settings.public_key == "public-key"
     assert settings.secret_key == "secret-key"
     assert settings.host == "https://us.cloud.langfuse.com"
+
+
+def test_report_guidelines_default_to_the_built_in_checklist(monkeypatch):
+    monkeypatch.delenv("INTELLIGENCE_REPORT_GUIDELINES", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.report_guidelines == DEFAULT_REPORT_GUIDELINES
+
+
+def test_report_guidelines_are_overridable_via_env_json_array(monkeypatch):
+    custom = ["The report MUST cite at least three independent sources."]
+    monkeypatch.setenv("INTELLIGENCE_REPORT_GUIDELINES", json.dumps(custom))
+
+    settings = Settings.from_env()
+
+    assert settings.report_guidelines == custom
+
+
+def test_report_guidelines_rejects_non_string_array(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_REPORT_GUIDELINES", json.dumps({"not": "a list"}))
+
+    with pytest.raises(ValueError, match="INTELLIGENCE_REPORT_GUIDELINES"):
+        Settings.from_env()

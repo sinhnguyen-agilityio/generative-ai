@@ -134,13 +134,16 @@ def catalog_from_bundles(bundles: list[dict]) -> SourceCatalog:
                 catalog.sources[by_url[key]] = CatalogSource(
                     source_id=by_url[key],
                     url=url,
-                    title=str(provenance.get("title") or source.get("title") or ""),
-                    excerpt=str(source.get("excerpt") or source.get("content") or ""),
+                    title=str(provenance.get("title")
+                              or source.get("title") or ""),
+                    excerpt=str(source.get("excerpt")
+                                or source.get("content") or ""),
                 )
             if by_url[key] not in source_ids:
                 source_ids.append(by_url[key])
         gaps = [
-            EvidenceGap(gap_id(todo_id, text), todo_id, question, str(text).strip())
+            EvidenceGap(gap_id(todo_id, text), todo_id,
+                        question, str(text).strip())
             for text in bundle.get("unresolved_gaps", [])
             if str(text).strip()
         ]
@@ -175,7 +178,8 @@ def evidence_task_ids(evidence_refs: list[dict]) -> list[str]:
 def load_catalog(vfs, run_id: str, evidence_refs: list[dict]) -> SourceCatalog:
     """Read the evidence bundles referenced by graph state (in research order)."""
     bundles = [
-        json.loads(vfs.read(run_id, f"research/{task_id}/evidence/result.json"))
+        json.loads(
+            vfs.read(run_id, f"research/{task_id}/evidence/result.json"))
         for task_id in evidence_task_ids(evidence_refs)
     ]
     return catalog_from_bundles(bundles)
@@ -186,7 +190,8 @@ def save_catalog_state(vfs, run_id: str, evidence_refs: list[dict], researched_g
     return vfs.write_json(
         run_id,
         CATALOG_STATE_PATH,
-        {"task_ids": evidence_task_ids(evidence_refs), "researched_gaps": list(researched_gaps)},
+        {"task_ids": evidence_task_ids(
+            evidence_refs), "researched_gaps": list(researched_gaps)},
         "verification_catalog",
     )
 
@@ -260,8 +265,10 @@ def extract_claims(report: str) -> list[Claim]:
                 words = _strip_markup(sentence).split()
                 if len(words) < MIN_CLAIM_WORDS:
                     continue
-                digest = hashlib.sha1(" ".join(words).casefold().encode()).hexdigest()[:10]
-                claims.append(Claim(f"claim:{digest}", sentence.strip(), tuple(_cited_ids(sentence))))
+                digest = hashlib.sha1(
+                    " ".join(words).casefold().encode()).hexdigest()[:10]
+                claims.append(
+                    Claim(f"claim:{digest}", sentence.strip(), tuple(_cited_ids(sentence))))
     return claims
 
 
@@ -313,59 +320,105 @@ def verify_report(
     researched_gaps: list[str] | tuple[str, ...] = (),
 ) -> VerificationResult:
     """Run every source-verification check; the report passes only if all of them pass."""
-    artifact_hash = hashlib.sha256(report.encode()).hexdigest() if report else ""
+    # Hash the exact report text now -- this hash is what the human-approval step later binds
+    # its decision to, so it must be computed before any check can mutate/replace `report`.
+    artifact_hash = hashlib.sha256(
+        report.encode()).hexdigest() if report else ""
+    # Every check below appends one VerificationCheck to this list; the report only passes if
+    # none of them recorded a failure.
     checks: list[VerificationCheck] = []
 
+    # Check 1: evidence_present -- the run must have at least one stored source to cite at all.
     checks.append(_check("evidence_present", [] if catalog.sources else [
         ("The run has no stored evidence sources to cite.", "evidence")
     ], IssueType.EVIDENCE_GAP))
+    # `researched_gaps` is the state's record of which evidence gaps already got a follow-up
+    # search; turned into a set for O(1) membership checks below.
     researched = set(researched_gaps)
+    # Check 2: evidence_gaps_researched -- every gap the research phase flagged must have been
+    # looked into once (via researching_gaps) before the report can be verified; one failure
+    # entry per gap that was never followed up on.
     checks.append(_check("evidence_gaps_researched", [
         (f"Unresearched gap for '{_short(gap.question, 80)}': {gap.text}", gap.gap_id)
         for gap in catalog.gaps
         if gap.gap_id not in researched
     ], IssueType.EVIDENCE_GAP))
 
+    # Parse the report into (heading, body-lines) sections once; every later check reuses this.
     sections = _sections(report)
+    # Section titles excluding the "" preamble section that comes before the first heading.
     titles = [title for title, _ in sections[1:]]
-    first_line = next((line.strip() for line in report.splitlines() if line.strip()), "")
+    # First non-blank line of the report, used to check for the required "# Title".
+    first_line = next((line.strip()
+                      for line in report.splitlines() if line.strip()), "")
     structure = []
+    # The report must open with a Markdown H1 title.
     if not first_line.startswith("# "):
-        structure.append(("The report must start with a single '# ' title line.", "structure:title"))
+        structure.append(
+            ("The report must start with a single '# ' title line.", "structure:title"))
+    # The report must end with a "## Sources" (or "## References") section.
     if not any(title.startswith(("sources", "references")) for title in titles):
-        structure.append(("The report must end with a '## Sources' section.", "structure:sources"))
+        structure.append(
+            ("The report must end with a '## Sources' section.", "structure:sources"))
+    # At least one real content section must exist -- Scope/Limitations/Sources alone isn't a
+    # report.
     if not any(not _is_exempt(title) for title in titles):
-        structure.append(("The report needs at least one '## ' body section with findings.", "structure:body"))
+        structure.append(
+            ("The report needs at least one '## ' body section with findings.", "structure:body"))
+    # Check 3: structure -- fails if any of the three structural rules above was violated.
     checks.append(_check("structure", structure))
 
+    # Every sentence outside the exempt sections, each tagged with which [S<n>] ids it cites.
     claims = extract_claims(report)
+    # Every citation id mentioned anywhere in the whole report (used just below).
     all_cited = _cited_ids(report)
+    # Check 4: citation_ids_known -- every cited id must actually exist in the evidence catalog
+    # (guards against a hallucinated source number).
     checks.append(_check("citation_ids_known", [
         (f"Citation [{sid}] is not in the source catalog.", f"citation:{sid}")
         for sid in dict.fromkeys(all_cited)
         if sid not in catalog.sources
     ]))
+    # Check 5: claims_cited -- every claim sentence must cite at least one source.
     checks.append(_check("claims_cited", [
         (f"Uncited claim: \"{_short(claim.text)}\"", claim.claim_id)
         for claim in claims
         if not claim.cited
     ]))
 
+    # Check 6: claims_grounded -- for every cited claim, the cited source text must actually
+    # support it (not just exist).
     grounding = []
     for claim in claims:
-        cited = [catalog.sources[sid] for sid in claim.cited if sid in catalog.sources]
+        # The actual CatalogSource objects this claim cites (skips any unknown id, already
+        # reported by citation_ids_known above).
+        cited = [catalog.sources[sid]
+                 for sid in claim.cited if sid in catalog.sources]
         if not cited:
             continue
-        source_numbers, source_words = _tokens(" ".join(f"{s.title} {s.excerpt}" for s in cited))
+        # Numbers and significant word-stems found in the combined title+excerpt of every
+        # source this claim cites.
+        source_numbers, source_words = _tokens(
+            " ".join(f"{s.title} {s.excerpt}" for s in cited))
+        # Same tokenization of the claim itself, with "as of <date>" stripped first since that
+        # clause describes the report's own generation time, not something a source can state.
         numbers, words = _tokens(_AS_OF_CLAUSE.sub(" ", claim.text))
+        # Human-readable "[S1][S2]"-style label for the error message below.
         label = "".join(f"[{s.source_id}]" for s in cited)
-        missing = sorted(n for n in numbers if not _number_supported(n, source_numbers))
+        # Any number in the claim (a stat, a date, a count) that doesn't appear verbatim (or as
+        # a prefix, e.g. "12" matching "12.5") in the cited source text.
+        missing = sorted(
+            n for n in numbers if not _number_supported(n, source_numbers))
         if missing:
+            # A missing number is grounds for failure on its own, regardless of word overlap.
             grounding.append((
                 f"Number(s) {', '.join(missing)} in \"{_short(claim.text)}\" do not appear in {label}.",
                 claim.claim_id,
             ))
         elif len(words) >= 3:
+            # No numeric mismatch: fall back to word-overlap between the claim and its cited
+            # source text -- too little overlap means the citation likely doesn't actually
+            # support this specific sentence.
             overlap = len(words & source_words) / len(words)
             if overlap < MIN_WORD_OVERLAP:
                 grounding.append((
@@ -375,13 +428,18 @@ def verify_report(
                 ))
     checks.append(_check("claims_grounded", grounding))
 
+    # Every unique, normalized URL that exists anywhere in the evidence catalog.
     known_urls = catalog.urls
+    # Check 7: urls_known -- every URL that appears in the report text must be one that was
+    # actually retrieved as evidence (guards against a fabricated link).
     checks.append(_check("urls_known", [
         (f"URL {url} is not in the stored evidence.", f"url:{url}")
         for url in dict.fromkeys(_normalize_url(u) for u in _URL.findall(report))
         if url not in known_urls
     ]))
 
+    # Map of source id -> URL, as actually written in the report's own "## Sources" section
+    # (not the catalog -- this checks what the report *claims*, against what the catalog says).
     listed: dict[str, str] = {}
     for title, lines in sections:
         if title.startswith(("sources", "references")):
@@ -389,20 +447,28 @@ def verify_report(
                 ids, urls = _cited_ids(line), _URL.findall(line)
                 if ids and urls:
                     listed[ids[0]] = _normalize_url(urls[0])
+    # Every source id cited anywhere in the report body (used to cross-check against `listed`).
     body_cited = {sid for claim in claims for sid in claim.cited}
+    # Every id cited in the body but missing from the "## Sources" listing.
     source_listing = [
-        (f"[{sid}] is cited but not listed in '## Sources' with its URL.", f"sources:{sid}")
+        (f"[{sid}] is cited but not listed in '## Sources' with its URL.",
+         f"sources:{sid}")
         for sid in sorted(body_cited & catalog.sources.keys(), key=lambda s: int(s[1:]))
         if sid not in listed
     ]
+    # Every id that IS listed in "## Sources" but with the wrong URL (should match the catalog).
     source_listing += [
         (f"'## Sources' lists [{sid}] with {url}, but its URL is {catalog.sources[sid].url}.",
          f"sources:{sid}")
         for sid, url in listed.items()
         if sid in catalog.sources and url != _normalize_url(catalog.sources[sid].url)
     ]
+    # Check 8: sources_section -- combines both kinds of listing mismatch above.
     checks.append(_check("sources_section", source_listing))
 
+    # Check 9: question_coverage -- every research question that produced sources must have at
+    # least one of those sources actually cited somewhere in the report body (otherwise the
+    # research was wasted and the question goes unanswered in the final text).
     checks.append(_check("question_coverage", [
         (f"No claim cites evidence for the research question: {_short(bundle.question)}",
          f"question:{bundle.todo_id}")
@@ -410,6 +476,7 @@ def verify_report(
         if bundle.source_ids and not set(bundle.source_ids) & body_cited
     ]))
 
+    # Full text of the "## Limitations" section (if any), used to check gap disclosure below.
     limitations = " ".join(
         " ".join(lines) for title, lines in sections if title.startswith("limitations")
     )
@@ -417,16 +484,25 @@ def verify_report(
     undisclosed = []
     for gap in catalog.gaps:
         _, gap_words = _tokens(gap.text)
-        overlap = len(gap_words & limitation_words) / len(gap_words) if gap_words else 1.0
+        # Fraction of the gap's own significant words that also appear under Limitations; an
+        # empty gap counts as fully "overlapping" (nothing to disclose) rather than failing.
+        overlap = len(gap_words & limitation_words) / \
+            len(gap_words) if gap_words else 1.0
         if not limitations or overlap < MIN_GAP_DISCLOSURE_OVERLAP:
             undisclosed.append((
                 f"Unresolved gap is not disclosed under '## Limitations': {gap.text}", gap.gap_id
             ))
+    # Check 10: gaps_disclosed -- any gap that was never researched (see check 2) must at least
+    # be honestly written up under Limitations rather than silently omitted.
     checks.append(_check("gaps_disclosed", undisclosed))
 
+    # Collect every check that recorded at least one failure.
     failed = [check for check in checks if not check.passed]
     issue = None
     if failed:
+        # One overall issue type for the whole result: EVIDENCE_GAP takes priority (it needs
+        # more research, not just a rewrite) whenever any failed check was evidence-related;
+        # otherwise it's a DRAFT_DEFECT (a wording/citation problem the writer can fix directly).
         issue = (
             IssueType.EVIDENCE_GAP
             if any(check.issue_type == IssueType.EVIDENCE_GAP for check in failed)
@@ -434,13 +510,21 @@ def verify_report(
         )
     return VerificationResult(
         artifact_hash=artifact_hash,
+        # Passes only if literally zero checks failed.
         passed=not failed,
         checks=[check.name for check in checks],
         issue_type=issue,
-        affected_ids=list(dict.fromkeys(a for check in failed for a in check.affected_ids)),
+        # Every affected id from every failed check, in order, with duplicates removed --
+        # feeds the Fix step so it knows exactly what to target.
+        affected_ids=list(dict.fromkeys(
+            a for check in failed for a in check.affected_ids)),
+        # Every failure detail message from every failed check, one per line, prefixed with
+        # which check it came from -- this is what gets shown to the reviewer/writer.
         repair_details="\n".join(
             f"[{check.name}] {detail}" for check in failed for detail in check.details
         ),
+        # Full per-check detail (not just names), used by callers that need more than the
+        # summary, e.g. the Streamlit UI's failed-checks list.
         check_results=checks,
     )
 
@@ -463,26 +547,31 @@ def failure_fingerprint(result: VerificationResult) -> str:
 def main(argv: list[str] | None = None) -> int:
     from intelligence_collector.config import Settings
 
-    parser = argparse.ArgumentParser(description="Verify a research report against its sources.")
+    parser = argparse.ArgumentParser(
+        description="Verify a research report against its sources.")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--vfs-root", default=Settings().vfs_root)
-    parser.add_argument("--report", default="reports/latest.md", help="path inside the run")
+    parser.add_argument(
+        "--report", default="reports/latest.md", help="path inside the run")
     args = parser.parse_args(argv)
 
     run_dir = Path(args.vfs_root) / args.run_id
     # The graph records the catalog order so S<n> ids match the ones the report cites.
     state_path = run_dir / CATALOG_STATE_PATH
-    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    state = json.loads(state_path.read_text(encoding="utf-8")
+                       ) if state_path.exists() else {}
     task_ids = state.get("task_ids") or sorted(
         path.parent.parent.name for path in run_dir.glob("research/*/evidence/result.json")
     )
     bundles = [
-        json.loads((run_dir / "research" / task_id / "evidence" / "result.json").read_text(encoding="utf-8"))
+        json.loads((run_dir / "research" / task_id / "evidence" /
+                   "result.json").read_text(encoding="utf-8"))
         for task_id in task_ids
     ]
     researched = state.get("researched_gaps", [])
     report = (run_dir / args.report).read_text(encoding="utf-8")
-    result = verify_report(report, catalog_from_bundles(bundles), researched_gaps=researched)
+    result = verify_report(report, catalog_from_bundles(
+        bundles), researched_gaps=researched)
     print(result.model_dump_json(indent=2))
     return 0 if result.passed else 1
 

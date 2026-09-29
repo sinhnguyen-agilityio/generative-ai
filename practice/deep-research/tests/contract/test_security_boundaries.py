@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from intelligence_collector.config import LangfuseSettings, Settings
@@ -84,12 +85,11 @@ def test_model_budget_and_trace_redaction_are_enforced():
     router = ModelRouter(
         lambda role, prompt: {"answer": f"token={secret}"},
         max_attempts=1,
-        mode="fake",
         trace=lambda **event: events.append(event),
     )
-    router.invoke_structured(
+    router.invoke_messages(
         "test",
-        f"authorization=Bearer-{secret}",
+        [HumanMessage(content=f"authorization=Bearer-{secret}")],
         Decision,
         prompt_version="security-v1",
     )

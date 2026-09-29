@@ -1,3 +1,4 @@
+import contextvars
 import json
 import threading
 import time
@@ -12,7 +13,7 @@ from tests.fixtures.fake_models import FakeResearchModel
 
 
 def _researcher(model, mcp_factory, **kwargs):
-    return ResearchAgent(ModelRouter(model, mode="fake", **kwargs), mcp_factory)
+    return ResearchAgent(ModelRouter(model, **kwargs), mcp_factory)
 
 
 def test_research_agent_searches_broad_then_narrow_and_persists_provenance(stores):
@@ -206,6 +207,44 @@ def test_supervisor_delegates_one_sub_agent_per_todo_in_parallel(stores):
     assert len(clients) == 3  # a fresh MCP client, and search budget, per sub-agent
     assert all(client.calls == 4 for client in clients)
     assert peak == 2
+
+
+def test_research_sub_agents_inherit_the_calling_thread_context_for_tracing(stores):
+    """Sub-agents run off the event loop via asyncio.to_thread (ResearchSupervisor.
+    _gather_sub_agents), which propagates the calling contextvars.Context into its worker thread
+    automatically. Langfuse's OpenTelemetry-based "current span" lives in exactly that context,
+    so if this ever regressed (e.g. back to a bare ThreadPoolExecutor with no context handling),
+    every sub-agent's LLM call traces would detach from the run's trace instead of nesting under
+    it. ModelRouter's `trace` hook fires from inside the worker thread, so it's the right place
+    to observe whether the context made it."""
+    vfs, index = stores
+    probe: contextvars.ContextVar[str] = contextvars.ContextVar("probe")
+    token = probe.set("main-thread-value")
+    seen: list[str] = []
+
+    def capture_trace(**_event):
+        try:
+            seen.append(probe.get())
+        except LookupError:
+            seen.append("<EMPTY>")
+
+    try:
+        todos = [ResearchTodo(research_question=f"Question {n}") for n in range(3)]
+        supervisor = ResearchSupervisor(
+            _researcher(
+                FakeResearchModel(),
+                lambda: ControlledMCP([{"url": "https://primary.test/0", "content": "evidence"}]),
+                trace=capture_trace,
+            ),
+            vfs, index, max_concurrent_researchers=3,
+        )
+
+        supervisor.delegate("context-probe", todos)
+    finally:
+        probe.reset(token)
+
+    assert seen  # the trace hook actually fired from inside the worker threads
+    assert all(value == "main-thread-value" for value in seen)
 
 
 def test_sub_agent_does_not_repeat_a_url_it_already_retrieved(stores):

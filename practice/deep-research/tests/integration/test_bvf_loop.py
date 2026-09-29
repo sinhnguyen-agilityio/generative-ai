@@ -1,13 +1,13 @@
 import json
 
-from intelligence_collector.agents.acceptance_verifier import AcceptanceVerifier
+from intelligence_collector.agents.report_judge import ReportJudge
 from intelligence_collector.agents.report_writer import ReportWriter
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.contracts import ResearchTodo
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
-from intelligence_collector.source_verification import gap_id, load_catalog, main as verify_script
+from intelligence_collector.source_verification import gap_id, load_catalog
 from intelligence_collector.tools.mcp import ControlledMCP
 from tests.fixtures.fake_models import (
     FakeAcceptanceModel,
@@ -20,25 +20,48 @@ URL = "https://controlled.test/cache"
 QUESTION = "How does a local software cache store and reuse data?"
 BRIEF = {"research_question": "I want a technical report on local software cache behavior from primary sources."}
 GOOD = cited_report(["A cache stores reusable data for later access [S1]."], {"S1": URL})
+IMPROVED = cited_report(
+    ["A cache stores reusable data for later access [S1].",
+     "The cache reuses that stored data across later requests [S1]."], {"S1": URL},
+)
 
 
-def _uncited(sentence: str) -> str:
-    return cited_report(["A cache stores reusable data for later access [S1].", sentence], {"S1": URL})
+def _pass(criterion="Answers the research question"):
+    return {"criterion": criterion, "met": True, "justification": "Satisfied."}
+
+
+def _fail(criterion="Answers the research question", justification="Not yet addressed.",
+          issue_type="DRAFT_DEFECT"):
+    return {"criterion": criterion, "met": False, "issue_type": issue_type, "justification": justification}
+
+
+def _judge(verdicts) -> FakeAcceptanceModel:
+    """Scripted report-judge fake: each item is a full ReportJudgeVerdict-shaped dict (one
+    ``results`` list). The BVF loop calls the judge once per Verify attempt."""
+    return FakeAcceptanceModel(verdicts)
+
+
+def _passing_judge() -> FakeAcceptanceModel:
+    """A judge fake that always reports every criterion met, for tests that only care about the
+    BVF loop mechanics around the writer/researcher, not judge behavior itself."""
+    return _judge([{"results": [_pass()]}])
 
 
 def _run(stores, report_model, *, research_model=None, budget=3, run_id="bvf",
-          acceptance_verifier=None, acceptance_criteria=None, faithfulness_evaluator=None):
+         report_judge=None, report_guidelines=(),
+         faithfulness_evaluator=None):
     vfs, index = stores
     researcher = ResearchAgent(
-        ModelRouter(research_model or FakeResearchModel(), mode="fake"),
+        ModelRouter(research_model or FakeResearchModel()),
         lambda: ControlledMCP([{"url": URL, "content": "A cache stores reusable data for later access."}]),
     )
     nodes = ResearchNodes(
         vfs,
         index,
         researcher,
-        report_writer=ReportWriter(ModelRouter(report_model, mode="fake")),
-        acceptance_verifier=acceptance_verifier,
+        report_writer=ReportWriter(ModelRouter(report_model)),
+        report_judge=ReportJudge(ModelRouter(report_judge or _passing_judge())),
+        report_guidelines=report_guidelines,
         recovery_budget=budget,
         faithfulness_evaluator=faithfulness_evaluator,
     )
@@ -48,48 +71,51 @@ def _run(stores, report_model, *, research_model=None, budget=3, run_id="bvf",
         "thread_id": run_id,
         "scoped_request": BRIEF,
         "todos": [todo.model_dump(mode="json")],
-        "acceptance_criteria": acceptance_criteria or [],
     })
 
 
 def test_failed_draft_is_reflected_on_and_fixed_with_lessons(stores):
     vfs, _ = stores
-    bad = _uncited("Caches also make every workload faster overall.")
-    model = FakeReportModel([bad, GOOD], reflections=[{
-        "diagnosis": "The draft added a generalisation that no source states.",
-        "lessons": ["Only state what a cited excerpt says; drop unsourced generalisations."],
-        "strategy": "Remove the unsupported sentence instead of guessing a citation.",
+    model = FakeReportModel([GOOD, IMPROVED], reflections=[{
+        "diagnosis": "The draft never actually describes how the cache reuses stored data.",
+        "lessons": ["State explicitly how the cache reuses stored data, cited."],
+        "strategy": "Add one sentence stating the reuse mechanism, cited.",
     }])
+    judge = _judge([
+        {"results": [_fail(justification="The report never states how the cache reuses data.")]},
+        {"results": [_pass()]},
+    ])
 
-    result = _run(stores, model)
+    result = _run(stores, model, report_judge=judge)
 
     assert result["stage"] == "Awaiting Approval"
     assert result["verification"]["passed"] is True
     assert [v["passed"] for v in result["verification_history"]] == [False, True]
     assert result["recovery_attempt"] == 1
-    assert result["bvf_lessons"] == ["Only state what a cited excerpt says; drop unsourced generalisations."]
+    assert result["bvf_lessons"] == ["State explicitly how the cache reuses stored data, cited."]
     reflect_prompt = model.prompts("reflect")[0]
-    assert "[claims_cited] Uncited claim" in reflect_prompt
+    assert "[criterion_1]" in reflect_prompt
+    assert "never states how the cache reuses data" in reflect_prompt
     assert "No progress since the previous attempt: no" in reflect_prompt
     fix_prompt = model.prompts("write")[1]
     assert "BVF fix attempt 1" in fix_prompt
-    assert "[claims_cited]" in fix_prompt
-    assert "drop unsourced generalisations" in fix_prompt
-    assert "Remove the unsupported sentence" in fix_prompt
-    assert "Caches also make every workload faster overall." in fix_prompt  # previous draft
+    assert "criterion_1" in fix_prompt
+    assert "reuses stored data" in fix_prompt
+    assert "Add one sentence stating the reuse mechanism" in fix_prompt
     assert "BVF fix attempt" not in model.prompts("write")[0]
     history = json.loads(vfs.read("bvf", "verification/bvf_history.json"))
-    assert history[0]["failed_checks"] == ["claims_cited"]
-    assert history[0]["strategy"].startswith("Remove")
+    assert history[0]["failed_checks"] == ["criterion_1"]
+    assert history[0]["strategy"].startswith("Add one sentence")
     assert vfs.read("bvf", "reports/draft.v1.md") and vfs.read("bvf", "reports/draft.v2.md")
-    assert vfs.read("bvf", "reports/previous.md").decode() == bad
+    assert vfs.read("bvf", "reports/previous.md").decode() == GOOD
 
 
 def test_repeating_the_same_failure_escalates_strategy_then_needs_review(stores):
     vfs, _ = stores
-    model = FakeReportModel([_uncited("Caches also make every workload faster overall.")])
+    model = FakeReportModel([GOOD])
+    judge = _judge([{"results": [_fail(justification="Still never states the reuse mechanism.")]}])
 
-    result = _run(stores, model, budget=5)
+    result = _run(stores, model, report_judge=judge, budget=5)
 
     assert result["stage"] == "NEEDS_REVIEW"
     assert result["status"] == "needs_review"
@@ -98,17 +124,22 @@ def test_repeating_the_same_failure_escalates_strategy_then_needs_review(stores)
     assert "No progress since the previous attempt: yes" in model.prompts("reflect")[1]
     review = json.loads(vfs.read("bvf", "verification/needs_review.json"))
     assert review["reason"] == "no progress after reflection"
-    assert "Uncited claim" in review["unresolved"]
+    assert "never states the reuse mechanism" in review["unresolved"]
     assert review["lessons"]
 
 
 def test_budget_exhaustion_ends_in_needs_review_without_verification(stores):
+    """A different criterion fails each attempt (fingerprint keeps changing), so the loop is
+    stopped by the recovery budget itself rather than by no-progress stall detection."""
     vfs, _ = stores
-    drafts = [_uncited(f"Unsupported caching statement number {word} appears here.")
-              for word in ("one", "two", "three", "four")]
-    model = FakeReportModel(drafts)
+    model = FakeReportModel([GOOD])
+    judge = _judge([
+        {"results": [_fail(criterion="Answers the research question")]},
+        {"results": [_fail(criterion="Fairly represents the gathered evidence")]},
+        {"results": [_fail(criterion="Explains uncertainty and evidence gaps")]},
+    ])
 
-    result = _run(stores, model, budget=2)
+    result = _run(stores, model, report_judge=judge, budget=2)
 
     assert result["stage"] == "NEEDS_REVIEW"
     assert result["recovery_attempt"] == 2
@@ -130,8 +161,16 @@ def test_evidence_gap_triggers_targeted_research_then_disclosure(stores):
         limitations=["Cache eviction policy details were not found in the sources."],
     )
     model = FakeReportModel([GOOD, disclosed])
+    judge = _judge([
+        {"results": [_fail(
+            criterion="Answers the research question: cache eviction policy details",
+            justification="The gathered evidence says nothing about eviction policy.",
+            issue_type="EVIDENCE_GAP",
+        )]},
+        {"results": [_pass()]},
+    ])
 
-    result = _run(stores, model, research_model=research)
+    result = _run(stores, model, research_model=research, report_judge=judge)
 
     assert result["stage"] == "Awaiting Approval", result["verification"]["repair_details"]
     first = result["verification_history"][0]
@@ -152,14 +191,15 @@ def test_evidence_selection_narrows_the_build_prompt_but_not_verification(stores
         for n in range(8)
     ]
     researcher = ResearchAgent(
-        ModelRouter(FakeResearchModel(), mode="fake"),
+        ModelRouter(FakeResearchModel()),
         lambda: ControlledMCP([sources]),
         max_sources=8,  # this test needs more captured pages than the default per-task budget
     )
     report_model = FakeReportModel([GOOD])
     nodes = ResearchNodes(
         vfs, index, researcher,
-        report_writer=ReportWriter(ModelRouter(report_model, mode="fake")),
+        report_writer=ReportWriter(ModelRouter(report_model)),
+        report_judge=ReportJudge(ModelRouter(_passing_judge())),
         recovery_budget=3,
         evidence_top_k=3,
     )
@@ -177,69 +217,74 @@ def test_evidence_selection_narrows_the_build_prompt_but_not_verification(stores
     assert len(full_catalog.bundles[0].source_ids) == 8  # Verify still sees every captured source
 
 
-def test_standalone_verification_script_reproduces_the_graph_verdict(stores, capsys):
-    vfs, _ = stores
-    _run(stores, FakeReportModel([GOOD]), run_id="script")
+def test_judge_prompt_carries_the_fact_check_criterion_and_the_evidence(stores):
+    """The judge's checklist is just the fact check (plus configured guidelines): it re-reads the
+    report against the gathered evidence, with no planner acceptance criteria involved."""
+    judge = _judge([{"results": [_pass()]}])
 
-    assert verify_script(["--run-id", "script", "--vfs-root", str(vfs.root)]) == 0
-    assert '"passed": true' in capsys.readouterr().out
-
-    vfs.write("script", "reports/latest.md", _uncited("Unsupported caching claim appears right here."), "latest_report")
-    assert verify_script(["--run-id", "script", "--vfs-root", str(vfs.root)]) == 1
-
-
-CRITERIA = ["States how a cache stores data for later reuse."]
-
-
-def test_acceptance_check_only_runs_after_the_deterministic_script_passes(stores):
-    """A structurally broken draft never reaches the (paid) acceptance-criteria LLM call."""
-    acceptance = FakeAcceptanceModel([{
-        "results": [{"criterion": CRITERIA[0], "met": True, "justification": "n/a"}],
-    }])
-    model = FakeReportModel([_uncited("Caches also make every workload faster overall."), GOOD])
-
-    result = _run(
-        stores, model,
-        acceptance_verifier=AcceptanceVerifier(ModelRouter(acceptance, mode="fake")),
-        acceptance_criteria=CRITERIA,
-    )
+    result = _run(stores, FakeReportModel([GOOD]), report_judge=judge)
 
     assert result["stage"] == "Awaiting Approval"
-    assert len(acceptance.calls) == 1  # only called once the draft finally passes structurally
+    prompt = judge.prompts()[0].casefold()
+    assert "hallucinations" in prompt
+    assert "gathered evidence" in prompt
+    assert "fairly represents" not in prompt  # fixed representation/language criteria are gone
 
 
-def test_unmet_acceptance_criterion_fails_verification_and_is_fixed(stores):
-    bad_then_good = FakeAcceptanceModel([
-        {"results": [{"criterion": CRITERIA[0], "met": False, "justification": "Never states this."}]},
-        {"results": [{"criterion": CRITERIA[0], "met": True, "justification": "Now states it."}]},
+def test_configured_guidelines_flow_into_the_judge_prompt_and_a_violation_is_fixed(stores):
+    """Operator-configured guidelines (e.g. Settings.report_guidelines) reach the judge exactly
+    like planner criteria do, and an unmet guideline drives a fix like any other DRAFT_DEFECT."""
+    guidelines = ["The report MUST be written in Markdown format.",
+                  "The report MUST be written in English."]
+    model = FakeReportModel([GOOD, IMPROVED], reflections=[{
+        "diagnosis": "The draft was not written in English.",
+        "lessons": ["Always write the report in English."],
+        "strategy": "Rewrite the draft in English.",
+    }])
+    judge = _judge([
+        {"results": [_fail(criterion=guidelines[1], justification="The draft is in French.")]},
+        {"results": [_pass(criterion=guidelines[1])]},
     ])
-    model = FakeReportModel([GOOD, GOOD], reflections=[{
-        "diagnosis": "The draft never actually describes cache storage/reuse.",
-        "lessons": ["Explicitly state how the cache stores and reuses data."],
-        "strategy": "Add one sentence stating the storage/reuse mechanism, cited.",
+
+    result = _run(stores, model, report_judge=judge, report_guidelines=guidelines)
+
+    assert result["stage"] == "Awaiting Approval"
+    prompt = judge.prompts()[0]
+    assert guidelines[0] in prompt
+    assert guidelines[1] in prompt
+    assert result["verification_history"][0]["passed"] is False
+    assert "The draft is in French" in result["verification_history"][0]["repair_details"]
+
+
+def test_fact_check_criterion_reaches_the_judge_and_a_hallucination_is_fixed(stores):
+    """The built-in factual-accuracy criterion is always included (not configurable, unlike
+    guidelines), and a caught hallucination routes to a rewrite like any other DRAFT_DEFECT."""
+    model = FakeReportModel([GOOD, IMPROVED], reflections=[{
+        "diagnosis": "The draft invented a statistic the evidence never states.",
+        "lessons": ["Never state a number that isn't in the cited source excerpt."],
+        "strategy": "Remove the invented statistic and restate only what the evidence supports.",
     }])
+    judge = _judge([
+        {"results": [_fail(
+            criterion="Contains no factual inaccuracies, hallucinations, or internal "
+                      "inconsistencies",
+            justification="The draft claims a 40% speedup that appears nowhere in [S1].",
+        )]},
+        {"results": [_pass(criterion="Contains no factual inaccuracies, hallucinations, or "
+                                      "internal inconsistencies")]},
+    ])
 
-    result = _run(
-        stores, model,
-        acceptance_verifier=AcceptanceVerifier(ModelRouter(bad_then_good, mode="fake")),
-        acceptance_criteria=CRITERIA,
-    )
-
-    assert result["stage"] == "Awaiting Approval"
-    assert [v["passed"] for v in result["verification_history"]] == [False, True]
-    first_failure = result["verification_history"][0]
-    assert first_failure["issue_type"] == "DRAFT_DEFECT"
-    assert "acceptance_criteria" in first_failure["checks"]
-    assert "Never states this" in first_failure["repair_details"]
-    assert len(bad_then_good.calls) == 2
-
-
-def test_acceptance_check_is_skipped_without_a_configured_verifier(stores):
-    """No acceptance_verifier injected: verification behaves exactly as before this feature."""
-    result = _run(stores, FakeReportModel([GOOD]), acceptance_criteria=CRITERIA)
+    result = _run(stores, model, report_judge=judge)
 
     assert result["stage"] == "Awaiting Approval"
-    assert "acceptance_criteria" not in result["verification"]["checks"]
+    prompt = judge.prompts()[0]
+    assert "hallucinations" in prompt
+    assert "read the whole report as one continuous piece" in prompt.casefold()
+    first = result["verification_history"][0]
+    assert first["passed"] is False
+    assert first["issue_type"] == "DRAFT_DEFECT"
+    assert "40% speedup" in first["repair_details"]
+    assert "Remove the invented statistic" in model.prompts("write")[1]
 
 
 def test_faithfulness_evaluator_is_disabled_by_default(stores):
@@ -259,9 +304,13 @@ def test_faithfulness_score_is_recorded_only_once_verification_passes(stores):
         calls.append((question, report, contexts))
         return 0.95
 
-    model = FakeReportModel([_uncited("Caches also make every workload faster overall."), GOOD])
+    model = FakeReportModel([GOOD, GOOD])
+    judge = _judge([
+        {"results": [_fail(justification="Not yet good enough.")]},
+        {"results": [_pass()]},
+    ])
 
-    result = _run(stores, model, faithfulness_evaluator=evaluator)
+    result = _run(stores, model, report_judge=judge, faithfulness_evaluator=evaluator)
 
     assert result["stage"] == "Awaiting Approval"
     # Called once, only for the passing draft — never for the failed first attempt.

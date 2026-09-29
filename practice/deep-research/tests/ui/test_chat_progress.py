@@ -116,7 +116,7 @@ def test_review_and_publish_section_shown_while_awaiting_approval():
     })
 
     assert "Review and publish" in _visible_text(app)
-    assert any("Record decision" in b.label for b in app.button)
+    assert any("Approve & publish" in b.label for b in app.button)
 
 
 def test_review_and_publish_section_hidden_once_published():
@@ -137,7 +137,7 @@ def test_review_and_publish_section_hidden_once_published():
 
     text = _visible_text(app)
     assert "Review and publish" not in text
-    assert not any("Record decision" in b.label for b in app.button)
+    assert not any(b.label in {"Approve & publish", "Send feedback"} for b in app.button)
     assert "Published to exports/run-ui.md" in text
 
 
@@ -162,7 +162,9 @@ def test_unverified_snapshot_never_renders_verified_or_publication_controls():
     assert "verified report" not in text
     assert not app.radio
     # "New thread" is always present; no publication-decision button for unverified content.
-    assert "Record decision" not in [button.label for button in app.button]
+    button_labels = [button.label for button in app.button]
+    assert "Approve & publish" not in button_labels
+    assert "Send feedback" not in button_labels
 
 
 def test_ui_rejects_unsafe_input():

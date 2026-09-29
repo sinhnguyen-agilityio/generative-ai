@@ -1,15 +1,14 @@
-"""Role-tier model wiring for the live app (app._get_role_router / _get_scope_agent).
+"""Model-tier wiring for the live app (app._get_model_routers / _get_scope_agent).
 
-Every agent (Scope, Planner, Researcher, Report Writer, Acceptance Verifier, Fixer) shares one
-``RoleModelRouter`` instance by default (see build.py/nodes.py/app.py), which dispatches each
-call to the reasoning profile (scope, planner, verify) or the standard profile (researcher,
-research_compressor, synthesizer, fixer) based on the role name passed to ``invoke_messages``.
+The app builds a reasoning-tier and a standard-tier router (each with its own fallback) and
+hands each agent the tier it needs: Scope/Planner/Report Judge/Feedback classifier get the
+reasoning tier; Researcher/Report Writer (and the scope guardrail) get the standard tier.
 """
 
 from types import SimpleNamespace
 
-from intelligence_collector.app import _get_role_router, _get_scope_agent
-from intelligence_collector.models.role_router import RoleModelRouter
+from intelligence_collector.app import _get_model_routers, _get_scope_agent
+from intelligence_collector.models.factory import ModelRouters
 
 
 class _SessionState(dict):
@@ -67,51 +66,50 @@ def test_reasoning_tier_is_gpt_and_standard_tier_is_gemini(monkeypatch):
     _set_role_env(monkeypatch, standard_fallback=True)
     calls = _recording_init_chat_model(monkeypatch)
 
-    router = _get_role_router(_fake_st(), _fake_tracer())
+    router = _get_model_routers(_fake_st(), _fake_tracer())
 
-    assert isinstance(router, RoleModelRouter)
+    assert isinstance(router, ModelRouters)
     assert calls == [
         ("gpt-5.4", "openai"),
         ("gemini-2.5-flash", "google_genai"),
         ("gpt-5.4", "openai"),  # standard tier's fallback
     ]
-    assert router.deep_reasoning.primary.model_name == "gpt-5.4"
-    assert router.deep_reasoning.fallback is None
+    assert router.reasoning.primary.model_name == "gpt-5.4"
+    assert router.reasoning.fallback is None
     assert router.standard.primary.model_name == "gemini-2.5-flash"
     assert router.standard.fallback.model_name == "gpt-5.4"
-    assert router.deep_reasoning.mode == router.standard.mode == "live"
 
 
 def test_no_fallback_configured_means_no_fallback_on_either_tier(monkeypatch):
     _set_role_env(monkeypatch)
     _recording_init_chat_model(monkeypatch)
 
-    router = _get_role_router(_fake_st(), _fake_tracer())
+    router = _get_model_routers(_fake_st(), _fake_tracer())
 
-    assert router.deep_reasoning.fallback is None
+    assert router.reasoning.fallback is None
     assert router.standard.fallback is None
 
 
 def test_missing_reasoning_model_returns_none(monkeypatch):
     monkeypatch.delenv("INTELLIGENCE_REASONING_MODEL", raising=False)
 
-    assert _get_role_router(_fake_st(), _fake_tracer()) is None
+    assert _get_model_routers(_fake_st(), _fake_tracer()) is None
     assert _get_scope_agent(_fake_st(), _fake_tracer()) is None
 
 
-def test_role_router_is_cached_on_session_state(monkeypatch):
+def test_model_routers_are_cached_on_session_state(monkeypatch):
     _set_role_env(monkeypatch)
     calls = _recording_init_chat_model(monkeypatch)
     st = _fake_st()
 
-    first = _get_role_router(st, _fake_tracer())
-    second = _get_role_router(st, _fake_tracer())
+    first = _get_model_routers(st, _fake_tracer())
+    second = _get_model_routers(st, _fake_tracer())
 
     assert first is second
     assert len(calls) == 2  # reasoning + standard primaries only; no new construction on reuse
 
 
-def test_scope_agent_shares_the_role_router_and_is_cached(monkeypatch):
+def test_scope_agent_gets_reasoning_router_and_standard_guardrail_and_is_cached(monkeypatch):
     _set_role_env(monkeypatch)
     _recording_init_chat_model(monkeypatch)
     st = _fake_st()
@@ -120,4 +118,5 @@ def test_scope_agent_shares_the_role_router_and_is_cached(monkeypatch):
     second = _get_scope_agent(st, _fake_tracer())
 
     assert agent is second
-    assert agent.router is st.session_state.role_router
+    assert agent.router is st.session_state.model_routers.reasoning
+    assert agent.guardrail_router is st.session_state.model_routers.standard

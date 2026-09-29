@@ -14,5 +14,5 @@ def test_role_prompts_are_chat_templates_and_scope_has_history_placeholder():
 def test_model_factory_uses_langchain_initializer(monkeypatch):
     calls = []
     monkeypatch.setattr("intelligence_collector.models.factory.init_chat_model", lambda *args, **kwargs: calls.append((args, kwargs)) or "model")
-    model = ModelFactory().create(ModelConfig("test-model", provider="fake", timeout=4, reasoning={"temperature": 0}))
+    model = ModelFactory().create(ModelConfig("test-model", provider="fake", timeout=4, kwargs={"temperature": 0}))
     assert model == "model" and calls[0][0] == ("test-model",) and calls[0][1]["timeout"] == 4

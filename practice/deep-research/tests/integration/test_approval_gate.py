@@ -15,6 +15,7 @@ from langgraph.types import Command
 
 from intelligence_collector.agents.feedback_router import FeedbackRouter
 from intelligence_collector.agents.planner import PlannerAgent
+from intelligence_collector.agents.report_judge import ReportJudge
 from intelligence_collector.agents.report_writer import ReportWriter
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.scope import ScopeAgent
@@ -23,7 +24,7 @@ from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.tools.mcp import ControlledMCP
-from tests.fixtures.fake_models import FakeReportModel, FakeResearchModel, cited_report
+from tests.fixtures.fake_models import FakeAcceptanceModel, FakeReportModel, FakeResearchModel, cited_report
 from tests.integration.test_langchain_scope import (
     RecordingChatModel,
     _brief_payload,
@@ -40,7 +41,6 @@ GOOD = cited_report(["A cache stores reusable data for later access [S1]."], {"S
 def _single_question_plan():
     return {
         "questions": [QUESTION],
-        "acceptance_criteria": ["States how the cache stores and reuses data."],
     }
 
 
@@ -59,17 +59,27 @@ class FakeFeedbackRouterModel:
         return AIMessage(content=json.dumps(decision))
 
 
+def _passing_judge() -> ReportJudge:
+    """Every draft this suite writes is already well-formed; only the approval gate itself is
+    under test here, so the judge always reports every criterion met."""
+    model = FakeAcceptanceModel([{
+        "results": [{"criterion": "all criteria", "met": True, "justification": "Satisfied."}],
+    }])
+    return ReportJudge(ModelRouter(model))
+
+
 def _bvf_graph(stores, report_model, *, output_dir, feedback_router=None):
     """A graph with a real (fake-backed) BVF loop but no scope_agent — todos/brief are injected
     directly into the initial state, exactly like tests/integration/test_bvf_loop.py."""
     vfs, index = stores
     researcher = ResearchAgent(
-        ModelRouter(FakeResearchModel(), mode="fake"),
+        ModelRouter(FakeResearchModel()),
         lambda: ControlledMCP([{"url": URL, "content": "A cache stores reusable data for later access."}]),
     )
     nodes = ResearchNodes(
         vfs, index, researcher,
-        report_writer=ReportWriter(ModelRouter(report_model, mode="fake")),
+        report_writer=ReportWriter(ModelRouter(report_model)),
+        report_judge=_passing_judge(),
         recovery_budget=3,
     )
     return build_graph(
@@ -114,7 +124,7 @@ def test_reject_with_writer_route_revises_the_report_then_can_be_approved(stores
     feedback_model = FakeFeedbackRouterModel([{"route": "writer", "reason": "Just wording."}])
     graph = _bvf_graph(
         stores, report_model,
-        feedback_router=FeedbackRouter(ModelRouter(feedback_model, mode="fake")),
+        feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
         output_dir=tmp_path / "exports",
     )
     config = {"configurable": {"thread_id": "approval-run"}}
@@ -159,17 +169,18 @@ def test_reject_with_planner_route_triggers_a_full_replan(stores, tmp_path):
         _single_question_plan(),  # initial plan
         _single_question_plan(),  # replan after rejection
     ])
-    shared_router = ModelRouter(shared_model, mode="fake")
+    shared_router = ModelRouter(shared_model)
     feedback_model = FakeFeedbackRouterModel([{"route": "planner", "reason": "Wrong direction."}])
 
     researcher = ResearchAgent(
-        ModelRouter(FakeResearchModel(), mode="fake"),
+        ModelRouter(FakeResearchModel()),
         lambda: ControlledMCP([{"url": URL, "content": "A cache stores reusable data for later access."}]),
     )
     report_model = FakeReportModel([GOOD, GOOD])
     nodes = ResearchNodes(
         vfs, index, researcher,
-        report_writer=ReportWriter(ModelRouter(report_model, mode="fake")),
+        report_writer=ReportWriter(ModelRouter(report_model)),
+        report_judge=_passing_judge(),
         recovery_budget=3,
     )
     graph = build_graph(
@@ -180,7 +191,7 @@ def test_reject_with_planner_route_triggers_a_full_replan(stores, tmp_path):
         checkpointer=MemorySaver(),
         with_approval=True,
         output_dir=str(tmp_path / "exports"),
-        feedback_router=FeedbackRouter(ModelRouter(feedback_model, mode="fake")),
+        feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
     )
     config = {"configurable": {"thread_id": "planner-run"}}
 

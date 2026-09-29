@@ -102,15 +102,12 @@ class ResearchTodo(Model):
 
 
 MAX_PLANNED_QUESTIONS = 5
-MAX_ACCEPTANCE_CRITERIA = 5
 
 
 class TodoPlan(Model):
-    """Planner LLM output: research questions plus the acceptance criteria that define when the
-    final report achieves the research brief's goal. Ids and status are system-owned."""
+    """Planner LLM output: the research questions. Ids and status are system-owned."""
 
     questions: list[str] = Field(min_length=1, max_length=MAX_PLANNED_QUESTIONS)
-    acceptance_criteria: list[str] = Field(min_length=1, max_length=MAX_ACCEPTANCE_CRITERIA)
 
     @model_validator(mode="after")
     def validate_questions(self):
@@ -119,11 +116,6 @@ class TodoPlan(Model):
             raise ValueError("planned research questions must not be blank")
         if len({question.casefold() for question in self.questions}) != len(self.questions):
             raise ValueError("planned research questions must not repeat")
-        self.acceptance_criteria = [criterion.strip() for criterion in self.acceptance_criteria]
-        if any(not criterion for criterion in self.acceptance_criteria):
-            raise ValueError("acceptance criteria must not be blank")
-        if len({c.casefold() for c in self.acceptance_criteria}) != len(self.acceptance_criteria):
-            raise ValueError("acceptance criteria must not repeat")
         return self
 
 
@@ -260,22 +252,29 @@ class Reflection(Model):
         return self
 
 
-class AcceptanceCriterionResult(Model):
-    """One acceptance-criterion judgment: does the report actually achieve this goal?"""
+class ReportJudgeCriterion(Model):
+    """One report-judge criterion verdict.
+
+    ``issue_type`` lets the judge itself decide, per criterion, whether an unmet criterion is a
+    wording/interpretation problem the writer can fix by revising (``DRAFT_DEFECT``) or a sign
+    the gathered evidence itself is insufficient (``EVIDENCE_GAP``, routes back to targeted
+    research instead of a rewrite). Defaults to ``DRAFT_DEFECT``, the far more common case.
+    """
 
     criterion: str = Field(min_length=1)
     met: bool
+    issue_type: IssueType = IssueType.DRAFT_DEFECT
     justification: str = Field(min_length=1)
 
 
-class AcceptanceVerdict(Model):
-    """LLM judgment of whether the report meets every planner-defined acceptance criterion.
-
-    This is a semantic, goal-level check ("does the report achieve what the brief asked for?"),
-    distinct from the deterministic ``source_verification`` checks (citation syntax/grounding).
+class ReportJudgeVerdict(Model):
+    """LLM-as-judge verdict for the whole report (see ``agents/report_judge.py``): goal
+    achievement, per-question coverage, fair representation of the evidence, uncertainty
+    disclosure, plain language, and safe content. This is the sole gate for the Verify step of
+    Build-Verify-Fix — there is no separate deterministic citation/grounding script.
     """
 
-    results: list[AcceptanceCriterionResult] = Field(min_length=1)
+    results: list[ReportJudgeCriterion] = Field(min_length=1)
 
 
 class ApprovalDecision(Model):
@@ -324,7 +323,6 @@ class ResearchGraphState(Model):
     scope_questions: list[str] = Field(default_factory=list)
     todo_ids: list[str] = Field(default_factory=list)
     todos: list[ResearchTodo] = Field(default_factory=list)
-    acceptance_criteria: list[str] = Field(default_factory=list)
     artifacts: list[ArtifactRef] = Field(default_factory=list)
     evidence: list[ArtifactRef] = Field(default_factory=list)
     index_refs: list[str] = Field(default_factory=list)

@@ -1,129 +1,192 @@
-from dataclasses import dataclass
+"""One model tier: a primary chat model, an optional fallback, and validated structured output."""
+
 import json
-import re
-import threading
 from typing import TypeVar
 
 from pydantic import BaseModel
 from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.runnables import Runnable, RunnableLambda
 
-
-@dataclass(frozen=True)
-class FallbackEvent:
-    role: str
-    reason: str
-    selected_model: str = ""
+from intelligence_collector.models.redaction import redact_text, redact_value
 
 T = TypeVar("T", bound=BaseModel)
 MAX_MODEL_ATTEMPTS = 3
-SECRET_MARKERS = ("api_key", "apikey", "secret", "password", "token", "authorization")
 
 
-def _redact_text(value: object) -> str:
-    text = str(value)
-    text = re.sub(
-        r"(?i)\b(api[_-]?key|secret|password|token|authorization)\s*[:=]\s*([^\s,;]+)",
-        r"\1=[REDACTED]",
-        text,
-    )
-    return re.sub(r"(?i)\bbearer\s+[a-z0-9._-]{8,}", "Bearer [REDACTED]", text)
+def _model_name(model) -> str:
+    """Best-effort display name for traces (`model_name`, then `model`, then the class name)."""
+    return str(getattr(model, "model_name", None) or getattr(model, "model", None) or type(model).__name__)
 
 
-def _redact_value(value):
-    if isinstance(value, dict):
-        return {
-            key: "[REDACTED]"
-            if any(marker in key.lower() for marker in SECRET_MARKERS)
-            else _redact_value(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_redact_value(item) for item in value]
-    return _redact_text(value) if isinstance(value, str) else value
+def _as_runnable(model, role: str, config) -> Runnable:
+    """Make `model` usable with `with_fallbacks`, which only accepts Runnables.
+
+    Real chat models already are Runnables. Duck-typed models (test fakes exposing `.invoke()`,
+    or plain `(role, prompt)` callables) are wrapped. `config` is forwarded to a fake's
+    `.invoke()` only when callbacks are configured, as fakes may not accept the argument.
+    """
+    if isinstance(model, Runnable):
+        return model
+    if hasattr(model, "invoke"):
+        return RunnableLambda(lambda prompt: model.invoke(prompt, config=config) if config else model.invoke(prompt))
+    if callable(model):
+        return RunnableLambda(lambda prompt: model(role, prompt))
+    raise TypeError("configured model must be callable or expose invoke()")
+
+
+def _bind_schema(model, schema):
+    """Return `model` constrained to emit `schema` via the provider's native structured output
+    (Gemini response schema, Groq json_schema) instead of trusting free-text JSON, which Gemini
+    often wraps in Markdown fences. Models without `with_structured_output` are returned as-is
+    and their raw output is parsed by `ModelRouter._parse`."""
+    if not hasattr(model, "with_structured_output"):
+        return model
+    if type(model).__name__ == "ChatGroq":
+        # ChatGroq defaults to function calling, and gpt-oss models there sometimes call a tool
+        # literally named "json" instead of the bound schema tool, which Groq rejects server-side
+        # (400 tool_use_failed); its response_format path has no tools to misname. strict=True
+        # turns on constrained decoding for gpt-oss-20b/120b, which *guarantees* schema-valid JSON
+        # instead of best-effort compliance -- without it a complex schema can yield malformed or
+        # empty output that Groq rejects post-hoc. Groq ignores strict for models that don't
+        # support it, so it is safe to pass unconditionally.
+        return model.with_structured_output(schema, method="json_schema", strict=True)
+    return model.with_structured_output(schema)
+
+
+def _bind_tools(model, tools: list, tool_choice: str | None):
+    """Bind `tools` to `model`; models that cannot bind tools are returned as-is."""
+    if not hasattr(model, "bind_tools"):
+        return model
+    return model.bind_tools(tools, tool_choice=tool_choice) if tool_choice else model.bind_tools(tools)
+
+
+def _render_prompt(prompt) -> str:
+    """Render the exact model input as readable, redacted text for trace inspection."""
+    if not isinstance(prompt, list):
+        return redact_text(prompt)
+    blocks = []
+    for message in prompt:
+        kind = getattr(message, "type", type(message).__name__).upper()
+        blocks.append(f"[{kind}]\n{redact_text(getattr(message, 'content', message))}")
+    return "\n\n".join(blocks)
 
 
 class ModelRouter:
-    def __init__(self, primary=None, fallback=None, *, max_attempts: int = 2, on_fallback=None, mode: str = "live", trace=None, callbacks=None):
+    """One model tier: a primary model with an optional fallback (LangChain `with_fallbacks`).
+
+    Two independent recovery layers:
+    * provider errors (timeouts, rate limits) fall through to the fallback model, once per call;
+    * invalid structured output (bad JSON / schema violation) re-invokes the whole primary ->
+      fallback chain, up to `max_attempts` times, before raising `ValueError`.
+    """
+
+    def __init__(self, primary, fallback=None, *, max_attempts: int = 2, trace=None, callbacks=None):
+        if primary is None:
+            raise RuntimeError("model router requires a configured primary model")
         if not isinstance(max_attempts, int) or not 1 <= max_attempts <= MAX_MODEL_ATTEMPTS:
             raise ValueError(f"max_attempts must be between 1 and {MAX_MODEL_ATTEMPTS}")
         self.primary, self.fallback = primary, fallback
         self.max_attempts = max_attempts
-        self.on_fallback = on_fallback
-        self.events: list[FallbackEvent] = []
-        self.mode = mode
-        self.trace = trace
+        self.trace = trace  # called as trace(**event); None disables tracing (and its rendering cost)
         self.callbacks = list(callbacks or [])
-        # Per-thread call metadata: parallel research sub-agents share one router.
-        self._local = threading.local()
+        # A fallback that rescues a call is visible in the callback trace as the child model run.
+        self.model_name = _model_name(primary)
 
-    @property
-    def last_model(self) -> str:
-        return getattr(self._local, "last_model", "")
+    # ----- public API -----
 
-    @last_model.setter
-    def last_model(self, value: str) -> None:
-        self._local.last_model = value
+    def invoke_messages(
+        self, role: str, messages: list[BaseMessage], schema: type[T], *,
+        prompt_version: str, run_id: str = "", thread_id: str = "",
+    ) -> T:
+        """Call the model and return its output validated as `schema`.
 
-    @property
-    def fallback_used(self) -> bool:
-        return getattr(self._local, "fallback_used", False)
+        Retries up to `max_attempts` when the output is invalid; every attempt is traced.
+        """
+        config = self._config(role, run_id, thread_id, prompt_version)
+        chain = self._chain(_bind_schema(self.primary, schema), _bind_schema(self.fallback, schema), role, config)
+        errors = []
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                result = self._parse(role, chain.invoke(messages, config=config), schema)
+            except Exception as exc:
+                errors.append(redact_text(exc))
+                # The raw error text is withheld from the trace: it can echo model output.
+                message = f"{type(exc).__name__}: invalid structured output"
+                self._emit(
+                    role, prompt_version, run_id, thread_id, attempt, messages,
+                    output_text=message, validation_error=message,
+                )
+                continue
+            self._emit(
+                role, prompt_version, run_id, thread_id, attempt, messages,
+                output_text=redact_text(result.model_dump_json(indent=2)),
+                decision=redact_value(result.model_dump(mode="json")),
+                message_count=len(messages),
+            )
+            return result
+        raise ValueError(f"invalid structured output for {role} after {self.max_attempts} attempts: {'; '.join(errors)}")
 
-    @fallback_used.setter
-    def fallback_used(self, value: bool) -> None:
-        self._local.fallback_used = value
+    def invoke_with_tools(
+        self, role: str, messages: list[BaseMessage], tools: list, *,
+        prompt_version: str, run_id: str = "", thread_id: str = "", tool_choice: str | None = None,
+    ) -> AIMessage:
+        """Tool-calling decision: the returned AIMessage carries a final answer or tool calls."""
+        config = self._config(role, run_id, thread_id, prompt_version)
+        chain = self._chain(
+            _bind_tools(self.primary, tools, tool_choice),
+            None if self.fallback is None else _bind_tools(self.fallback, tools, tool_choice),
+            role, config,
+        )
+        raw = chain.invoke(messages, config=config)
+        if not isinstance(raw, AIMessage):
+            raise TypeError(f"tool-calling model output for {role} must be an AIMessage")
+        decision = redact_value({
+            "content": raw.content,
+            "tool_calls": [{"name": call["name"], "args": call["args"]} for call in raw.tool_calls],
+        })
+        self._emit(
+            role, prompt_version, run_id, thread_id, 1, messages,
+            output_text=json.dumps(decision, ensure_ascii=False, indent=2, default=str),
+            decision=decision,
+            message_count=len(messages),
+        )
+        return raw
+
+    # ----- internals -----
+
+    def _config(self, role: str, run_id: str, thread_id: str, prompt_version: str) -> dict | None:
+        """LangChain run config so callbacks (Langfuse) group model runs by session and role.
+        None when no callbacks are configured."""
+        if not self.callbacks:
+            return None
+        return {
+            "callbacks": self.callbacks,
+            "run_name": f"model.{role}",
+            "metadata": {
+                "langfuse_session_id": thread_id,
+                "run_id": run_id,
+                "thread_id": thread_id,
+                "prompt_version": prompt_version,
+                "role": role,
+            },
+        }
 
     @staticmethod
-    def _bind_tools(model, tools, tool_choice=None):
-        if model is None or not hasattr(model, "bind_tools"):
-            return model
-        if tool_choice:
-            return model.bind_tools(tools, tool_choice=tool_choice)
-        return model.bind_tools(tools)
+    def _chain(primary, fallback, role: str, config) -> Runnable:
+        """primary, then `fallback` if the primary raises. Built once per call, not per attempt."""
+        chain = _as_runnable(primary, role, config)
+        if fallback is not None:
+            chain = chain.with_fallbacks([_as_runnable(fallback, role, config)])
+        return chain
 
     @staticmethod
-    def _bind_schema(model, schema):
-        # Provider-native structured output (Gemini response schema, Groq json_schema) instead
-        # of trusting free-text JSON, which Gemini often wraps in Markdown fences.
-        if model is None or not hasattr(model, "with_structured_output"):
-            return model
-        if type(model).__name__ == "ChatGroq":
-            # ChatGroq defaults to function calling, and gpt-oss models there sometimes call a
-            # tool literally named "json" instead of the bound schema tool, which Groq rejects
-            # server-side (400 tool_use_failed). Its response_format path has no tools to misname.
-            return model.with_structured_output(schema, method="json_schema")
-        return model.with_structured_output(schema)
-
-    @staticmethod
-    def _model_name(model) -> str:
-        if model is None:
-            return ""
-        model = getattr(model, "first", model)  # unwrap with_structured_output() sequences
-        model = getattr(model, "bound", model)  # unwrap bind_tools() bindings
-        return str(getattr(model, "model_name", None) or getattr(model, "model", None) or type(model).__name__)
-
-    @staticmethod
-    def _invoke_model(model, role: str, prompt, config=None):
-        if hasattr(model, "invoke"):
-            return model.invoke(prompt, config=config) if config else model.invoke(prompt)
-        if callable(model):
-            return model(role, prompt)
-        raise TypeError("configured model must be callable or expose invoke()")
-
-    def _trace(self, **event):
-        if not self.trace:
-            return
-        try:
-            self.trace(**event)
-        except TypeError:
-            # Preserve compatibility with simple test tracers while keeping rich metadata
-            # for the production tracing adapter.
-            self.trace(event)
-
-    def _parse(self, role: str, raw, schema: type[T]) -> T:
+    def _parse(role: str, raw, schema: type[T]) -> T:
+        """Coerce whatever the model returned (schema instance, dict, message or JSON text)
+        into a validated `schema` instance."""
         if isinstance(raw, BaseMessage):
-            # `.text` collapses provider-specific multi-block content (e.g. Gemini's
-            # thinking + text blocks under reasoning_effort) down to the final text block,
-            # unlike `.content`, which can be a list of blocks rather than a string.
+            # `.text` collapses provider-specific multi-block content (e.g. Gemini's thinking +
+            # text blocks under reasoning_effort) to the final text block; `.content` can be a
+            # list of blocks rather than a string.
             raw = raw.text
         elif hasattr(raw, "content"):
             raw = raw.content
@@ -135,180 +198,17 @@ class ModelRouter:
             return schema.model_validate(json.loads(raw))
         raise TypeError(f"model output for {role} is not structured")
 
-    @staticmethod
-    def _prompt_text(prompt) -> str:
-        """Render the exact model input as readable text for trace inspection."""
-        if isinstance(prompt, list):
-            blocks = []
-            for message in prompt:
-                role = getattr(message, "type", type(message).__name__).upper()
-                content = _redact_text(getattr(message, "content", str(message)))
-                blocks.append(f"[{role}]\n{content}")
-            return "\n\n".join(blocks)
-        return _redact_text(prompt)
-
-    @staticmethod
-    def _output_text(raw) -> str:
-        value = getattr(raw, "content", raw)
-        if isinstance(value, BaseModel):
-            return _redact_text(value.model_dump_json(indent=2))
-        if isinstance(value, (dict, list)):
-            return json.dumps(_redact_value(value), ensure_ascii=False, indent=2, default=str)
-        return _redact_text(value)
-
-    def invoke(self, role, prompt, *, run_id="", thread_id="", prompt_version=""):
-        return self._invoke_with(
-            self.primary,
-            self.fallback,
-            role,
-            prompt,
-            run_id=run_id,
-            thread_id=thread_id,
-            prompt_version=prompt_version,
-        )
-
-    def invoke_with_tools(
-        self,
-        role: str,
-        messages: list[BaseMessage],
-        tools: list,
-        *,
-        prompt_version: str,
-        run_id: str = "",
-        thread_id: str = "",
-        tool_choice: str | None = None,
-    ) -> AIMessage:
-        """Tool-calling decision: the returned AIMessage carries a final answer or tool calls."""
-        raw = self._invoke_with(
-            self._bind_tools(self.primary, tools, tool_choice),
-            self._bind_tools(self.fallback, tools, tool_choice),
-            role,
-            messages,
-            run_id=run_id,
-            thread_id=thread_id,
-            prompt_version=prompt_version,
-        )
-        if not isinstance(raw, AIMessage):
-            raise TypeError(f"tool-calling model output for {role} must be an AIMessage")
-        decision = {
-            "content": raw.content,
-            "tool_calls": [
-                {"name": call["name"], "args": call["args"]} for call in raw.tool_calls
-            ],
-        }
-        self._trace(
+    def _emit(self, role, prompt_version, run_id, thread_id, attempt, messages, **fields) -> None:
+        """Send one trace event. Rendering the prompt is skipped when nobody is listening."""
+        if not self.trace:
+            return
+        self.trace(
             role=role,
             prompt_version=prompt_version,
             run_id=run_id,
             thread_id=thread_id,
-            decision=_redact_value(decision),
-            selected_model=self.last_model,
-            fallback_used=self.fallback_used,
-            attempt=1,
-            input_text=self._prompt_text(messages),
-            output_text=self._output_text(decision),
-            message_count=len(messages),
+            selected_model=self.model_name,
+            attempt=attempt,
+            input_text=_render_prompt(messages),
+            **fields,
         )
-        return raw
-
-    def _invoke_with(self, primary, fallback, role, prompt, *, run_id="", thread_id="", prompt_version=""):
-        if self.mode == "live" and primary is None:
-            raise RuntimeError("live model router requires a configured primary model")
-        if self.mode == "fake" and primary is None:
-            raise RuntimeError("fake model router requires an explicit fake model")
-        self.fallback_used = False
-        config = None
-        if self.callbacks:
-            config = {
-                "callbacks": self.callbacks,
-                "run_name": f"model.{role}",
-                "metadata": {
-                    "langfuse_session_id": thread_id,
-                    "run_id": run_id,
-                    "thread_id": thread_id,
-                    "prompt_version": prompt_version,
-                    "role": role,
-                },
-            }
-        try:
-            self.last_model = self._model_name(primary)
-            return self._invoke_model(primary, role, prompt, config)
-        except Exception as exc:
-            if self.max_attempts < 2:
-                raise
-            if fallback is None:
-                raise RuntimeError(f"primary model failed for {role} and no fallback is configured") from exc
-            self.fallback_used = True
-            self.last_model = self._model_name(fallback)
-            event = FallbackEvent(
-                role=role,
-                reason=_redact_text(exc),
-                selected_model=self.last_model,
-            )
-            self.events.append(event)
-            if self.on_fallback:
-                self.on_fallback(event)
-            try:
-                return self._invoke_model(fallback, role, prompt, config)
-            except Exception as fallback_exc:
-                # Surface both causes: the fallback's error alone hides why it was needed.
-                raise RuntimeError(
-                    f"primary {self._model_name(primary)} failed: {_redact_text(exc)} | "
-                    f"fallback {self.last_model} failed: {_redact_text(fallback_exc)}"
-                ) from fallback_exc
-
-    def invoke_structured(self, role: str, prompt: str, schema: type[T], *, prompt_version: str, run_id: str = "", thread_id: str = "") -> T:
-        return self._invoke_and_parse(role, prompt, schema, prompt_version, run_id, thread_id)
-
-    def invoke_messages(self, role: str, messages: list[BaseMessage], schema: type[T], *, prompt_version: str, run_id: str = "", thread_id: str = "") -> T:
-        return self._invoke_and_parse(role, messages, schema, prompt_version, run_id, thread_id, len(messages))
-
-    def _invoke_and_parse(self, role, prompt, schema, prompt_version, run_id, thread_id, message_count=None):
-        errors = []
-        attempts = max(1, self.max_attempts)
-        prompt_text = self._prompt_text(prompt)
-        primary = self._bind_schema(self.primary, schema)
-        fallback = self._bind_schema(self.fallback, schema)
-        for attempt in range(1, attempts + 1):
-            try:
-                raw = self._invoke_with(
-                    primary,
-                    fallback,
-                    role,
-                    prompt,
-                    run_id=run_id,
-                    thread_id=thread_id,
-                    prompt_version=prompt_version,
-                )
-                result = self._parse(role, raw, schema)
-                event = {
-                    "role": role,
-                    "prompt_version": prompt_version,
-                    "run_id": run_id,
-                    "thread_id": thread_id,
-                    "decision": _redact_value(result.model_dump(mode="json")),
-                    "selected_model": self.last_model,
-                    "fallback_used": self.fallback_used,
-                    "attempt": attempt,
-                    "input_text": prompt_text,
-                    "output_text": _redact_text(result.model_dump_json(indent=2)),
-                }
-                if message_count is not None:
-                    event["message_count"] = message_count
-                self._trace(**event)
-                return result
-            except Exception as exc:
-                errors.append(_redact_text(exc))
-                self._trace(
-                    role=role,
-                    prompt_version=prompt_version,
-                    run_id=run_id,
-                    thread_id=thread_id,
-                    selected_model=self.last_model,
-                    fallback_used=self.fallback_used,
-                    attempt=attempt,
-                    input_text=prompt_text,
-                    output_text=f"{type(exc).__name__}: invalid structured output",
-                    validation_error=f"{type(exc).__name__}: invalid structured output",
-                )
-        raise ValueError(f"invalid structured output for {role} after {attempts} attempts: {'; '.join(errors)}")

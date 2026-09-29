@@ -21,7 +21,6 @@ def test_scope_live_llm_smoke(tmp_path):
     agent = ScopeAgent(
         ModelRouter(
             model,
-            mode="live",
             trace=tracer.model_event,
             callbacks=tracer.callbacks,
         )

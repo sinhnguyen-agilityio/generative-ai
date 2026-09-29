@@ -1,3 +1,5 @@
+from langchain_core.callbacks import BaseCallbackHandler
+
 from intelligence_collector.agents.scope import ScopeAgent
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.models.router import ModelRouter
@@ -26,12 +28,11 @@ class CallbackAwareModel(RecordingChatModel):
 def test_scope_execution_has_root_nodes_model_events_callbacks_and_flush(monkeypatch, tmp_path):
     monkeypatch.setattr("langfuse.propagate_attributes", fake_propagation)
     client = FakeLangfuseClient()
-    callback = object()
+    callback = BaseCallbackHandler()
     tracer = Tracer(client=client, callback_handler=callback)
     model = CallbackAwareModel([_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()])
     router = ModelRouter(
         model,
-        mode="live",
         trace=tracer.model_event,
         callbacks=tracer.callbacks,
     )

@@ -8,7 +8,6 @@ def _responses():
     return {
         "planner": {
             "questions": ["Find primary evidence"],
-            "acceptance_criteria": ["Cites at least one primary source"],
         },
         "supervisor": {
             "coverage_complete": True,
@@ -29,7 +28,7 @@ def _responses():
 
 def test_all_semantic_roles_use_structured_router():
     fake = FakeModel(responses=_responses())
-    roles = SemanticRoles(ModelRouter(fake, fake, mode="fake"))
+    roles = SemanticRoles(ModelRouter(fake, fake))
     assert roles.planner("brief") and roles.supervisor(
         "context") and roles.worker("question")
     assert roles.synthesizer("evidence") and roles.verifier(
@@ -40,7 +39,7 @@ def test_all_semantic_roles_use_structured_router():
 
 def test_every_semantic_role_prompt_is_versioned_and_instructive():
     expected = {
-        "planner": "planner.v4",
+        "planner": "planner.v5",
         "supervisor": "supervisor.v1",
         "worker": "worker.v1",
         "synthesizer": "synthesis.v1",

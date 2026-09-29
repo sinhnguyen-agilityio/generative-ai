@@ -24,7 +24,7 @@ def test_completed_worker_is_not_repeated(stores):
         clients.append(ControlledMCP([{"url": "https://fixture", "content": "evidence"}]))
         return clients[-1]
 
-    researcher = ResearchAgent(ModelRouter(FakeResearchModel(), mode="fake"), factory)
+    researcher = ResearchAgent(ModelRouter(FakeResearchModel()), factory)
     run_worker(vfs, index, "run", todo, researcher)
     run_worker(vfs, index, "run", todo, researcher)
     assert len(clients) == 1  # the second run never starts a sub-agent

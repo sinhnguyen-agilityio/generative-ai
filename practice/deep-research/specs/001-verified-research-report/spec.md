@@ -50,7 +50,9 @@ evidence-backed technical report from a user's research request."
   until every check passes. Retries must be self-improving: reflect to derive the root cause,
   lessons, and a strategy, and accumulate lessons across attempts; the only other exit is
   `NEEDS_REVIEW` when the budget is exhausted or no progress is made (FR-016a, FR-017a, FR-017b,
-  FR-019, FR-020).
+  FR-019, FR-020). Superseded 2026-09-25 (added the acceptance check) and 2026-09-29 (single
+  LLM-as-judge call replaces both stages); the retry/reflect/NEEDS_REVIEW behavior itself is
+  unchanged.
 - Q: How should repeated URLs be handled during research? → A: Track URLs by normalized identity;
   a sub-agent never re-shows or re-collects a page it already retrieved, and a run-level URL
   registry lets later tasks reference the first capture instead of storing and indexing the page
@@ -98,18 +100,57 @@ evidence-backed technical report from a user's research request."
 
 ### Session 2026-09-25
 
+- (Superseded 2026-09-30: planner acceptance criteria were removed; see FR-006a/FR-016c.)
 - Q: How should the workflow know a report actually achieves the research brief's goal, beyond
   passing the deterministic citation/grounding checks? → A: The Planner also defines 1–5 acceptance
   criteria alongside the research questions (`TodoPlan.acceptance_criteria`); once the deterministic
   source-verification script passes, a separate LLM acceptance check judges the report against each
   criterion. Any unmet criterion is folded into the same verification result as a `DRAFT_DEFECT`, so
   it is fixed by the existing Build-Verify-Fix reflection loop rather than a new code path
-  (FR-006a, FR-016b).
+  (FR-006a, FR-016b). Superseded 2026-09-29: the acceptance check is no longer a second stage
+  gated on the deterministic script — both are replaced by one LLM-as-judge call (FR-016c).
 - Q: Which roles should use a deeper-reasoning model tier versus a cheaper/faster standard tier? → A:
   Scope, Planner, and the acceptance check (role `verify`) use the reasoning tier; Researcher,
   research compression, Synthesizer, and Fixer use the standard tier. Each tier is configured with
   its own primary and optional fallback model via environment variables, replacing the single
   shared router every role previously used (FR-032b).
+
+### Session 2026-09-29
+
+- Q: Should Verify keep the two-stage deterministic-script-then-acceptance-check design (Session
+  2026-09-25), or become a single LLM-as-judge call? → A: Single LLM-as-judge call
+  (`agents/report_judge.py`, role `verify`), replacing both the deterministic
+  `source_verification.py` script and the separate acceptance-criteria check as the graph's Verify
+  gate. One call judges: each planner acceptance criterion, per-question coverage ("answers the
+  question"), fair representation of the evidence, honest disclosure of uncertainty/evidence gaps,
+  plain language free of unexplained abbreviations, and freedom from offensive/inappropriate
+  content. Each unmet criterion carries its own judge-chosen issue type (`DRAFT_DEFECT` or
+  `EVIDENCE_GAP`), so the existing rewrite-vs-research routing is preserved without a deterministic
+  check driving it. The deterministic script still exists and still passes its own tests, but is no
+  longer invoked by the graph — standalone/offline use only (FR-016a, FR-016c). Superseded the
+  Session 2026-09-24 answer on verification taxonomy only insofar as *how* `DRAFT_DEFECT` /
+  `EVIDENCE_GAP` are now decided (by the judge per criterion, not by a script); the taxonomy itself
+  (FR-016, FR-017) is unchanged. Trade-off accepted: verification cost/latency now always includes
+  one reasoning-tier LLM call (previously free/instant when the deterministic script alone
+  sufficed), and citation-syntax enforcement (exact source ids, exact URLs, sentence-level citation
+  presence) is judged by the LLM rather than checked with regex.
+- Q: Should the Report Judge also check formatting/language conventions and do explicit fact
+  checking, and if so how? → A: Two additions to the same single judge call (`build_report_judge_
+  criteria`), not new agents or nodes:
+  (1) An operator-configured **guideline checklist** (`Settings.report_guidelines`, env override
+  `INTELLIGENCE_REPORT_GUIDELINES` as a JSON string array; default: Markdown format required,
+  every sub-section must cite sources via hyperlinks or be erased/merged into the previous
+  section, English only). Each guideline is appended to the criteria list verbatim and judged
+  like any other criterion.
+  (2) A fixed, non-configurable **fact-check criterion**: read the whole report start to finish
+  and flag any factual inaccuracy, hallucination, or internal inconsistency against the evidence
+  block already sent to the judge — not just claims that carry a citation. An unmet guideline or
+  failed fact-check is a `DRAFT_DEFECT` like any other unmet criterion (the judge may still choose
+  `EVIDENCE_GAP` per FR-016c's per-criterion rule when it decides the evidence itself is
+  insufficient) and feeds the same Build-Verify-Fix fix/reflect loop. Considered and rejected:
+  independent re-verification via new web searches per claim — real fact-checking against
+  external reality, but adds search budget/latency to every Verify attempt; deferred as a
+  possible future addition rather than built now (FR-016c, FR-016d).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -335,10 +376,8 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-006**: The Planner MUST call `write_todos` to durably create a non-empty list of structured
   research tasks before any external retrieval begins; a failed or invalid write MUST keep the run
   in Planning and expose an actionable error.
-- **FR-006a**: The same structured Planner call MUST also define 1–5 acceptance criteria (non-blank,
-  non-duplicate) describing what a finished report must state or cover to count as achieving the
-  research brief's goal. The Planner MUST persist the criteria durably alongside the todo list;
-  invalid planner output (missing or malformed criteria) MUST NOT write a todo list either.
+- **FR-006a**: Superseded 2026-09-30 — the Planner no longer defines acceptance criteria; Verify
+  checks only the fact-check criterion and the operator-configured guidelines (FR-016c/FR-016d).
 - **FR-007**: Each research task MUST contain a non-empty research question and a valid current
   status. Each newly written task MUST start in the planned status.
 - **FR-008**: A Research Supervisor MUST assign planned tasks to research workers, track their
@@ -415,19 +454,34 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-016**: A failed verification MUST produce structured feedback with exactly one primary failure
   type: `DRAFT_DEFECT`, `EVIDENCE_GAP`, or `PLAN_GAP`; it MUST identify the affected scope item or
   claim, supporting details, and recommended repair path.
-- **FR-016a**: Verification MUST be a mandatory, deterministic source-verification script run over
-  the report text against the stored evidence (no LLM judgement), also runnable standalone with a
-  non-zero exit code on failure. It MUST check report structure, that every cited source id exists,
-  that every body sentence carries a citation, that numbers and key terms of each claim appear in
-  its cited sources, that no URL outside the evidence appears, that a Sources section lists every
-  cited id with its exact URL, that every researched question is cited, and that unresolved
-  evidence gaps are researched and then disclosed. Only a report passing every check MAY leave the
-  Build-Verify-Fix loop toward approval.
-- **FR-016b**: Only after the deterministic source-verification script passes, the system MUST run
-  an LLM acceptance check that judges the report against each planner-defined acceptance criterion
-  (met/unmet with justification). Any unmet criterion MUST turn that verification result into a
-  failed `DRAFT_DEFECT`, feeding the same Build-Verify-Fix fix/reflect loop as a source-verification
-  failure; a structurally failing draft MUST NOT reach this check.
+- **FR-016a**: Verification MUST be a single mandatory LLM-as-judge call (`agents/report_judge.py`,
+  role `verify`) — there is no separate deterministic pre-check gating it. Superseded 2026-09-29;
+  see FR-016c. The deterministic `source_verification.py` script MAY still be run standalone
+  (non-zero exit code on failure) for manual/offline sanity-checking, but it is no longer part of
+  the graph's Verify gate.
+- **FR-016b**: Superseded 2026-09-29 by FR-016c — acceptance-criterion judgment is no longer a
+  second, conditionally-run stage; it is folded into the single Report Judge call.
+- **FR-016c**: Verification MUST be one LLM-as-judge call, with no search or scrape tools, that
+  re-reads the report against the evidence the research step already gathered (it checks whether
+  the Writer hallucinated while synthesizing, not whether the sources are true on the internet).
+  It evaluates one fixed fact-check criterion — the report contains no factual inaccuracy,
+  hallucination, or internal inconsistency when checked claim-by-claim against the gathered
+  evidence (read as one continuous piece, introduction through conclusion — not only claims that
+  carry a citation) — plus the operator-configured guidelines (FR-016d). Planner acceptance
+  criteria, per-question coverage, fair-representation, uncertainty, plain-language and
+  safe-content criteria were removed 2026-09-30. For each criterion the judge MUST return met/unmet, a
+  justification (naming every specific problem found, not just the first, when unmet), and — when
+  unmet — an issue type of its own choosing: `DRAFT_DEFECT` when the evidence supports the
+  criterion but the writing does not show it, or `EVIDENCE_GAP` when the gathered evidence itself
+  cannot satisfy the criterion no matter how the report is worded. Any unmet criterion turns the
+  verification result into a failed `DRAFT_DEFECT` or `EVIDENCE_GAP` per that criterion's issue
+  type, feeding the same Build-Verify-Fix fix/reflect-or-research loop as before.
+- **FR-016d**: The system MUST also evaluate the report against an operator-configured guideline
+  checklist (`Settings.report_guidelines`, default: Markdown format required; every sub-section
+  must cite its sources via hyperlinks or be erased/folded into the previous section; English
+  only) as additional criteria in the same FR-016c judge call. The checklist MUST be overridable
+  via environment configuration (a JSON array of strings) without a code change, and each unmet
+  guideline MUST be treated exactly like any other unmet FR-016c criterion.
 - **FR-017**: The recovery workflow MUST revise the draft for `DRAFT_DEFECT`, research the specific
   gap for `EVIDENCE_GAP`, and re-plan affected tasks for `PLAN_GAP`.
 - **FR-017a**: Each unresolved evidence gap MUST receive one targeted research round; gaps that remain
@@ -523,8 +577,8 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   typed, validated output. Deterministic fakes MAY be selected explicitly for offline tests but MUST
   NOT silently replace the live model.
 - **FR-032**: The model router MUST centralize primary/fallback models, reasoning settings, timeouts,
-  retry limits, prompt versions, selected model, fallback events, errors, and structured decisions in
-  run traces without recording secrets.
+  retry limits, prompt versions, primary model name, errors, and structured decisions in
+  run traces (a fallback model's run is captured by the LangChain callback trace) without recording secrets.
 - **FR-032a**: The opt-in live LLM/MCP smoke tests MUST reuse the reasoning profile's
   `INTELLIGENCE_REASONING_MODEL`/`INTELLIGENCE_REASONING_PROVIDER` rather than a standalone
   model config, so there is exactly one place to configure the reasoning tier.
@@ -572,12 +626,11 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   Researching or invoke external retrieval. Brief or todo persistence failure MUST end the current
   invocation visibly without enabling retrieval.
 - **FR-037a**: The Planner Agent MUST decompose the `ResearchBrief` with a structured, versioned LLM
-  call whose output is a list of research questions and a list of acceptance criteria
-  (`TodoPlan.questions` and `TodoPlan.acceptance_criteria`, 1–5 items each). Each question and each
-  criterion MUST be standalone, non-blank, and not duplicate another (case-insensitive). The LLM
+  call whose output is a list of research questions (`TodoPlan.questions`, 1–5 items). Each
+  question MUST be standalone, non-blank, and not duplicate another (case-insensitive). The LLM
   MUST NOT set todo IDs or statuses; the system converts each question into a `planned` todo and
-  persists both the todo list (through `write_todos`) and the acceptance criteria. Invalid planner
-  output MUST NOT write a todo list.
+  persists the todo list (through `write_todos`). Invalid planner output MUST NOT write a todo
+  list.
 - **FR-038**: Every live workflow execution MUST emit one complete Langfuse trace before it may be
   treated as successfully observed. Each execution trace MUST be grouped under the LangGraph
   `thread_id`, correlated with `run_id`, and contain a root execution observation, child graph-node
@@ -589,8 +642,8 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   model observations MUST contain the complete rendered instructions and conversation supplied to
   the model plus the validated response serialized as JSON text. Prompt versions, hashes, IDs, and
   dispatch statuses MAY remain metadata but MUST NOT replace semantic input or output content.
-- **FR-039**: Once a draft passes source-verification (and acceptance verification, when
-  configured), the system MUST score the whole report's RAGAS Faithfulness against the excerpt
+- **FR-039**: Once a draft passes verification (FR-016c), the system MUST score the whole report's
+  RAGAS Faithfulness against the excerpt
   text of every source the report actually cites, using an LLM judge, and record the resulting
   score (or, on judge failure, the error) as a durable per-run artifact. This score is
   observational: a missing, low, or failed score MUST NOT alter verification's pass/fail

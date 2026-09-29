@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from uuid import uuid4
 from langgraph.types import Command
-from intelligence_collector.agents.acceptance_verifier import AcceptanceVerifier
+from intelligence_collector.agents.report_judge import ReportJudge
 from intelligence_collector.agents.feedback_router import FeedbackRouter
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.scope import ScopeAgent
@@ -30,28 +30,29 @@ def _get_tracer(st):
     return st.session_state.tracer
 
 
-def _get_role_router(st, tracer):
-    """One shared router, dispatching by role: xhigh reasoning for scope/planner/verify,
-    standard for researcher/research_compressor/synthesizer/fixer (see RoleModelSettings)."""
-    if "role_router" in st.session_state:
-        return st.session_state.role_router
+def _get_model_routers(st, tracer):
+    """Reasoning-tier (xhigh) and standard-tier models, each with its own fallback; every agent
+    is handed the tier it needs (see RoleModelSettings)."""
+    if "model_routers" in st.session_state:
+        return st.session_state.model_routers
     if not os.getenv("INTELLIGENCE_REASONING_MODEL", "").strip():
         return None
-    settings = RoleModelSettings.from_env()
-    router = ModelFactory().create_role_router(
-        settings, mode="live", trace=tracer.model_event, callbacks=tracer.callbacks,
+    routers = ModelFactory().create_routers(
+        RoleModelSettings.from_env(),
+        trace=tracer.model_event, callbacks=tracer.callbacks,
     )
-    st.session_state.role_router = router
-    return router
+    st.session_state.model_routers = routers
+    return routers
 
 
 def _get_scope_agent(st, tracer):
     if "scope_agent" in st.session_state:
         return st.session_state.scope_agent
-    router = _get_role_router(st, tracer)
-    if router is None:
+    routers = _get_model_routers(st, tracer)
+    if routers is None:
         return None
-    agent = ScopeAgent(router)
+    # Scope runs on the reasoning tier; its content-safety guardrail is a cheap binary check.
+    agent = ScopeAgent(routers.reasoning, guardrail_router=routers.standard)
     st.session_state.scope_agent = agent
     return agent
 
@@ -85,7 +86,7 @@ def _get_scope_graph(st, agent, tracer):
     tavily_url = os.getenv("TAVILY_MCP_URL", "").strip()
     if tavily_key and tavily_url:
         researcher = ResearchAgent(
-            agent.router,
+            st.session_state.model_routers.standard,
             # Each research sub-agent gets its own MCP client and per-task search budget.
             mcp_factory=lambda: TavilyMCP(
                 tavily_url,
@@ -115,9 +116,10 @@ def _get_scope_graph(st, agent, tracer):
                 provider=settings.embedding_provider,
             ),
             researcher,
-            # Goal-level check, run only after the deterministic script passes; shares the
-            # scope/planner/verify reasoning-tier model (agent.router is the role router).
-            acceptance_verifier=AcceptanceVerifier(agent.router),
+            # Sole Verify gate (LLM-as-judge, no deterministic pre-check); shares the
+            # scope/planner reasoning-tier model.
+            report_judge=ReportJudge(agent.router),
+            report_guidelines=settings.report_guidelines,
             max_concurrent_researchers=settings.max_concurrent_researchers,
             recovery_budget=settings.recovery_attempts,
             evidence_top_k=settings.evidence_top_k,
@@ -134,7 +136,7 @@ def _get_scope_graph(st, agent, tracer):
         )(node, status),
         with_approval=True,
         output_dir=settings.output_dir,
-        # Shares the scope/planner/verify reasoning-tier model, same as AcceptanceVerifier above.
+        # Same reasoning-tier model as ReportJudge above.
         feedback_router=FeedbackRouter(agent.router),
     )
     st.session_state.scope_checkpoint_connection = connection
@@ -168,6 +170,14 @@ def _record_value(record, key, default=None):
 
 def _status_text(value):
     return str(getattr(value, "value", value)).replace("_", " ")
+
+
+def _failure_stage_label(activity: list) -> str:
+    """Name the node that was actually running when a turn-wide exception was caught, instead of
+    always blaming whichever node happens to be first in that turn's try block."""
+    if not activity:
+        return "Request"
+    return activity[-1].get("label") or "Request"
 
 
 def _snapshot_verification(snapshot):
@@ -390,7 +400,7 @@ def _render_agent_row_body(st, agent_key, status, snapshot, vfs):
                 st.caption(f"{len(draft.split())} words drafted — full report and checks below.")
     elif agent_key == "Verifier":
         if status == "running":
-            st.caption("Checking the report against its sources…")
+            st.caption("Judging the report against the evidence…")
         elif status == "complete":
             verification = _snapshot_verification(snapshot)
             if verification is not None:
@@ -459,7 +469,7 @@ _NODE_ACTIVITY = {
     Node.RESEARCH: ("Delegating research to sub-agents", "Research Supervisor", "tavily_search"),
     Node.ASSESS_RESEARCH: ("Assessing research completeness", "Research Supervisor", "think_tool"),
     Node.SYNTHESIZE: ("Synthesizing report", "Report Writer", None),
-    Node.VERIFY: ("Verifying report against sources", "Verifier", "source_verification"),
+    Node.VERIFY: ("Verifying report with LLM judge", "Verifier", "report_judge"),
     Node.EVALUATE_FAITHFULNESS: ("Scoring RAGAS Faithfulness", "Verifier", None),
     Node.FIX: ("Reflecting on verification failures", "Fix Planner", None),
     Node.RESEARCH_GAPS: ("Researching evidence gaps", "Research Supervisor", "tavily_search"),
@@ -558,14 +568,10 @@ def render():
     ):
         st.subheader("Review and publish")
         decision = st.radio("Publication decision", ["Approve", "Reject"], key="publication_decision")
-        feedback_text = ""
-        if decision == "Reject":
-            feedback_text = st.text_area(
-                "Feedback — used to decide whether this needs a wording/citation revision "
-                "(writer) or a different research direction (replanning)",
-                key="rejection_feedback",
-            )
-        if st.button("Record decision"):
+
+        def _resume_with_decision(resume_payload):
+            """Resume the graph paused at the publication-approval interrupt with the human's
+            decision (and, on reject, their feedback) and drive that turn to completion."""
             try:
                 tracer = _get_tracer(st)
                 agent = _get_scope_agent(st, tracer)
@@ -578,9 +584,6 @@ def render():
                 thread_id = st.session_state.scope_thread_id
                 run_id = st.session_state.scope_state.get("run_id", "")
                 config = {"configurable": {"thread_id": thread_id}}
-                resume_payload = {"approved": decision == "Approve", "actor": "local-user"}
-                if decision == "Reject":
-                    resume_payload["feedback"] = feedback_text.strip()
                 with st.status("Processing decision", expanded=False):
                     with tracer.execution(
                         run_id, thread_id, input={"approval_decision": resume_payload},
@@ -609,6 +612,23 @@ def render():
                 st.rerun()
             except Exception as exc:
                 st.error(f"Recording the decision failed: {exc}")
+
+        if decision == "Approve":
+            if st.button("Approve & publish"):
+                _resume_with_decision({"approved": True, "actor": "local-user"})
+        else:
+            feedback_text = st.text_area(
+                "Feedback — used to decide whether this needs a wording/citation revision "
+                "(writer) or a different research direction (replanning)",
+                key="rejection_feedback",
+            )
+            feedback_stripped = feedback_text.strip()
+            if st.button("Send feedback", disabled=not feedback_stripped):
+                _resume_with_decision({
+                    "approved": False, "actor": "local-user", "feedback": feedback_stripped,
+                })
+            if not feedback_stripped:
+                st.caption("Enter feedback above before sending it back to the agent.")
     # Wrapping chat_input in a container (instead of calling it at the script's top level)
     # trades away its viewport-pinned/floating placement so the New Thread button can render
     # in normal flow right below it.
@@ -699,8 +719,11 @@ def render():
                 st.session_state.activity[-1]["status"] = "failure"
             st.error(f"Request blocked: {exc}")
         except Exception as exc:
+            # The try block above spans the whole turn (Scope through Verify), so name the node
+            # that was actually running when it failed instead of always blaming Scope.
+            stage_label = _failure_stage_label(st.session_state.activity)
             if st.session_state.activity:
                 st.session_state.activity[-1]["status"] = "failure"
-            st.error(f"Scope decision failed: {exc}")
+            st.error(f"{stage_label} failed: {exc}")
     return st
 if __name__ == "__main__": render()

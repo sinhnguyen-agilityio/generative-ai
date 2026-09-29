@@ -5,12 +5,11 @@ from pydantic import BaseModel
 
 from intelligence_collector.models.router import ModelRouter
 def test_model_router_falls_back_once():
-    events=[]
     def primary(role, prompt): raise RuntimeError("timeout")
-    def fallback(role, prompt): return "fallback"
-    router=ModelRouter(primary, fallback, on_fallback=events.append)
-    assert router.invoke("scope", "hello") == "fallback"
-    assert len(router.events) == len(events) == 1
+    def fallback(role, prompt): return {"ok": True}
+    router=ModelRouter(primary, fallback)
+    result = router.invoke_messages("scope", [HumanMessage(content="hello")], _Decision, prompt_version="t.v1")
+    assert result == _Decision(ok=True)
 
 
 class _Decision(BaseModel):
@@ -29,7 +28,7 @@ def test_invoke_messages_parses_multi_block_thinking_content():
                 {"type": "text", "text": json.dumps({"ok": True})},
             ])
 
-    router = ModelRouter(ThinkingModel(), mode="fake")
+    router = ModelRouter(ThinkingModel())
 
     result = router.invoke_messages(
         "scope", [HumanMessage(content="hi")], _Decision, prompt_version="test.v1",
@@ -53,7 +52,7 @@ def test_invoke_messages_uses_provider_native_structured_output():
         def invoke(self, messages):
             return _Decision(ok=True)
 
-    router = ModelRouter(StructuredModel(), mode="fake")
+    router = ModelRouter(StructuredModel())
 
     result = router.invoke_messages(
         "research_compressor", [HumanMessage(content="hi")], _Decision, prompt_version="t.v1",
@@ -61,3 +60,10 @@ def test_invoke_messages_uses_provider_native_structured_output():
 
     assert result == _Decision(ok=True)
     assert bound == [_Decision]
+
+
+def test_router_requires_a_primary_model():
+    import pytest
+
+    with pytest.raises(RuntimeError, match="primary model"):
+        ModelRouter(None)

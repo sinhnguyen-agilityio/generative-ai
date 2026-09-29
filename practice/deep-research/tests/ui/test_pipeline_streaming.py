@@ -12,6 +12,7 @@ update behavior itself is verified directly against LangGraph's `stream_mode="va
 from pathlib import Path
 
 import pytest
+from langchain_core.callbacks import BaseCallbackHandler
 
 from intelligence_collector.observability.tracing import Tracer
 from tests.contract.test_observability_contract import FakeLangfuseClient, fake_propagation
@@ -57,7 +58,7 @@ def test_chat_turn_streams_through_the_graph_and_settles_on_the_planned_stage(tm
     )
     monkeypatch.setattr(
         "intelligence_collector.app._get_tracer",
-        lambda st: Tracer(client=FakeLangfuseClient(), callback_handler=object()),
+        lambda st: Tracer(client=FakeLangfuseClient(), callback_handler=BaseCallbackHandler()),
     )
 
     app = AppTest.from_file(APP_PATH).run()

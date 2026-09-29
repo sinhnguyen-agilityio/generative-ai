@@ -3,6 +3,7 @@ import json
 from langchain_core.messages import AIMessage
 
 from intelligence_collector.agents.scope import ScopeAgent
+from intelligence_collector.agents.report_judge import ReportJudge
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import ResearchNodes
@@ -10,7 +11,7 @@ from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.storage.vfs import VFS
 from intelligence_collector.tools.mcp import ControlledMCP
 from intelligence_collector.agents.report_writer import ReportWriter
-from tests.fixtures.fake_models import FakeReportModel, FakeResearchModel, cited_report
+from tests.fixtures.fake_models import FakeAcceptanceModel, FakeReportModel, FakeResearchModel, cited_report
 
 
 class SequencedModel:
@@ -40,22 +41,24 @@ def test_full_graph_executes_guarded_research_to_approval_ready(stores):
         },
         {
             "questions": ["How does a local software cache store and reuse data?"],
-            "acceptance_criteria": ["States how a local cache stores and reuses data."],
         },
     ])
     mcp = ControlledMCP([{
         "url": "https://controlled.test/cache",
         "content": "A cache stores reusable data for later access.",
     }])
-    researcher = ResearchAgent(ModelRouter(FakeResearchModel(), mode="fake"), lambda: mcp)
+    researcher = ResearchAgent(ModelRouter(FakeResearchModel()), lambda: mcp)
     writer = ReportWriter(ModelRouter(FakeReportModel([cited_report(
         ["A cache stores reusable data for later access [S1]."],
         {"S1": "https://controlled.test/cache"},
-    )]), mode="fake"))
+    )])))
+    judge = ReportJudge(ModelRouter(FakeAcceptanceModel([{
+        "results": [{"criterion": "all criteria", "met": True, "justification": "Satisfied."}],
+    }])))
     graph = build_graph(
-        scope_agent=ScopeAgent(ModelRouter(model, mode="fake")),
+        scope_agent=ScopeAgent(ModelRouter(model)),
         vfs=vfs,
-        research_nodes=ResearchNodes(vfs, index, researcher, report_writer=writer),
+        research_nodes=ResearchNodes(vfs, index, researcher, report_writer=writer, report_judge=judge),
     )
 
     result = graph.invoke({

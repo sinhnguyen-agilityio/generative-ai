@@ -32,7 +32,7 @@ def test_scope_clarification_checkpoint_resumes_after_process_restart(tmp_path):
     first_connection = sqlite3.connect(checkpoint_path, check_same_thread=False)
     graph = build_graph(
         checkpointer=SqliteSaver(first_connection),
-        scope_agent=ScopeAgent(ModelRouter(model, mode="live")),
+        scope_agent=ScopeAgent(ModelRouter(model)),
         vfs=VFS(tmp_path / "vfs"),
     )
     config = {"configurable": {"thread_id": "scope-thread"}}
@@ -43,7 +43,7 @@ def test_scope_clarification_checkpoint_resumes_after_process_restart(tmp_path):
     second_connection = sqlite3.connect(checkpoint_path, check_same_thread=False)
     restarted_graph = build_graph(
         checkpointer=SqliteSaver(second_connection),
-        scope_agent=ScopeAgent(ModelRouter(model, mode="live")),
+        scope_agent=ScopeAgent(ModelRouter(model)),
         vfs=VFS(tmp_path / "vfs"),
     )
     resumed = restarted_graph.invoke(

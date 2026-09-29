@@ -16,13 +16,13 @@ def test_scope_llm_asks_one_focused_question_for_ambiguous_request():
         "question": "Which databases and workload? Choose two named databases for one workload.",
         "verification": "",
     }])
-    result = ScopeAgent(ModelRouter(fake, fake, mode="fake")).assess("Compare databases")
+    result = ScopeAgent(ModelRouter(fake, fake)).assess("Compare databases")
     assert result.need_clarification is True
     assert result.question
 
 def test_scope_llm_returns_clear_brief():
     fake = RecordingChatModel([_guardrail_payload(), _clear_payload(), _brief_payload()])
-    result = ScopeAgent(ModelRouter(fake, fake, mode="fake")).assess("Compare PostgreSQL and SQLite")
+    result = ScopeAgent(ModelRouter(fake, fake)).assess("Compare PostgreSQL and SQLite")
     assert isinstance(result, ResearchBrief) and result.research_question.startswith("I want")
 
 
@@ -35,7 +35,7 @@ def test_clarification_without_a_question_is_rejected():
     fake = RecordingChatModel([_guardrail_payload(), invalid, invalid])
 
     with pytest.raises(ValueError, match="invalid structured output"):
-        ScopeAgent(ModelRouter(fake, mode="fake")).assess("Compare databases")
+        ScopeAgent(ModelRouter(fake)).assess("Compare databases")
 
 
 def test_scope_assessment_schema_has_exactly_three_decision_fields():

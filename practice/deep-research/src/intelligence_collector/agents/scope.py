@@ -62,8 +62,9 @@ def build_scope(scope: dict[str, str], vfs: VFS | None = None, run_id: str | Non
 
 
 class ScopeAgent:
-    def __init__(self, router):
+    def __init__(self, router, guardrail_router=None):
         self.router = router
+        self.guardrail_router = guardrail_router or router
 
     @staticmethod
     def _messages(prior_turns: list[str | BaseMessage] | None) -> list[BaseMessage]:
@@ -87,7 +88,7 @@ class ScopeAgent:
         model. Runs on the cheap standard-tier model so a blocked message never pays for the
         deep-reasoning scope call."""
         messages = GUARDRAIL_TEMPLATE.format_messages(message=request)
-        return self.router.invoke_messages(
+        return self.guardrail_router.invoke_messages(
             "guardrail",
             messages,
             ContentSafetyVerdict,

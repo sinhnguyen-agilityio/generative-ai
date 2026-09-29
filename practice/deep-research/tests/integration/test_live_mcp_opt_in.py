@@ -36,7 +36,7 @@ def test_live_tavily_mcp_preserves_provenance_artifacts_and_index(stores):
             model_name, provider=os.getenv("INTELLIGENCE_REASONING_PROVIDER") or None, timeout=45,
         )
     )
-    researcher = ResearchAgent(ModelRouter(model, mode="live"), lambda: mcp)
+    researcher = ResearchAgent(ModelRouter(model), lambda: mcp)
     todo = ResearchTodo(
         research_question="What is the official Python 3.13 release date?"
     )

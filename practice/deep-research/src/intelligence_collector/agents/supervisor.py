@@ -7,7 +7,7 @@ in plan order on the calling thread.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
 
 from intelligence_collector.agents.researcher import ResearchAgent, ResearchOutcome
 from intelligence_collector.agents.worker import already_researched, failed_outcome, persist_research
@@ -65,13 +65,32 @@ class ResearchSupervisor:
     def _run_sub_agents(
         self, run_id: str, todos: list[ResearchTodo], thread_id: str, claims: UrlClaims
     ) -> dict[str, ResearchOutcome]:
-        workers = min(len(todos), self.max_concurrent_researchers)
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="research") as pool:
-            futures = {
-                todo.todo_id: pool.submit(self._research_one, run_id, todo, thread_id, claims)
-                for todo in todos
-            }
-            return {todo_id: future.result() for todo_id, future in futures.items()}
+        """Synchronous entry point (called from the sync ``researching`` graph node): drives the
+        async fan-out below to completion on a short-lived event loop, since nothing else in the
+        call chain is async."""
+        return asyncio.run(self._gather_sub_agents(run_id, todos, thread_id, claims))
+
+    async def _gather_sub_agents(
+        self, run_id: str, todos: list[ResearchTodo], thread_id: str, claims: UrlClaims
+    ) -> dict[str, ResearchOutcome]:
+        # Each sub-agent's actual work (LLM calls, MCP search) is still synchronous, so
+        # asyncio.to_thread runs it in a worker thread -- same real parallelism as before, capped
+        # by the semaphore since asyncio.to_thread's own thread pool has no such limit. Unlike a
+        # bare ThreadPoolExecutor, asyncio.to_thread propagates the calling contextvars.Context
+        # into that thread automatically, so Langfuse/OpenTelemetry's "current span" and
+        # LangChain's runnable config still reach each sub-agent's LLM call traces without any
+        # manual context handling here.
+        semaphore = asyncio.Semaphore(self.max_concurrent_researchers)
+
+        async def bounded(todo: ResearchTodo) -> tuple[str, ResearchOutcome]:
+            async with semaphore:
+                outcome = await asyncio.to_thread(
+                    self._research_one, run_id, todo, thread_id, claims
+                )
+                return todo.todo_id, outcome
+
+        results = await asyncio.gather(*(bounded(todo) for todo in todos))
+        return dict(results)
 
     def _research_one(
         self, run_id: str, todo: ResearchTodo, thread_id: str, claims: UrlClaims

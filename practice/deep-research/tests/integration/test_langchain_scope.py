@@ -56,10 +56,6 @@ def _plan_payload():
             "What operational and deployment trade-offs do PostgreSQL and SQLite have for local "
             "Python applications, according to primary technical sources?",
         ],
-        "acceptance_criteria": [
-            "States a concurrency/locking difference between PostgreSQL and SQLite.",
-            "States an operational or deployment trade-off between PostgreSQL and SQLite.",
-        ],
     }
 
 
@@ -72,7 +68,7 @@ def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch,
     )
     live_model = ModelFactory().create(ModelConfig("scope-test", provider="fake", timeout=3))
     traces = []
-    router = ModelRouter(live_model, mode="live", trace=lambda **event: traces.append(event))
+    router = ModelRouter(live_model, trace=lambda **event: traces.append(event))
     result = build_graph(scope_agent=ScopeAgent(router), vfs=VFS(tmp_path)).invoke(
         {"run_id": "run-1", "thread_id": "thread-1", "request": "Compare PostgreSQL and SQLite"}
     )
@@ -88,7 +84,7 @@ def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch,
     assert traces[0]["prompt_version"] == "guardrail.v1"
     assert traces[1]["prompt_version"] == "scope.v1"
     assert traces[2]["prompt_version"] == "scope-brief.v1"
-    assert traces[3]["prompt_version"] == "planner.v4"
+    assert traces[3]["prompt_version"] == "planner.v5"
     assert traces[3]["role"] == "planner"
     assert traces[0]["selected_model"] == "fake-live-scope"
     assert len(result["messages"]) == 2
@@ -112,7 +108,7 @@ def test_invalid_planner_output_does_not_write_todos(tmp_path):
         {"questions": [duplicate, duplicate]},
         {"questions": []},
     ])
-    graph = build_graph(scope_agent=ScopeAgent(ModelRouter(model, mode="live")), vfs=VFS(tmp_path))
+    graph = build_graph(scope_agent=ScopeAgent(ModelRouter(model)), vfs=VFS(tmp_path))
     with pytest.raises(ValueError, match="invalid structured output for planner"):
         graph.invoke({"run_id": "bad-plan", "thread_id": "bad-plan", "request": "Bounded request"})
     assert not (tmp_path / "bad-plan" / "planning" / "todos.v1.json").exists()
@@ -137,7 +133,7 @@ def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
         _brief_payload(),
         _plan_payload(),
     ])
-    router = ModelRouter(model, mode="live")
+    router = ModelRouter(model)
     graph = build_graph(scope_agent=ScopeAgent(router), vfs=VFS(tmp_path))
     first = graph.invoke({"run_id": "run-2", "thread_id": "thread-2", "request": "Compare databases"})
     assert first["stage"] == "Scoping"
@@ -165,13 +161,11 @@ def test_primary_model_failure_uses_fallback_without_silent_clear(tmp_path):
             raise TimeoutError("primary timed out")
 
     fallback = RecordingChatModel([_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()])
-    router = ModelRouter(FailingModel(), fallback, mode="live")
+    router = ModelRouter(FailingModel(), fallback)
     result = build_graph(scope_agent=ScopeAgent(router), vfs=VFS(tmp_path)).invoke(
         {"run_id": "fallback", "thread_id": "fallback", "request": "A fully bounded request"}
     )
     assert result["stage"] == "Planning"
-    assert len(router.events) == 4
-    assert router.fallback_used
 
 
 def test_malformed_structured_output_never_routes_to_planning(tmp_path):
@@ -180,7 +174,7 @@ def test_malformed_structured_output_never_routes_to_planning(tmp_path):
         {"need_clarification": False},
         {"need_clarification": False},
     ])
-    graph = build_graph(scope_agent=ScopeAgent(ModelRouter(model, mode="live")), vfs=VFS(tmp_path))
+    graph = build_graph(scope_agent=ScopeAgent(ModelRouter(model)), vfs=VFS(tmp_path))
     with pytest.raises(ValueError, match="invalid structured output"):
         graph.invoke({"run_id": "bad", "thread_id": "bad", "request": "Research this"})
     assert not (tmp_path / "bad" / "planning" / "todos.v1.json").exists()
@@ -192,7 +186,7 @@ def test_total_model_failure_is_visible_and_does_not_write_todos(tmp_path):
             raise RuntimeError("provider unavailable")
 
     graph = build_graph(
-        scope_agent=ScopeAgent(ModelRouter(FailingModel(), FailingModel(), mode="live")),
+        scope_agent=ScopeAgent(ModelRouter(FailingModel(), FailingModel())),
         vfs=VFS(tmp_path),
     )
     with pytest.raises(ValueError, match="invalid structured output"):

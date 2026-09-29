@@ -36,7 +36,7 @@ class PlannerAgent:
         run_id: str = "",
         thread_id: str = "",
     ) -> TodoPlan:
-        """Structured LLM decision: standalone research questions plus acceptance criteria.
+        """Structured LLM decision: the standalone research questions for the brief.
 
         ``guidance``, when non-empty, is a human reviewer's replanning feedback on a previous
         report built from an earlier plan — see ``FEEDBACK_ROUTER_PROMPT``/``graph/nodes.py``'s
@@ -66,17 +66,10 @@ class PlannerAgent:
         *,
         thread_id: str = "",
         guidance: str = "",
-    ) -> tuple[list[ResearchTodo], list[str]]:
-        """Define the plan, then durably record the todos and acceptance criteria."""
+    ) -> list[ResearchTodo]:
+        """Define the plan, then durably record the todos."""
         plan = self.define_plan(brief, guidance=guidance, run_id=run_id, thread_id=thread_id)
-        todos = create_todos(vfs, run_id, plan.questions)
-        vfs.write_json(
-            run_id,
-            "planning/acceptance_criteria.v1.json",
-            plan.acceptance_criteria,
-            "acceptance_criteria",
-        )
-        return todos, plan.acceptance_criteria
+        return create_todos(vfs, run_id, plan.questions)
 
 
 def replan_affected_node(

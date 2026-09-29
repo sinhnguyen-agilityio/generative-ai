@@ -17,7 +17,6 @@ class GraphState(TypedDict, total=False):
     scoped_request: dict
     todos: list[dict]
     todo_ids: list[str]
-    acceptance_criteria: list[str]
     artifacts: list[dict]
     evidence: list[dict]
     index_refs: list[str]

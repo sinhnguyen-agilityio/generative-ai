@@ -7,13 +7,20 @@ dependencies are injected once and the wiring in ``build.py`` stays declarative.
 
 from __future__ import annotations
 
+import hashlib
+
 from langchain_core.messages import AIMessage, HumanMessage
 
-from intelligence_collector.agents.acceptance_verifier import AcceptanceVerifier, merge_acceptance_verdict
+from intelligence_collector.agents.report_judge import (
+    ReportJudge,
+    build_report_judge_criteria,
+    judge_verdict_to_result,
+)
 from intelligence_collector.agents.report_writer import (
     DEFAULT_EVIDENCE_TOP_K,
     ReportWriter,
     RevisionContext,
+    format_evidence,
     merge_lessons,
     select_relevant_evidence,
 )
@@ -38,7 +45,6 @@ from intelligence_collector.source_verification import (
     failure_fingerprint,
     load_catalog,
     save_catalog_state,
-    verify_report,
 )
 
 DEFAULT_RECOVERY_BUDGET = 3
@@ -122,8 +128,8 @@ class ScopeNodes:
 
 
 class PlannerNodes:
-    """Planning: the Planner Agent turns the brief into questions, acceptance criteria, and
-    calls `write_todos`."""
+    """Planning: the Planner Agent turns the brief into research questions and calls
+    `write_todos`."""
 
     def __init__(self, planner_agent, vfs=None):
         self.planner_agent = planner_agent
@@ -144,7 +150,7 @@ class PlannerNodes:
             raise RuntimeError("Planning requires an injected VFS")
         brief = ResearchBrief.model_validate(state["scoped_request"])
         guidance = state.get("human_feedback", "")
-        todos, acceptance_criteria = self.planner_agent.write_todos(
+        todos = self.planner_agent.write_todos(
             brief,
             self.vfs,
             state["run_id"],
@@ -155,7 +161,6 @@ class PlannerNodes:
             **state,
             "stage": Stage.PLANNING.value,
             "todos": [todo.model_dump(mode="json") for todo in todos],
-            "acceptance_criteria": acceptance_criteria,
             "human_feedback": "",
             "draft": "",
             "verification": None,
@@ -175,7 +180,8 @@ class ResearchNodes:
         researcher,
         *,
         report_writer: ReportWriter | None = None,
-        acceptance_verifier: AcceptanceVerifier | None = None,
+        report_judge: ReportJudge,
+        report_guidelines: list[str] = (),
         max_concurrent_researchers: int = DEFAULT_MAX_CONCURRENT_RESEARCHERS,
         recovery_budget: int = DEFAULT_RECOVERY_BUDGET,
         evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
@@ -194,7 +200,8 @@ class ResearchNodes:
             index,
             self.supervisor,
             report_writer or ReportWriter(researcher.router),
-            acceptance_verifier=acceptance_verifier,
+            report_judge=report_judge,
+            report_guidelines=report_guidelines,
             recovery_budget=recovery_budget,
             evidence_top_k=evidence_top_k,
             faithfulness_evaluator=faithfulness_evaluator,
@@ -286,10 +293,12 @@ def _merge_research(state, results):
 class BVFNodes:
     """Mandatory Build-Verify-Fix loop around the report.
 
-    Build (``synthesizing``) -> Verify (``verifying``, programmatic source-verification script,
-    then, only if that passes, the LLM acceptance-criteria check) -> on failure Fix (``fixing``:
-    record the attempt and reflect to learn lessons) -> either a revised draft (DRAFT_DEFECT) or
-    targeted gap research (EVIDENCE_GAP) -> Build again. Only a report that passes every check
+    Build (``synthesizing``) -> Verify (``verifying``, one LLM-as-judge call — see
+    ``agents/report_judge.py`` — judging goal achievement, per-question coverage, fair
+    representation of the evidence, uncertainty disclosure, plain language, and safe content) ->
+    on failure Fix (``fixing``: record the attempt and reflect to learn lessons) -> either a
+    revised draft (DRAFT_DEFECT) or targeted gap research (EVIDENCE_GAP, when the judge decides
+    the evidence itself is insufficient) -> Build again. Only a report that passes every criterion
     leaves the loop normally; exhausting the recovery budget or repeating the same failures ends
     in ``needs_review``.
     """
@@ -301,7 +310,8 @@ class BVFNodes:
         supervisor: ResearchSupervisor,
         writer: ReportWriter,
         *,
-        acceptance_verifier: AcceptanceVerifier | None = None,
+        report_judge: ReportJudge,
+        report_guidelines: list[str] = (),
         recovery_budget: int,
         evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
         faithfulness_evaluator: FaithfulnessEvaluator | None = None,
@@ -310,7 +320,8 @@ class BVFNodes:
         self.index = index
         self.supervisor = supervisor
         self.writer = writer
-        self.acceptance_verifier = acceptance_verifier
+        self.report_judge = report_judge
+        self.report_guidelines = list(report_guidelines)
         self.recovery_budget = recovery_budget
         self.evidence_top_k = evidence_top_k
         self.faithfulness_evaluator = faithfulness_evaluator
@@ -376,24 +387,26 @@ class BVFNodes:
         }
 
     def verifying(self, state):
-        """Run the programmatic source-verification script, then, only if it passes, the LLM
-        acceptance-criteria check (there is no point judging goal achievement on a structurally
-        broken draft)."""
+        """LLM-as-judge is the sole Verify gate: one reasoning-tier call (no search/scrape tools)
+        re-reads the report against the gathered evidence and decides whether it is factually
+        faithful and follows the configured report guidelines — see ``agents/report_judge.py``."""
         catalog = self._catalog(state)
         researched = list(state.get("researched_gaps", []))
-        result = verify_report(state.get("draft", ""),
-                               catalog, researched_gaps=researched)
-        criteria = list(state.get("acceptance_criteria", []))
         brief = ResearchBrief.model_validate(state["scoped_request"])
-        if result.passed and self.acceptance_verifier is not None and criteria:
-            verdict = self.acceptance_verifier.verify(
-                brief,
-                criteria,
-                state.get("draft", ""),
-                run_id=state["run_id"],
-                thread_id=state.get("thread_id", ""),
-            )
-            result = merge_acceptance_verdict(result, verdict)
+        criteria = build_report_judge_criteria(self.report_guidelines)
+        report = state.get("draft", "")
+        verdict = self.report_judge.verify(
+            brief,
+            criteria,
+            report,
+            format_evidence(catalog),
+            catalog,
+            researched_gaps=researched,
+            run_id=state["run_id"],
+            thread_id=state.get("thread_id", ""),
+        )
+        artifact_hash = hashlib.sha256(report.encode()).hexdigest() if report else ""
+        result = judge_verdict_to_result(verdict, artifact_hash)
         fingerprint = failure_fingerprint(result)
         stalled = not result.passed and fingerprint == state.get(
             "progress_fingerprint")
@@ -413,7 +426,7 @@ class BVFNodes:
             "stage": (Stage.AWAITING_APPROVAL if result.passed else Stage.VERIFYING).value,
             "status": "paused" if result.passed else "active",
             "current_action": (
-                f"All {len(result.checks)} source-verification checks passed"
+                f"All {len(result.checks)} judge criteria passed"
                 if result.passed else f"Verification failed: {', '.join(failed)}"
             ),
             "activity": _activity(state, "Verifying report"),
