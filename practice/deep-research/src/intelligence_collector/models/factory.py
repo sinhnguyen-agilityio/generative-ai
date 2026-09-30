@@ -42,11 +42,11 @@ class ModelFactory:
         """Build the reasoning and standard tiers from `RoleModelSettings`, each with its own
         optional fallback model. `trace` and `callbacks` are shared by both tiers."""
 
-        def tier(model, provider, kwargs, fallback_model, fallback_provider, **router_kwargs) -> ModelRouter:
-            primary = self.create(ModelConfig(model, provider=provider, kwargs=kwargs))
+        def tier(model, provider, kwargs, fallback_model, fallback_provider, timeout, **router_kwargs) -> ModelRouter:
+            primary = self.create(ModelConfig(model, provider=provider, timeout=timeout, kwargs=kwargs))
             # The fallback runs with default settings: it only has to be a reliable safety net.
             fallback = (
-                self.create(ModelConfig(fallback_model, provider=fallback_provider))
+                self.create(ModelConfig(fallback_model, provider=fallback_provider, timeout=timeout))
                 if fallback_model
                 else None
             )
@@ -61,10 +61,12 @@ class ModelFactory:
             reasoning=tier(
                 settings.reasoning_model, settings.reasoning_provider, settings.reasoning_kwargs,
                 settings.reasoning_fallback_model, settings.reasoning_fallback_provider,
+                settings.reasoning_timeout,
                 max_attempts=MAX_MODEL_ATTEMPTS,
             ),
             standard=tier(
                 settings.standard_model, settings.standard_provider, settings.standard_kwargs,
                 settings.standard_fallback_model, settings.standard_fallback_provider,
+                settings.standard_timeout,
             ),
         )

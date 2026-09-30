@@ -18,9 +18,14 @@ MAX_CONCURRENT_RESEARCHERS = 5
 # guidelines are DRAFT_DEFECT failures, fed to the same Build-Verify-Fix fix/reflect loop.
 DEFAULT_REPORT_GUIDELINES: list[str] = [
     "The report MUST be written in Markdown format.",
-    "Each sub-section MUST include supporting sources using hyperlinks. If none exist, erase "
-    "the sub-section or rewrite it to be part of the previous section instead of leaving it "
-    "unsupported.",
+    # Matches the writer's own layout (agents/prompts.py::REPORT_WRITER_PROMPT): sources are cited
+    # inline as [S1] markers that resolve to hyperlinks in the "## Sources" list, and the "## Scope"
+    # section makes no claims. Do not ask for inline URLs here: the writer is told never to put
+    # URLs outside the Sources list, so such a rule can never be satisfied.
+    "Every body section (each '## ' section except '## Scope', '## Limitations' and "
+    "'## Sources') MUST support its claims with inline source citations such as [S1] that match "
+    "entries in the '## Sources' list, which gives each source's title and hyperlink. If no "
+    "source supports a section, remove it or merge it into the previous section.",
     "The report MUST be written in English.",
 ]
 
@@ -66,9 +71,11 @@ class Settings:
     # Distinct pages one research sub-agent keeps for its todo, across all of its searches.
     max_sources_per_task: int = 5
     max_concurrent_researchers: int = 3
-    recovery_attempts: int = 3
-    faithfulness_model: str = "gemini-3.7-flash"
-    report_guidelines: list[str] = field(default_factory=lambda: list(DEFAULT_REPORT_GUIDELINES))
+    recovery_attempts: int = 2
+    faithfulness_model: str = "gpt-4.1-mini"
+    faithfulness_provider: str = "openai"
+    report_guidelines: list[str] = field(
+        default_factory=lambda: list(DEFAULT_REPORT_GUIDELINES))
 
     @classmethod
     def from_env(cls):
@@ -102,6 +109,9 @@ class Settings:
             faithfulness_model=os.getenv(
                 "INTELLIGENCE_FAITHFULNESS_MODEL", cls.faithfulness_model
             ),
+            faithfulness_provider=os.getenv(
+                "INTELLIGENCE_FAITHFULNESS_PROVIDER", cls.faithfulness_provider
+            ),
         )
 
 
@@ -120,6 +130,25 @@ class RoleModelSettings:
     reasoning_fallback_provider: str | None = None
     standard_fallback_model: str | None = None
     standard_fallback_provider: str | None = None
+    # Per-request timeout (seconds) for each tier's models, fallback included. The reasoning tier
+    # gets more time: a reasoning model (e.g. gpt-5-nano at reasoning_effort=high) can spend well
+    # over 30s thinking before it emits the first token.
+    reasoning_timeout: float = 120.0
+    standard_timeout: float = 60.0
+
+    @staticmethod
+    def _bounded_seconds(name: str, default: float) -> float:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = float(raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"{name} must be a number of seconds between 5 and 600") from exc
+        if not 5 <= value <= 600:
+            raise ValueError(f"{name} must be between 5 and 600 seconds")
+        return value
 
     @staticmethod
     def _json_object(name: str, default: str) -> dict[str, Any]:
@@ -161,6 +190,10 @@ class RoleModelSettings:
                 "INTELLIGENCE_STANDARD_FALLBACK_MODEL") or None,
             standard_fallback_provider=os.getenv(
                 "INTELLIGENCE_STANDARD_FALLBACK_PROVIDER") or None,
+            reasoning_timeout=cls._bounded_seconds(
+                "INTELLIGENCE_REASONING_TIMEOUT", cls.reasoning_timeout),
+            standard_timeout=cls._bounded_seconds(
+                "INTELLIGENCE_STANDARD_TIMEOUT", cls.standard_timeout),
         )
 
 

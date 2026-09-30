@@ -6,9 +6,12 @@ import json
 from typing import Any, Iterator
 from uuid import uuid4
 
+from langgraph.errors import GraphInterrupt
+
 from intelligence_collector.config import LangfuseSettings
 
 
+PAUSED_MESSAGE = "Paused: waiting for a human decision"
 SECRET_KEYS = ("api_key", "secret", "authorization", "credential", "password", "token")
 
 
@@ -51,6 +54,7 @@ class Tracer:
         self.client = client
         self.callback_handler = callback_handler
         self.spans: list[TraceSpan] = []
+        self.scores: list[dict[str, Any]] = []
 
     @classmethod
     def from_settings(cls, settings: LangfuseSettings):
@@ -125,6 +129,11 @@ class Tracer:
                 ):
                     try:
                         yield local
+                    except GraphInterrupt:
+                        # Not a failure: the graph paused for a human decision (the approval gate).
+                        local.attributes["paused"] = True
+                        remote.update(status_message=PAUSED_MESSAGE)
+                        raise
                     except Exception as exc:
                         local.error = f"{type(exc).__name__}: {exc}"
                         remote.update(level="ERROR", status_message=local.error)
@@ -158,12 +167,33 @@ class Tracer:
         ) as remote:
             try:
                 yield local
+            except GraphInterrupt:
+                # `interrupt()` unwinds through the node as an exception, but it is an intentional
+                # pause for a human decision, so it must not show up as an ERROR in Langfuse.
+                local.attributes["paused"] = True
+                remote.update(status_message=PAUSED_MESSAGE)
+                raise
             except Exception as exc:
                 local.error = f"{type(exc).__name__}: {exc}"
                 remote.update(level="ERROR", status_message=local.error)
                 raise
             finally:
                 remote.update(output=_text_payload(local.output), metadata=_safe(local.attributes))
+
+    def score(self, name: str, value: float, *, comment: str = "") -> None:
+        """Attach a numeric score (e.g. RAGAS faithfulness) to the current Langfuse trace, so it
+        shows up in the trace's Scores and can be filtered/charted. Must be called while the
+        trace's observation is active. Observability only: a failed export never raises."""
+        record: dict[str, Any] = {"name": name, "value": value, "comment": comment}
+        self.scores.append(record)
+        if self.client is None:
+            return
+        try:
+            self.client.score_current_trace(
+                name=name, value=value, data_type="NUMERIC", comment=comment or None,
+            )
+        except Exception as exc:
+            record["error"] = f"{type(exc).__name__}: {exc}"
 
     def model_event(self, **event: Any) -> None:
         run_id = str(event.get("run_id", ""))

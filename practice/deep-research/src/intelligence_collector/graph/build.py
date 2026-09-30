@@ -17,15 +17,16 @@ from intelligence_collector.graph.nodes import (
     stage_only,
 )
 from intelligence_collector.graph.routing import (
-    APPROVAL_UNRESOLVED,
     APPROVED,
     FIX,
     NEEDS_REVIEW,
     PASSED,
+    REJECTED,
     TO_FORMAT,
     TO_SCOPE,
     route_after_approval,
     route_after_clarify,
+    route_after_feedback,
     route_after_fix,
     route_after_verify,
 )
@@ -62,15 +63,17 @@ def build_graph(
             START -> clarify_with_user --(needs clarification)--> END
                                        \\-> write_research_brief -> planning
                   -> researching -> research_complete -> synthesizing -> verifying
-            verifying --(all checks pass)--> evaluating_faithfulness -> approval (with_approval) | END
+            verifying --(all checks pass)--> evaluating_faithfulness -> writer (with_approval) | END
                       --(failed, budget left)--> fixing --(DRAFT_DEFECT)--> synthesizing
                                                         \\-(EVIDENCE_GAP)-> researching_gaps
                                                                             -> synthesizing
                       --(budget exhausted / no progress)--> needs_review -> END
-            approval (human-in-the-loop gate) --(approve)--> publish to output_dir -> END
-                     --(reject, format-only feedback)--> synthesizing (edit the text's formatting)
-                     --(reject, scope-change feedback)--> clarify_with_user -> brief -> planning
-                                                          (fresh plan, discards prior draft/verification)
+            writer (presents the report; applies a reviewer's formatting request) -> approval
+            approval (human-in-the-loop review) --(approve)--> publishing -> END
+                     --(reject)--> classify_feedback (LLM decides what the feedback asks for)
+            classify_feedback --(format)--> writer (reformat only: no re-synthesis, no re-verify)
+                              --(scope)--> clarify_with_user -> brief -> planning
+                                           (fresh plan, discards prior draft/verification)
 
         Scope only (scope_agent):
             START -> clarify_with_user -> write_research_brief -> planning -> END
@@ -141,7 +144,7 @@ def build_graph(
     add_node(Node.NEEDS_REVIEW, bvf.needs_review)
 
     graph.add_edge(Node.SYNTHESIZE, Node.VERIFY)
-    passed_target = Node.APPROVE if with_approval else END
+    passed_target = Node.WRITER if with_approval else END
     # RAGAS Faithfulness (evaluating_faithfulness) runs only on this PASSED edge — once, on the
     # final report that actually left the BVF loop — never on a draft that gets fixed and
     # reverified.
@@ -162,16 +165,24 @@ def build_graph(
     # ===== APPROVAL =====
     if with_approval:
         approval_nodes = ApprovalNodes(vfs, output_dir, feedback_router)
+        add_node(Node.WRITER, bvf.writing)
         add_node(Node.APPROVE, approval_nodes.approval)
+        add_node(Node.CLASSIFY_FEEDBACK, approval_nodes.classify_feedback)
+        add_node(Node.PUBLISH, approval_nodes.publishing)
+        graph.add_edge(Node.WRITER, Node.APPROVE)
         graph.add_conditional_edges(
             Node.APPROVE,
             route_after_approval,
+            {APPROVED: Node.PUBLISH, REJECTED: Node.CLASSIFY_FEEDBACK},
+        )
+        graph.add_edge(Node.PUBLISH, END)
+        graph.add_conditional_edges(
+            Node.CLASSIFY_FEEDBACK,
+            route_after_feedback,
             {
-                APPROVED: END,
-                TO_FORMAT: Node.SYNTHESIZE,
+                TO_FORMAT: Node.WRITER,
                 # A scope change re-enters scoping (the stub scope node when no scope agent).
                 TO_SCOPE: Node.CLARIFY if scope_agent is not None else Node.STUB_SCOPE,
-                APPROVAL_UNRESOLVED: END,
             },
         )
 

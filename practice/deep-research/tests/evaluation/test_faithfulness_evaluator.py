@@ -18,12 +18,15 @@ def test_make_faithfulness_evaluator_returns_none_for_no_contexts():
 def test_make_faithfulness_evaluator_calls_the_async_scorer_with_the_right_arguments(monkeypatch):
     captured = {}
 
-    async def fake_score(question, report, contexts, *, model, api_key):
-        captured.update(question=question, report=report, contexts=contexts, model=model, api_key=api_key)
+    async def fake_score(question, report, contexts, *, model, api_key, provider):
+        captured.update(
+            question=question, report=report, contexts=contexts,
+            model=model, api_key=api_key, provider=provider,
+        )
         return 0.87
 
     monkeypatch.setattr(evaluation, "_score_report_faithfulness_async", fake_score)
-    evaluate = evaluation.make_faithfulness_evaluator(model="gemini-3.7-flash", api_key="secret")
+    evaluate = evaluation.make_faithfulness_evaluator(model="gpt-4.1-mini", api_key="secret")
 
     score = evaluate("What does X do?", "X does Y [S1].", ["X does Y."])
 
@@ -32,9 +35,36 @@ def test_make_faithfulness_evaluator_calls_the_async_scorer_with_the_right_argum
         "question": "What does X do?",
         "report": "X does Y [S1].",
         "contexts": ["X does Y."],
-        "model": "gemini-3.7-flash",
+        "model": "gpt-4.1-mini",
         "api_key": "secret",
+        "provider": "openai",
     }
+
+
+def test_make_faithfulness_evaluator_rejects_unknown_provider():
+    with pytest.raises(ValueError, match="Unsupported faithfulness provider"):
+        evaluation.make_faithfulness_evaluator(model="m", api_key="k", provider="groq")
+
+
+def test_openai_judge_llm_uses_an_async_openai_client(monkeypatch):
+    captured = {}
+
+    class FakeAsyncOpenAI:
+        def __init__(self, api_key):
+            captured["api_key"] = api_key
+
+    def fake_llm_factory(model, provider, client):
+        captured.update(model=model, provider=provider, client=client)
+        return "judge-llm"
+
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr("ragas.llms.llm_factory", fake_llm_factory)
+
+    assert evaluation._openai_judge_llm("gpt-4.1-mini", "secret-key") == "judge-llm"
+    assert captured["api_key"] == "secret-key"
+    assert captured["model"] == "gpt-4.1-mini"
+    assert captured["provider"] == "openai"
+    assert isinstance(captured["client"], FakeAsyncOpenAI)
 
 
 def test_make_faithfulness_evaluator_propagates_judge_llm_failures(monkeypatch):

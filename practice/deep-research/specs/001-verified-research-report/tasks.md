@@ -1047,3 +1047,48 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   the full rendered prompt as `input_text`). Test fakes that keyed on version markers now match a
   distinctive phrase of the prompt. FR-031/032/035/037a/038 and plan.md updated accordingly. Full
   suite: 207 passed, 2 skipped.
+- [X] T151 Observability fixes: `Tracer.span`/`execution` no longer mark `GraphInterrupt` (the HITL
+  approval pause) as an ERROR; add `Tracer.score` (Langfuse `score_current_trace`) and export
+  `faithfulness_score` as a `faithfulness` score from `node_wrapper` (`SCORE_FIELDS`), plus the score and
+  error in span/execution outputs. Tests: `tests/contract/test_observability_contract.py`. Full suite:
+  210 passed, 2 skipped.
+- [X] T152 Fix format-feedback and guideline bugs found in run 7bc8f962: (a) the default guideline "each
+  sub-section MUST include hyperlinks" contradicted the writer's `[S<n>]` layout (Scope is uncited, URLs
+  only in Sources) and forced a needless fix loop -- reworded to match the layout; (b) the writer now
+  sees the guidelines up front and its stale "source-verification script" wording is gone; (c) a `format`
+  rejection re-ran the writer's strict-layout synthesis and returned the identical report -- replaced
+  by `ReportWriter.reformat` (request overrides layout), `reviewer_format_request`/`format_unchanged`
+  state, and a judge note. Tests: `tests/unit/test_report_writer_format.py`,
+  `tests/unit/test_report_judge.py`, `tests/integration/test_approval_gate.py`. Full suite: 214 passed,
+  2 skipped.
+- [X] T153 Fix planner stalls on slow reasoning models (gpt-5-nano): the 30s per-request timeout was
+  hard-coded in `ModelConfig` (and the SDK retried twice, then the router retried the whole call up to
+  3x). Added `RoleModelSettings.reasoning_timeout`/`standard_timeout` (env `INTELLIGENCE_*_TIMEOUT`,
+  defaults 120s/60s, 5-600s, applied to primary and fallback) and made `ModelRouter` raise transient
+  provider errors (timeouts, connection drops, 408/429/5xx) immediately instead of retrying. Tests:
+  `tests/unit/test_model_factory.py`, `tests/contract/test_model_router_contract.py`. Full suite: 218
+  passed, 2 skipped.
+- [X] T154 [US1] Split the reviewer-feedback classifier out of the approval gate into its own LLM
+  node (FR-026a): `approval` now only interrupts, publishes on approve, and on reject records the
+  decision plus `human_feedback`; `route_after_approval` sends a rejection to the new
+  `Node.CLASSIFY_FEEDBACK` (`ApprovalNodes.classify_feedback`), which calls `FeedbackRouter` and
+  `route_after_feedback` routes `format` -> `synthesizing` (rewrite) and `scope` ->
+  `clarify_with_user` (re-scope). A failed classification is now retried on its own node instead of
+  re-running the interrupt. Added the node to the Streamlit activity map. Tests:
+  `tests/integration/test_approval_gate.py`. Full suite: 220 passed, 2 skipped.
+- [X] T155 Move the RAGAS Faithfulness judge (FR-039) from Gemini to OpenAI `gpt-4.1-mini`: Groq and
+  Gemini were not stable enough for this judge. Added `Settings.faithfulness_provider` (env
+  `INTELLIGENCE_FAITHFULNESS_PROVIDER`, `openai` default, `google_genai` kept) and
+  `evaluation._openai_judge_llm` (ragas `llm_factory` with an `AsyncOpenAI` client, so `ascore()`
+  stays async); `app.py` enables the judge only when the provider's key is set. Updated
+  `.env.example`. Tests: `tests/evaluation/test_faithfulness_evaluator.py`. Full suite: 222 passed,
+  2 skipped.
+- [X] T156 [US1] Add a `writer` node and a `publishing` node to the human review flow (FR-026a/b):
+  `evaluating_faithfulness` -> `writer` -> `approval` (HITL); approve -> `publishing` -> END; reject ->
+  `classify_feedback` (LLM) -> `format`: `writer` (reformat only via `ReportWriter.reformat`, no
+  re-synthesis, no re-verify) -> `approval`, or `scope`: `clarify_with_user`. Moved the reviewer
+  reformat out of `synthesizing`; `approval` now binds to the hash of the presented text and
+  `publication.publish` gained `verified_source` so a reformatted report publishes only when its
+  verified source matches the passing verification. Removed `reviewer_format_request` from graph
+  state; added `verified_draft`/`format_revision`. Tests: `tests/integration/test_approval_gate.py`,
+  `tests/integration/test_approval_binding.py`. Full suite: 224 passed, 2 skipped.

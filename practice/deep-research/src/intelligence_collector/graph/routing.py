@@ -12,10 +12,11 @@ from intelligence_collector.graph.state import GraphState
 # Outcomes of route_after_verify; build.py maps "passed" to approval or END.
 PASSED, FIX, NEEDS_REVIEW = "passed", "fix", "needs_review"
 
-# Outcomes of route_after_approval; build.py maps these to END, SYNTHESIZE, or CLARIFY.
-APPROVED, TO_FORMAT, TO_SCOPE, APPROVAL_UNRESOLVED = (
-    "approved", "format", "scope", "approval_unresolved",
-)
+# Outcomes of route_after_approval; build.py maps these to PUBLISH or CLASSIFY_FEEDBACK.
+APPROVED, REJECTED = "approved", "rejected"
+
+# Outcomes of route_after_feedback; build.py maps these to WRITER or CLARIFY.
+TO_FORMAT, TO_SCOPE = "format", "scope"
 
 # ===== CONDITIONAL EDGE ROUTERS =====
 
@@ -42,21 +43,14 @@ def route_after_verify(state: GraphState) -> str:
 
 
 def route_after_approval(state: GraphState) -> str:
-    """Post-HITL-gate routing: published ends the run; a rejection routes to whichever path
-    the feedback-router classifier chose: a formatting edit (writer) or a scope change (back
-    to scope clarification). ``ApprovalNodes.approval`` always sets exactly one
-    of these outcomes when it runs, so ``APPROVAL_UNRESOLVED`` is only a defensive fallback
-    (e.g. an approved decision whose publish failed, such as a stale-hash race) that ends the
-    run rather than looping — a reject-shaped outcome without a decision is never inferred.
-    """
-    if state.get("stage") == Stage.PUBLISHED.value:
-        return APPROVED
-    route = state.get("feedback_route")
-    if route == "format":
-        return TO_FORMAT
-    if route == "scope":
-        return TO_SCOPE
-    return APPROVAL_UNRESOLVED
+    """Post-HITL-review routing: an explicit approval publishes; anything else is a rejection
+    and goes to the feedback classifier."""
+    return APPROVED if (state.get("approval") or {}).get("approved") else REJECTED
+
+
+def route_after_feedback(state: GraphState) -> str:
+    """Send classified reviewer feedback to the writer (format) or back to scoping (scope)."""
+    return TO_SCOPE if state.get("feedback_route") == "scope" else TO_FORMAT
 
 
 def route_after_fix(state: GraphState) -> str:

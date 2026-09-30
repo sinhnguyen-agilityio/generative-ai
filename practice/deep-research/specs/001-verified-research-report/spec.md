@@ -139,8 +139,8 @@ evidence-backed technical report from a user's research request."
   criteria`), not new agents or nodes:
   (1) An operator-configured **guideline checklist** (`Settings.report_guidelines`, env override
   `INTELLIGENCE_REPORT_GUIDELINES` as a JSON string array; default: Markdown format required,
-  every sub-section must cite sources via hyperlinks or be erased/merged into the previous
-  section, English only). Each guideline is appended to the criteria list verbatim and judged
+  every body section must cite sources with inline `[S<n>]` markers resolving to hyperlinks in the
+  Sources list, or be removed/merged into the previous section, English only). Each guideline is appended to the criteria list verbatim and judged
   like any other criterion.
   (2) A fixed, non-configurable **fact-check criterion**: read the whole report start to finish
   and flag any factual inaccuracy, hallucination, or internal inconsistency against the evidence
@@ -477,9 +477,11 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   verification result into a failed `DRAFT_DEFECT` or `EVIDENCE_GAP` per that criterion's issue
   type, feeding the same Build-Verify-Fix fix/reflect-or-research loop as before.
 - **FR-016d**: The system MUST also evaluate the report against an operator-configured guideline
-  checklist (`Settings.report_guidelines`, default: Markdown format required; every sub-section
-  must cite its sources via hyperlinks or be erased/folded into the previous section; English
-  only) as additional criteria in the same FR-016c judge call. The checklist MUST be overridable
+  checklist (`Settings.report_guidelines`, default: Markdown format required; every body section
+  (except Scope, Limitations and Sources) must cite its sources with inline `[S<n>]` markers that
+  match the Sources list, or be removed/merged; English only). The checklist MUST match the
+  writer's own layout rules (a guideline the writer is told never to satisfy is a defect), and the
+  Report Writer MUST be shown the guidelines up front, not only after a failed verification) as additional criteria in the same FR-016c judge call. The checklist MUST be overridable
   via environment configuration (a JSON array of strings) without a code change, and each unmet
   guideline MUST be treated exactly like any other unmet FR-016c criterion.
 - **FR-017**: The recovery workflow MUST revise the draft for `DRAFT_DEFECT`, research the specific
@@ -546,17 +548,23 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-026**: Rejecting publication MUST leave the permanent output location unchanged and record
   the rejection without representing the artifact as published.
 - **FR-026a**: Rejection MAY include free-text reviewer feedback. When present, the system MUST
-  classify it as either a formatting-only request (`format`: only the presentation of the existing
+  classify it, in a dedicated LLM step separate from the approval gate itself (so a failed
+  classification never re-prompts the reviewer), as either a formatting-only request (`format`: only the presentation of the existing
   report changes) or a scope change (`scope`: what the report should cover changes), and route the
   run accordingly. Rejection without feedback, or without a classifier configured, MUST default to
   the `format` path rather than discarding the existing research plan.
-- **FR-026b**: A `format` rejection MUST NOT re-plan or re-research and MUST NOT change any claim,
-  number or citation of the report; a `scope` rejection MUST re-enter scope clarification with the
-  feedback as a new user turn (the scope agent MAY ask a clarifying question), rewrite the research
-  brief, and produce a fresh set of research questions, restarting the attempt counters. Either path re-enters the normal
-  Build-Verify-Fix loop and MUST return to Awaiting Approval only once the revised or replanned
-  artifact fully passes verification again — it MUST NOT publish or re-offer the prior, rejected
-  artifact.
+- **FR-026b**: A `format` rejection MUST NOT re-plan, re-research, re-synthesize or re-verify, and
+  MUST NOT change any claim, number or citation of the report. It is applied by the `writer` node
+  (between faithfulness scoring and the human review) as a dedicated formatting edit of the
+  current report, MUST actually change the presentation as asked (a request that leaves the
+  report unchanged MUST be reported to the reviewer), and returns straight to Awaiting Approval.
+  Publication of a reformatted report MUST stay bound both to the exact text the reviewer approved
+  and to the verified report it was formatted from (FR-027). A `scope` rejection MUST re-enter
+  scope clarification with the feedback as a new user turn (the scope agent MAY ask a clarifying
+  question), rewrite the research brief, and produce a fresh set of research questions, restarting
+  the attempt counters; it re-enters the normal Build-Verify-Fix loop and MUST return to Awaiting
+  Approval only once the replanned artifact fully passes verification again — it MUST NOT publish
+  or re-offer the prior, rejected artifact.
 - **FR-027**: The system MUST deny publication for an unverified, changed-after-approval, failed, or
   `NEEDS_REVIEW` artifact and provide an actionable reason.
 - **FR-028**: Publication MUST place only the exact approved artifact version in the permanent output
@@ -576,8 +584,10 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   Verification, and Fixer roles MUST use a real LLM call in live mode with a prompt template and a
   typed, validated output. Deterministic fakes MAY be selected explicitly for offline tests but MUST
   NOT silently replace the live model.
-- **FR-032**: The model router MUST centralize primary/fallback models, reasoning settings, timeouts,
-  retry limits, primary model name, errors, and structured decisions in
+- **FR-032**: The model router MUST centralize primary/fallback models, reasoning settings, timeouts
+  (configurable per tier via `INTELLIGENCE_REASONING_TIMEOUT`/`INTELLIGENCE_STANDARD_TIMEOUT`,
+  defaults 120s/60s, applied to the fallback too), retry limits (invalid structured output is
+  retried; timeouts, rate limits and provider overloads are raised at once, never looped), primary model name, errors, and structured decisions in
   run traces (a fallback model's run is captured by the LangChain callback trace) without recording secrets.
 - **FR-032a**: The opt-in live LLM/MCP smoke tests MUST reuse the reasoning profile's
   `INTELLIGENCE_REASONING_MODEL`/`INTELLIGENCE_REASONING_PROVIDER` rather than a standalone
@@ -652,6 +662,11 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   keyed only to `VerificationResult.passed`).
 - **FR-039a**: The faithfulness score, when present, MUST be displayed to the user alongside the
   report.
+- **FR-039b**: The faithfulness score MUST also be inspectable in Langfuse: attached to the
+  execution trace as a numeric score named `faithfulness`, and included (with any error) in the
+  `graph.evaluating_faithfulness` span output and the execution trace output.
+- **FR-039c**: The human-approval pause (`GraphInterrupt`) MUST NOT be reported to Langfuse as an
+  error; its span is marked paused with the status "Paused: waiting for a human decision".
 
 ### Key Entities *(include if feature involves data)*
 

@@ -69,12 +69,19 @@ class ReportJudge:
         catalog: SourceCatalog,
         *,
         researched_gaps: list[str] | None = None,
+        reviewer_request: str = "",
         run_id: str = "",
         thread_id: str = "",
     ) -> ReportJudgeVerdict:
+        """Judge `report` against `criteria`. `reviewer_request` is a human's formatting request
+        already applied to the report; it overrides conflicting formatting guidelines."""
         messages = REPORT_JUDGE_TEMPLATE.format_messages(
             brief=brief.research_question,
             criteria=_bullets(criteria),
+            reviewer_note=(
+                f"Reviewer formatting request (already applied to the report):\n{reviewer_request}\n\n"
+                if reviewer_request else ""
+            ),
             evidence=evidence,
             gaps=_known_gaps(catalog, researched_gaps or []),
             report=report,

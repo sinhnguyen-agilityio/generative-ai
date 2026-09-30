@@ -11,6 +11,24 @@ from intelligence_collector.models.redaction import redact_text, redact_value
 
 T = TypeVar("T", bound=BaseModel)
 MAX_MODEL_ATTEMPTS = 3
+# HTTP statuses that mean "the provider is slow/overloaded", not "the model answered badly".
+TRANSIENT_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """True for timeouts, dropped connections, rate limits and provider overloads.
+
+    Calling again immediately only repeats the wait (a timeout costs the full timeout again), and
+    the fallback model already had its turn inside the chain, so these are not retried. A model
+    that answered badly (invalid JSON, schema violation, a provider 400 such as Groq's flaky
+    `json_validate_failed`) is different: another attempt often succeeds, so it is retried.
+    """
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    if getattr(exc, "status_code", None) in TRANSIENT_STATUS or getattr(exc, "code", None) in TRANSIENT_STATUS:
+        return True
+    name = type(exc).__name__.lower()  # e.g. openai.APITimeoutError, httpx.ReadTimeout
+    return "timeout" in name or "connection" in name
 
 
 def _model_name(model) -> str:
@@ -77,7 +95,8 @@ class ModelRouter:
     Two independent recovery layers:
     * provider errors (timeouts, rate limits) fall through to the fallback model, once per call;
     * invalid structured output (bad JSON / schema violation) re-invokes the whole primary ->
-      fallback chain, up to `max_attempts` times, before raising `ValueError`.
+      fallback chain, up to `max_attempts` times, before raising `ValueError`. Transient provider
+      failures (see `_is_transient`) are raised at once instead of being retried.
     """
 
     def __init__(self, primary, fallback=None, *, max_attempts: int = 2, trace=None, callbacks=None):
@@ -109,13 +128,19 @@ class ModelRouter:
             try:
                 result = self._parse(role, chain.invoke(messages, config=config), schema)
             except Exception as exc:
+                transient = _is_transient(exc)
                 errors.append(redact_text(exc))
                 # The raw error text is withheld from the trace: it can echo model output.
-                message = f"{type(exc).__name__}: invalid structured output"
+                message = (
+                    f"{type(exc).__name__}: model call failed"
+                    if transient else f"{type(exc).__name__}: invalid structured output"
+                )
                 self._emit(
                     role, run_id, thread_id, attempt, messages,
                     output_text=message, validation_error=message,
                 )
+                if transient:
+                    raise RuntimeError(f"model call for {role} failed: {errors[-1]}") from exc
                 continue
             self._emit(
                 role, run_id, thread_id, attempt, messages,

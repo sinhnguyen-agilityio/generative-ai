@@ -19,6 +19,10 @@ class FakeLangfuseClient:
         self.records = []
         self.stack = []
         self.flush_count = 0
+        self.scores = []
+
+    def score_current_trace(self, **values):
+        self.scores.append(values)
 
     @staticmethod
     def create_trace_id(*, seed):
@@ -97,3 +101,54 @@ def test_langfuse_authentication_failure_is_actionable(monkeypatch):
 
     with pytest.raises(RuntimeError, match="LANGFUSE_BASE_URL"):
         Tracer.from_settings(settings)
+
+
+def test_graph_interrupt_is_a_pause_not_an_error(monkeypatch):
+    from langgraph.errors import GraphInterrupt
+
+    monkeypatch.setattr("langfuse.propagate_attributes", fake_propagation)
+    client = FakeLangfuseClient()
+    tracer = Tracer(client=client)
+
+    with pytest.raises(GraphInterrupt):
+        with tracer.execution("run", "thread"):
+            with tracer.span("graph.approval", "run", "thread"):
+                raise GraphInterrupt()
+
+    updates = [u for record in client.records for u in record["updates"]]
+    assert not any(u.get("level") == "ERROR" for u in updates)
+    assert any("Paused" in str(u.get("status_message", "")) for u in updates)
+    assert all(span.error == "" for span in tracer.spans)
+
+
+def test_tracer_score_is_sent_to_the_current_langfuse_trace():
+    client = FakeLangfuseClient()
+    tracer = Tracer(client=client)
+
+    tracer.score("faithfulness", 0.87, comment="ragas")
+
+    assert client.scores == [
+        {"name": "faithfulness", "value": 0.87, "data_type": "NUMERIC", "comment": "ragas"}
+    ]
+    assert tracer.scores[0]["value"] == 0.87
+
+
+def test_node_wrapper_exports_faithfulness_as_score_and_span_output(monkeypatch):
+    import json
+
+    from intelligence_collector.graph.instrumentation import node_wrapper
+
+    monkeypatch.setattr("langfuse.propagate_attributes", fake_propagation)
+    client = FakeLangfuseClient()
+    tracer = Tracer(client=client)
+    node = node_wrapper(
+        "evaluating_faithfulness",
+        lambda state: {**state, "faithfulness_score": 0.9, "faithfulness_error": ""},
+        tracer,
+    )
+
+    node({"run_id": "run", "thread_id": "thread"})
+
+    assert client.scores[0]["name"] == "faithfulness" and client.scores[0]["value"] == 0.9
+    output = json.loads(tracer.spans[-1].output)
+    assert output["faithfulness_score"] == 0.9

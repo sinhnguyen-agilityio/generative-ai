@@ -11,6 +11,9 @@ from langgraph.errors import GraphInterrupt
 
 from intelligence_collector.graph.state import GraphState
 
+# State fields exported to Langfuse as trace scores: {state key: score name}.
+SCORE_FIELDS = {"faithfulness_score": "faithfulness"}
+
 NodeFn = Callable[[GraphState], GraphState]
 Lifecycle = Callable[[str, str], None]
 
@@ -42,6 +45,12 @@ def _trace_output(result: GraphState) -> str:
         "scope_assessment": result.get("scope_assessment"),
         "research_brief": result.get("scoped_request"),
         "todos": result.get("todos"),
+        # Present only on the faithfulness node, so its result is readable in the trace itself.
+        **{
+            key: result[key]
+            for key in ("faithfulness_score", "faithfulness_error")
+            if result.get(key) not in (None, "")
+        },
     })
 
 
@@ -67,6 +76,9 @@ def node_wrapper(
         ) as span:
             result = fn(state)
             span.output = _trace_output(result)
+            for key, score_name in SCORE_FIELDS.items():
+                if result.get(key) is not None:
+                    tracer.score(score_name, float(result[key]))
             return result
 
     def wrapped(state: GraphState) -> GraphState:

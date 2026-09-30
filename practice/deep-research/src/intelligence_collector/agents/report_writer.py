@@ -15,6 +15,7 @@ from datetime import date
 
 from intelligence_collector.agents.prompts import (
     REFLECTION_TEMPLATE,
+    REPORT_REFORMAT_TEMPLATE,
     REPORT_WRITER_TEMPLATE,
     REVISION_BLOCK,
 )
@@ -144,9 +145,12 @@ class ReportWriter:
         catalog: SourceCatalog,
         *,
         revision: RevisionContext | None = None,
+        guidelines: list[str] = (),
         run_id: str = "",
         thread_id: str = "",
     ) -> str:
+        """Draft (or revise) the report. `guidelines` are the operator's report guidelines, shown
+        to the writer up front so the first draft already follows what the judge will enforce."""
         revision_text = ""
         if revision is not None:
             revision_text = REVISION_BLOCK.format(
@@ -158,11 +162,30 @@ class ReportWriter:
             )
         messages = REPORT_WRITER_TEMPLATE.format_messages(
             date=date.today().isoformat(),
+            guidelines=_bullets(list(guidelines)),
             brief=brief.research_question,
             evidence=format_evidence(catalog),
             gaps=_bullets([f"{gap.text} (question: {gap.question})" for gap in catalog.gaps]),
             revision=revision_text,
         )
+        draft = self.router.invoke_messages(
+            "synthesizer",
+            messages,
+            DraftAssessment,
+            run_id=run_id,
+            thread_id=thread_id,
+        )
+        return draft.report_markdown
+
+    def reformat(self, report: str, request: str, *, run_id: str = "", thread_id: str = "") -> str:
+        """Apply a human reviewer's formatting request to an already-verified report.
+
+        This is deliberately not `write()`: re-synthesizing from the evidence puts the writer's
+        fixed layout rules back in charge, so a request that conflicts with them (e.g. "put it on
+        one line") came back as the unchanged report. Here the request wins over the layout, and
+        the content and citations are only carried over, not regenerated.
+        """
+        messages = REPORT_REFORMAT_TEMPLATE.format_messages(request=request, report=report)
         draft = self.router.invoke_messages(
             "synthesizer",
             messages,

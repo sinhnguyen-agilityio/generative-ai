@@ -104,3 +104,31 @@ def test_judge_verdict_to_result_propagates_evidence_gap_issue_type():
 
     assert result.passed is False
     assert result.issue_type == IssueType.EVIDENCE_GAP
+
+
+def test_verify_tells_the_judge_about_a_reviewer_formatting_request():
+    model = FakeAcceptanceModel([{
+        "results": [{"criterion": CRITERIA[0], "met": True, "justification": "OK."}],
+    }])
+    judge = ReportJudge(ModelRouter(model))
+    catalog = SourceCatalog(bundles=[])
+
+    judge.verify(BRIEF, CRITERIA, "one line report [S1]", "(evidence)", catalog,
+                 reviewer_request="Format the report in 1 line")
+    judge.verify(BRIEF, CRITERIA, "# Report", "(evidence)", catalog)
+
+    with_request, without_request = model.prompts()
+    assert "Reviewer formatting request" in with_request and "Format the report in 1 line" in with_request
+    assert "Reviewer formatting request (already applied" not in without_request
+
+
+def test_default_guidelines_match_the_writers_citation_layout():
+    from intelligence_collector.agents.prompts import REPORT_WRITER_PROMPT
+    from intelligence_collector.config import DEFAULT_REPORT_GUIDELINES
+
+    joined = " ".join(DEFAULT_REPORT_GUIDELINES)
+    # The writer cites with [S<n>] markers and keeps URLs only in the Sources list; a guideline
+    # demanding a hyperlink in every sub-section (Scope included) could never be satisfied.
+    assert "[S1]" in joined and "## Scope" in joined and "## Sources" in joined
+    assert "using hyperlinks" not in joined
+    assert "Never put URLs anywhere else" in REPORT_WRITER_PROMPT

@@ -67,3 +67,50 @@ def test_router_requires_a_primary_model():
 
     with pytest.raises(RuntimeError, match="primary model"):
         ModelRouter(None)
+
+
+def test_a_timeout_is_not_retried_but_invalid_output_is():
+    import pytest
+
+    class Slow:
+        model_name = "slow"
+
+        def __init__(self):
+            self.calls = 0
+
+        def invoke(self, messages):
+            self.calls += 1
+            raise TimeoutError("request timed out")
+
+    class Sloppy:
+        model_name = "sloppy"
+
+        def __init__(self):
+            self.calls = 0
+
+        def invoke(self, messages):
+            self.calls += 1
+            return AIMessage(content="not json")
+
+    slow, sloppy = Slow(), Sloppy()
+    messages = [HumanMessage(content="hi")]
+
+    with pytest.raises(RuntimeError, match="model call for scope failed"):
+        ModelRouter(slow, max_attempts=3).invoke_messages("scope", messages, _Decision)
+    with pytest.raises(ValueError, match="invalid structured output"):
+        ModelRouter(sloppy, max_attempts=3).invoke_messages("scope", messages, _Decision)
+
+    assert slow.calls == 1  # waiting out the timeout again would only repeat the stall
+    assert sloppy.calls == 3
+
+
+def test_provider_status_codes_for_rate_limit_and_overload_are_transient():
+    from intelligence_collector.models.router import _is_transient
+
+    class ApiError(Exception):
+        def __init__(self, code):
+            self.code = code
+
+    assert _is_transient(ApiError(429)) and _is_transient(ApiError(503))
+    assert not _is_transient(ApiError(400))  # e.g. Groq json_validate_failed: worth retrying
+    assert not _is_transient(ValueError("bad json"))

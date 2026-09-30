@@ -30,6 +30,7 @@ from intelligence_collector.agents.supervisor import (
 )
 from intelligence_collector.agents.synthesis import persist_report
 from intelligence_collector.contracts import (
+    ApprovalDecision,
     FeedbackDecision,
     IssueType,
     ResearchBrief,
@@ -69,8 +70,11 @@ class Node:
     FIX = "fixing"
     RESEARCH_GAPS = "researching_gaps"
     NEEDS_REVIEW = "needs_review"
-    # Publication
+    # Human review and publication
+    WRITER = "writer"
     APPROVE = "approval"
+    CLASSIFY_FEEDBACK = "classify_feedback"
+    PUBLISH = "publishing"
     # Placeholder used by the stage-only graph when no Scope Agent is injected
     STUB_SCOPE = "scope"
 
@@ -327,29 +331,12 @@ class BVFNodes:
         return load_catalog(self.vfs, state["run_id"], state.get("evidence", []))
 
     def synthesizing(self, state):
-        """Build the first draft, a Fix revision applying every automated lesson learned so
-        far, or a formatting-only edit requested by a human reviewer (routed here by
-        ``ApprovalNodes.approval`` via the feedback-router classifier — see
-        ``state["human_feedback"]``). The human-feedback case takes priority: it only reaches
-        this node on a report that already fully PASSED verification, so there is no automated
-        failure to also incorporate."""
+        """Build the first draft, or a Fix revision applying every automated lesson learned so
+        far. A human reviewer's formatting request never comes here — see ``writing``."""
         brief = ResearchBrief.model_validate(state["scoped_request"])
         previous = state.get("verification")
-        human_feedback = state.get("human_feedback", "")
         revision = None
-        if human_feedback:
-            revision = RevisionContext(
-                attempt=state.get("recovery_attempt", 0),
-                failures=f"Human reviewer formatting request (not an automated check):\n{human_feedback}",
-                previous_draft=state.get("draft", ""),
-                lessons=list(state.get("bvf_lessons", [])),
-                strategy=(
-                    "Apply ONLY the formatting or presentation changes the reviewer asked for to "
-                    "the previous draft. Keep every claim, number, source and citation exactly "
-                    "as it is: do not add, remove or reword any fact."
-                ),
-            )
-        elif previous and not previous.get("passed") and state.get("draft"):
+        if previous and not previous.get("passed") and state.get("draft"):
             revision = RevisionContext(
                 attempt=state.get("recovery_attempt", 0),
                 failures=previous.get("repair_details", ""),
@@ -366,6 +353,7 @@ class BVFNodes:
             brief,
             catalog,
             revision=revision,
+            guidelines=self.report_guidelines,
             run_id=state["run_id"],
             thread_id=state.get("thread_id", ""),
         )
@@ -383,7 +371,49 @@ class BVFNodes:
             "draft": report,
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
             "verification": None,  # a changed artifact never inherits a previous verification
-            "human_feedback": "",  # consumed
+        }
+
+    def writing(self, state):
+        """The ``writer`` node: presentation step between the verified report and the human review (``approval``).
+
+        Straight from verification (no request): the report is presented as-is and remembered
+        as ``verified_draft``. With a reviewer's formatting request (routed here by
+        ``classify_feedback``): the current report is re-presented in the requested format by
+        ``ReportWriter.reformat`` — no re-synthesis and no re-verification; the reformat prompt
+        forbids changing any claim, number or citation. Publication stays bound to the verified
+        source (``verified_draft``) and to the exact text the reviewer approves.
+        """
+        draft = state.get("draft", "")
+        verification = state.get("verification") or {}
+        verified_draft = state.get("verified_draft", "")
+        if draft and hashlib.sha256(draft.encode()).hexdigest() == verification.get("artifact_hash"):
+            verified_draft = draft  # fresh from verification
+        base = {**state, "verified_draft": verified_draft, "human_feedback": "",
+                "stage": Stage.AWAITING_APPROVAL.value, "status": "paused"}
+
+        request = state.get("human_feedback", "")
+        if not request:
+            return {**base, "format_unchanged": False, "current_action": "Report ready for review",
+                    "activity": _activity(state, "Presenting report for review")}
+
+        report = self.writer.reformat(
+            draft, request, run_id=state["run_id"], thread_id=state.get("thread_id", ""),
+        )
+        revision = state.get("format_revision", 0) + 1
+        ref = self.vfs.write(state["run_id"], f"reports/formatted.v{revision}.md", report, "draft")
+        unchanged = report.strip() == draft.strip()
+        return {
+            **base,
+            "current_action": (
+                "The formatting request left the report unchanged" if unchanged
+                else f"Report reformatted per the reviewer's request (format v{revision})"
+            ),
+            "format_unchanged": unchanged,
+            "format_revision": revision,
+            "activity": _activity(state, "Reformatting report"),
+            "previous_draft": draft,
+            "draft": report,
+            "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }
 
     def verifying(self, state):
@@ -613,19 +643,21 @@ def approval(state: GraphState) -> GraphState:
 
 
 class ApprovalNodes:
-    """The human-in-the-loop publication gate, reached only once a report has fully passed
-    verification (and faithfulness scoring). Interrupts the graph for one decision:
+    """The human-in-the-loop review, reached through ``writer`` once a report has fully passed
+    verification (and faithfulness scoring):
 
-    * Approve: writes the exact verified artifact (hash-bound to the passing
-      ``VerificationResult``) to the permanent output location and ends the run.
-    * Reject, with feedback: a classifier (``feedback_router``) decides what the reviewer asked for:
-      - ``format`` (presentation only): back to ``synthesizing``, where the writer edits the
-        existing report's formatting without touching any claim or citation;
+    * ``approval`` interrupts the graph for one decision on the report ``writer`` presented,
+      binding it to that exact text: approve -> ``publishing``; reject -> ``classify_feedback``.
+    * ``classify_feedback`` asks an LLM (``feedback_router``) what the reviewer asked for:
+      - ``format`` (presentation only): back to ``writer``, which re-presents the same report in
+        the requested format — no re-synthesis, no re-verification — then back to ``approval``;
       - ``scope`` (a change in what the report covers): back to ``clarify_with_user``, with the
         feedback as a new user turn, so the scope agent re-assesses it (it may ask a clarifying
-        question first), rewrites the research brief, and the planner then plans new questions.
-      Either path re-enters the normal Build-Verify-Fix loop and can reach this same gate again
-      once it passes.
+        question first), rewrites the research brief, and the planner then plans new questions,
+        re-entering the full Build-Verify-Fix loop.
+      Keeping the LLM call in its own node means a failed classification is retried on its
+      own, never re-prompting the reviewer for a decision already given.
+    * ``publishing`` writes the approved text to the permanent output location and ends the run.
     """
 
     def __init__(self, vfs, output_dir: str, feedback_router=None):
@@ -636,78 +668,102 @@ class ApprovalNodes:
     def approval(self, state: GraphState) -> GraphState:
         from langgraph.types import interrupt
 
-        from intelligence_collector.publication import approval_for, publish
+        from intelligence_collector.publication import approval_for
 
         decision = interrupt({"kind": "publication_approval", "run_id": state.get("run_id")})
         verification = VerificationResult.model_validate(state["verification"])
+        # The reviewer decides on the text writer presented, so the approval binds to it.
         approval = approval_for(
-            verification.artifact_hash,
+            hashlib.sha256(state.get("draft", "").encode()).hexdigest(),
             verification.verification_id,
             bool(decision.get("approved")),
             str(decision.get("actor") or "local-user"),
         )
-        run_id = state["run_id"]
-
         if approval.approved:
-            destination = f"{self.output_dir.rstrip('/')}/{run_id}.md"
-            record = publish(state.get("draft", ""), destination, approval, verification)
-            ref = self.vfs.write_json(
-                run_id, "publication/record.json", record.model_dump(mode="json"), "publication_record",
-            )
             return {
                 **state,
                 "approval": approval.model_dump(mode="json"),
-                "publication": record.model_dump(mode="json"),
-                "stage": (Stage.PUBLISHED if record.published else Stage.AWAITING_APPROVAL).value,
-                "current_action": (
-                    f"Published to {destination}" if record.published
-                    else f"Publication failed: {record.error}"
-                ),
-                "activity": _activity(
-                    state, "Publishing report", "success" if record.published else "failure"
-                ),
-                "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
+                "current_action": "Reviewer approved — publishing",
+                "activity": _activity(state, "Reviewer approved the report"),
             }
+        # Rejected: classify_feedback decides where the feedback is addressed.
+        return {
+            **state,
+            "approval": approval.model_dump(mode="json"),
+            "human_feedback": str(decision.get("feedback") or "").strip(),
+            "feedback_route": "",
+            "current_action": "Reviewer rejected — classifying feedback",
+            "activity": _activity(state, "Reviewer rejected the report", "failure"),
+        }
 
-        feedback = str(decision.get("feedback") or "").strip()
+    def publishing(self, state: GraphState) -> GraphState:
+        """Write the approved text, hash-bound to the approval and to its verified source."""
+        from intelligence_collector.publication import publish
+
+        run_id = state["run_id"]
+        destination = f"{self.output_dir.rstrip('/')}/{run_id}.md"
+        record = publish(
+            state.get("draft", ""),
+            destination,
+            ApprovalDecision.model_validate(state["approval"]),
+            VerificationResult.model_validate(state["verification"]),
+            verified_source=state.get("verified_draft") or state.get("draft", ""),
+        )
+        ref = self.vfs.write_json(
+            run_id, "publication/record.json", record.model_dump(mode="json"), "publication_record",
+        )
+        return {
+            **state,
+            "publication": record.model_dump(mode="json"),
+            "stage": (Stage.PUBLISHED if record.published else Stage.AWAITING_APPROVAL).value,
+            "current_action": (
+                f"Published to {destination}" if record.published
+                else f"Publication failed: {record.error}"
+            ),
+            "activity": _activity(
+                state, "Publishing report", "success" if record.published else "failure"
+            ),
+            "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
+        }
+
+    def classify_feedback(self, state: GraphState) -> GraphState:
+        """LLM step: route the reviewer's rejection feedback to a rewrite or a re-scope."""
+        feedback = state.get("human_feedback", "")
         if self.feedback_router is not None and feedback:
             verdict = self.feedback_router.route(
-                feedback, state.get("draft", ""), run_id=run_id, thread_id=state.get("thread_id", ""),
+                feedback, state.get("draft", ""),
+                run_id=state.get("run_id", ""), thread_id=state.get("thread_id", ""),
             )
         else:
             # No classifier configured, or the reviewer rejected without feedback: default to
             # the cheaper format path rather than discarding the whole research plan.
             verdict = FeedbackDecision(route="format", reason="No feedback to classify; defaulting to format.")
 
-        attempt = state.get("recovery_attempt", 0) + 1
         history = [*state.get("bvf_history", []), {
-            "attempt": attempt,
+            "attempt": state.get("recovery_attempt", 0),
             "issue_type": "HUMAN_FEEDBACK",
             "route": verdict.route,
             "feedback": feedback,
             "reason": verdict.reason,
         }]
         update = {
-            "approval": approval.model_dump(mode="json"),
             "feedback_route": verdict.route,
-            "current_action": f"Reviewer rejected — routing to {verdict.route}: {verdict.reason or feedback[:120]}",
-            "activity": _activity(state, f"Reviewer feedback routed to {verdict.route}", "failure"),
+            "current_action": f"Reviewer feedback routed to {verdict.route}: {verdict.reason or feedback[:120]}",
+            "activity": _activity(state, f"Reviewer feedback routed to {verdict.route}"),
             "bvf_history": history,
             "recovery_budget": state.get("recovery_budget", DEFAULT_RECOVERY_BUDGET),
         }
         if verdict.route == "format":
-            return {
-                **state, **update,
-                "human_feedback": feedback,  # consumed by synthesizing()
-                "recovery_attempt": attempt,
-                "stage": Stage.SYNTHESIZING.value,
-            }
+            # writer consumes human_feedback and re-presents the report in the requested format.
+            return {**state, **update, "human_feedback": feedback}
         # Scope change: the feedback becomes the next user turn of the scope conversation. The
         # new brief starts a fresh Build-Verify-Fix cycle, so the attempt/stall counters restart.
         return {
             **state, **update,
             "request": feedback,
             "human_feedback": "",
+            "verified_draft": "",
+            "format_revision": 0,
             "recovery_attempt": 0,
             "stall_count": 0,
             "stage": Stage.SCOPING.value,

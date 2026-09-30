@@ -1,12 +1,14 @@
-"""Integration tests for the human-in-the-loop approval gate (``ApprovalNodes``), reached once
-a report has fully passed verification:
+"""Integration tests for the human-in-the-loop review, reached once a report has fully passed
+verification: evaluating_faithfulness -> writer -> approval (HITL).
 
-* Approve writes the exact verified artifact to ``output_dir`` and ends the run.
-* Reject, with feedback, is classified by a feedback-router LLM as needing either a report-writer
-  revision (routes back to ``synthesizing``) or a full replan (routes back to ``planning``) —
-  either path re-enters the normal Build-Verify-Fix loop and can reach this same gate again.
+* Approve goes to ``publishing``, which writes the approved text to ``output_dir`` and ends.
+* Reject hands off to the ``classify_feedback`` node, whose feedback-router LLM decides between a
+  formatting request (back to ``writer``, which only re-presents the report — no re-synthesis, no
+  re-verification — then back to ``approval``) or a scope change (back to ``clarify_with_user``,
+  re-entering the full Build-Verify-Fix loop).
 """
 
+import hashlib
 import json
 
 from langchain_core.messages import AIMessage
@@ -21,7 +23,15 @@ from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.scope import ScopeAgent
 from intelligence_collector.contracts import ResearchTodo
 from intelligence_collector.graph.build import build_graph
-from intelligence_collector.graph.nodes import ResearchNodes
+from intelligence_collector.graph.nodes import Node, ResearchNodes
+from intelligence_collector.graph.routing import (
+    APPROVED,
+    REJECTED,
+    TO_FORMAT,
+    TO_SCOPE,
+    route_after_approval,
+    route_after_feedback,
+)
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.tools.mcp import ControlledMCP
 from tests.fixtures.fake_models import FakeAcceptanceModel, FakeReportModel, FakeResearchModel, cited_report
@@ -36,6 +46,11 @@ URL = "https://controlled.test/cache"
 QUESTION = "How does a local software cache store and reuse data?"
 BRIEF = {"research_question": "I want a technical report on local software cache behavior from primary sources."}
 GOOD = cited_report(["A cache stores reusable data for later access [S1]."], {"S1": URL})
+BULLETED = GOOD.replace("A cache stores", "- A cache stores")
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def _single_question_plan():
@@ -119,11 +134,52 @@ def test_approve_publishes_the_verified_report_to_output_dir(stores, tmp_path):
     assert published.read_text(encoding="utf-8") == GOOD
 
 
-def test_reject_with_format_route_edits_the_report_then_can_be_approved(stores, tmp_path):
-    report_model = FakeReportModel([GOOD, GOOD])
+def test_reject_with_format_route_only_reformats_then_publishes_the_approved_text(stores, tmp_path):
+    report_model = FakeReportModel([GOOD, BULLETED])
     feedback_model = FakeFeedbackRouterModel([{"route": "format", "reason": "Just formatting."}])
     graph = _bvf_graph(
         stores, report_model,
+        feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
+        output_dir=tmp_path / "exports",
+    )
+    config = {"configurable": {"thread_id": "approval-run"}}
+
+    paused = graph.invoke(_initial_state(), config)
+    verification_id = paused["verification"]["verification_id"]
+    paused_again = graph.invoke(
+        Command(resume={"approved": False, "feedback": "Please use bullet points."}), config,
+    )
+
+    assert paused_again.get("__interrupt__")
+    assert paused_again["stage"] == "Awaiting Approval"
+    assert paused_again["feedback_route"] == "format"
+    assert paused_again["human_feedback"] == ""  # consumed by writer
+    assert feedback_model.calls
+    write_prompts = report_model.prompts("write")
+    assert len(write_prompts) == 2  # the first draft, then one formatting edit — no re-synthesis
+    assert "Please use bullet points." in write_prompts[1]
+    assert "report formatter" in write_prompts[1]
+    assert "takes precedence" in write_prompts[1]
+    # Presented in the new format, without re-verification: still the original verification.
+    assert paused_again["draft"] == BULLETED
+    assert paused_again["verified_draft"] == GOOD
+    assert paused_again["verification"]["verification_id"] == verification_id
+    assert paused_again["verification"]["artifact_hash"] == _sha(GOOD)
+    assert paused_again["format_revision"] == 1
+    assert paused_again["format_unchanged"] is False
+    human_entries = [e for e in paused_again["bvf_history"] if e["issue_type"] == "HUMAN_FEEDBACK"]
+    assert human_entries and human_entries[0]["route"] == "format"
+
+    result = graph.invoke(Command(resume={"approved": True}), config)
+    assert result["stage"] == "Published"
+    # The reviewer approved the reformatted text, so that exact text is what gets published.
+    assert (tmp_path / "exports" / "approval-run.md").read_text(encoding="utf-8") == BULLETED
+
+
+def test_format_request_that_changes_nothing_is_reported(stores, tmp_path):
+    feedback_model = FakeFeedbackRouterModel([{"route": "format", "reason": "Just formatting."}])
+    graph = _bvf_graph(
+        stores, FakeReportModel([GOOD, GOOD]),
         feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
         output_dir=tmp_path / "exports",
     )
@@ -134,20 +190,31 @@ def test_reject_with_format_route_edits_the_report_then_can_be_approved(stores, 
         Command(resume={"approved": False, "feedback": "Please use bullet points."}), config,
     )
 
-    assert paused_again.get("__interrupt__")
-    assert paused_again["stage"] == "Awaiting Approval"
-    assert paused_again["feedback_route"] == "format"
-    assert paused_again["human_feedback"] == ""  # consumed by synthesizing()
-    assert feedback_model.calls
-    write_prompts = report_model.prompts("write")
-    assert len(write_prompts) == 2
-    assert "Please use bullet points." in write_prompts[1]
-    assert "ONLY the formatting" in write_prompts[1]  # the writer is told not to touch content
-    human_entries = [e for e in paused_again["bvf_history"] if e["issue_type"] == "HUMAN_FEEDBACK"]
-    assert human_entries and human_entries[0]["route"] == "format"
+    assert paused_again["format_unchanged"] is True
+    assert "left the report unchanged" in paused_again["current_action"]
 
-    result = graph.invoke(Command(resume={"approved": True}), config)
-    assert result["stage"] == "Published"
+
+def test_review_flow_graph_structure(stores, tmp_path):
+    """faithfulness -> writer -> approval (HITL); approve -> publishing; reject -> classify_feedback
+    (LLM) -> writer (format) or scoping (scope)."""
+    graph = _bvf_graph(stores, FakeReportModel([GOOD]), output_dir=tmp_path / "exports")
+    edges = {(e.source, e.target) for e in graph.get_graph().edges}
+
+    assert (Node.EVALUATE_FAITHFULNESS, Node.WRITER) in edges
+    assert (Node.WRITER, Node.APPROVE) in edges
+    assert (Node.APPROVE, Node.PUBLISH) in edges
+    assert (Node.PUBLISH, "__end__") in edges
+    assert (Node.APPROVE, Node.CLASSIFY_FEEDBACK) in edges
+    assert (Node.CLASSIFY_FEEDBACK, Node.WRITER) in edges
+    assert (Node.CLASSIFY_FEEDBACK, Node.STUB_SCOPE) in edges  # clarify_with_user when a scope agent is wired
+    assert (Node.CLASSIFY_FEEDBACK, Node.SYNTHESIZE) not in edges  # formatting never re-synthesizes
+
+
+def test_feedback_routing_outcomes():
+    assert route_after_approval({"approval": {"approved": True}}) == APPROVED
+    assert route_after_approval({"approval": {"approved": False}}) == REJECTED
+    assert route_after_feedback({"feedback_route": "scope"}) == TO_SCOPE
+    assert route_after_feedback({"feedback_route": "format"}) == TO_FORMAT
 
 
 def test_reject_without_a_feedback_router_defaults_to_format(stores, tmp_path):

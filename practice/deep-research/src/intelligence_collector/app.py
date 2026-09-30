@@ -97,13 +97,15 @@ def _get_scope_graph(st, agent, tracer):
             max_sources=settings.max_sources_per_task,
         )
         faithfulness_evaluator = None
-        google_api_key = os.getenv("GOOGLE_API_KEY", "").strip()
-        if google_api_key:
-            # RAGAS Faithfulness judge is independent of the app's own reasoning/standard
-            # tier models — always Gemini (settings.faithfulness_model, default
-            # gemini-3.7-flash), disabled entirely when no Google key is configured.
+        # RAGAS Faithfulness judge is independent of the app's own reasoning/standard tier
+        # models (default OpenAI gpt-4.1-mini), disabled entirely when its provider's key is unset.
+        judge_key_env = "GOOGLE_API_KEY" if settings.faithfulness_provider == "google_genai" else "OPENAI_API_KEY"
+        judge_api_key = os.getenv(judge_key_env, "").strip()
+        if judge_api_key:
             faithfulness_evaluator = make_faithfulness_evaluator(
-                model=settings.faithfulness_model, api_key=google_api_key,
+                model=settings.faithfulness_model,
+                api_key=judge_api_key,
+                provider=settings.faithfulness_provider,
             )
         research_nodes = ResearchNodes(
             vfs,
@@ -474,7 +476,10 @@ _NODE_ACTIVITY = {
     Node.FIX: ("Reflecting on verification failures", "Fix Planner", None),
     Node.RESEARCH_GAPS: ("Researching evidence gaps", "Research Supervisor", "tavily_search"),
     Node.NEEDS_REVIEW: ("Escalating for review", "Verifier", None),
+    Node.WRITER: ("Presenting report for review", "Report Writer", None),
     Node.APPROVE: ("Waiting for publication decision", "Publisher", None),
+    Node.CLASSIFY_FEEDBACK: ("Classifying reviewer feedback", "Feedback Router", None),
+    Node.PUBLISH: ("Publishing report", "Publisher", None),
 }
 
 
@@ -597,6 +602,7 @@ def render():
                             "approval": result.get("approval"),
                             "feedback_route": result.get("feedback_route"),
                             "publication": result.get("publication"),
+                            "faithfulness_score": result.get("faithfulness_score"),
                         }, ensure_ascii=False, indent=2, default=str)
                 result["activity"] = list(st.session_state.activity)
                 st.session_state.scope_state = result
@@ -694,6 +700,8 @@ def render():
                         ),
                         "scope_assessment": result.get("scope_assessment"),
                         "research_brief": result.get("scoped_request"),
+                        "faithfulness_score": result.get("faithfulness_score"),
+                        "faithfulness_error": result.get("faithfulness_error"),
                         "messages": [
                             {"role": getattr(message, "type", "message"), "content": getattr(message, "content", str(message))}
                             for message in result.get("messages", [])

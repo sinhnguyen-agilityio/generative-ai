@@ -41,6 +41,12 @@ class GraphState(TypedDict, total=False):
     # feedback-router classifier decided it should be addressed (see ApprovalNodes).
     human_feedback: str
     feedback_route: str
+    # writer node: the verified report the presented `draft` was formatted from (publication is
+    # bound to it), how many reviewer formatting requests were applied, and whether the last one
+    # left the report identical.
+    verified_draft: str
+    format_revision: int
+    format_unchanged: bool
     input_turns: list[str]
     scope_questions: list[str]
     checkpoint_metadata: dict[str, Any]

@@ -38,22 +38,37 @@ def _google_judge_llm(model: str, api_key: str):
     return InstructorLLM(client=patched, model=model, provider="google")
 
 
+def _openai_judge_llm(model: str, api_key: str):
+    """Build a ragas judge LLM around the OpenAI API. An ``AsyncOpenAI`` client keeps
+    ``Faithfulness.ascore()`` on a native async path (no sync-client patching needed)."""
+    from openai import AsyncOpenAI
+    from ragas.llms import llm_factory
+
+    return llm_factory(model, provider="openai", client=AsyncOpenAI(api_key=api_key))
+
+
+_JUDGE_LLMS = {"openai": _openai_judge_llm, "google_genai": _google_judge_llm}
+
+
 async def _score_report_faithfulness_async(
-    question: str, report: str, contexts: list[str], *, model: str, api_key: str
+    question: str, report: str, contexts: list[str], *, model: str, api_key: str,
+    provider: str = "openai",
 ) -> float:
     from ragas.metrics.collections import Faithfulness
 
-    scorer = Faithfulness(llm=_google_judge_llm(model, api_key))
+    scorer = Faithfulness(llm=_JUDGE_LLMS[provider](model, api_key))
     result = await scorer.ascore(
         user_input=question, response=report, retrieved_contexts=contexts
     )
     return float(result.value)
 
 
-def make_faithfulness_evaluator(*, model: str, api_key: str) -> FaithfulnessEvaluator:
+def make_faithfulness_evaluator(
+    *, model: str, api_key: str, provider: str = "openai",
+) -> FaithfulnessEvaluator:
     """Return a ``(question, report, contexts) -> score`` callable that scores an entire
-    report's RAGAS Faithfulness with the given Gemini model (e.g. ``gemini-3.7-flash``) as
-    judge.
+    report's RAGAS Faithfulness with the given judge model: ``provider`` is ``"openai"``
+    (e.g. ``gpt-4.1-mini``, the default) or ``"google_genai"`` (e.g. ``gemini-3.8-flash``).
 
     ``contexts`` should be the excerpt text of every source the report actually cites (see
     ``source_verification.cited_source_excerpts``) -- what the report was supposed to stay
@@ -63,12 +78,15 @@ def make_faithfulness_evaluator(*, model: str, api_key: str) -> FaithfulnessEval
     informational and never gate verification or publication.
     """
 
+    if provider not in _JUDGE_LLMS:
+        raise ValueError(f"Unsupported faithfulness provider {provider!r}; use one of {sorted(_JUDGE_LLMS)}")
+
     def evaluate(question: str, report: str, contexts: list[str]) -> float | None:
         if not report.strip() or not contexts:
             return None
         return asyncio.run(
             _score_report_faithfulness_async(
-                question, report, contexts, model=model, api_key=api_key
+                question, report, contexts, model=model, api_key=api_key, provider=provider,
             )
         )
 
