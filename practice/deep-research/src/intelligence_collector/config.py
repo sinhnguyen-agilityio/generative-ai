@@ -1,3 +1,7 @@
+"""Settings read from the environment: storage paths and research limits, the two model tiers, and
+Langfuse.
+"""
+
 from __future__ import annotations
 
 import json
@@ -59,6 +63,10 @@ def load_local_env() -> None:
 
 @dataclass(frozen=True)
 class Settings:
+    """Storage paths, research limits, report guidelines and the faithfulness judge, read from
+    ``INTELLIGENCE_*`` environment variables.
+    """
+
     vfs_root: str = ".data/vfs"
     checkpoint_path: str = ".data/checkpoints.sqlite3"
     vector_path: str = ".data/vector-index.json"
@@ -79,6 +87,9 @@ class Settings:
 
     @classmethod
     def from_env(cls):
+        """Build the settings from the environment. Raises ``ValueError`` for an out-of-range limit
+        or malformed JSON.
+        """
         return cls(
             vfs_root=os.getenv("INTELLIGENCE_VFS_ROOT", cls.vfs_root),
             checkpoint_path=os.getenv(
@@ -159,6 +170,9 @@ class RoleModelSettings:
 
     @classmethod
     def from_env(cls):
+        """Read both tiers from ``INTELLIGENCE_REASONING_*`` and ``INTELLIGENCE_STANDARD_*``; both
+        model names are required.
+        """
         reasoning_model = os.getenv("INTELLIGENCE_REASONING_MODEL", "").strip()
         standard_model = os.getenv("INTELLIGENCE_STANDARD_MODEL", "").strip()
         if not reasoning_model or not standard_model:
@@ -199,6 +213,10 @@ class RoleModelSettings:
 
 @dataclass(frozen=True)
 class LangfuseSettings:
+    """Langfuse connection settings; tracing is off unless ``INTELLIGENCE_LANGFUSE_ENABLED`` is
+    true.
+    """
+
     enabled: bool = False
     public_key: str = field(default="", repr=False)
     secret_key: str = field(default="", repr=False)
@@ -208,6 +226,9 @@ class LangfuseSettings:
 
     @classmethod
     def from_env(cls, *, required: bool = False):
+        """Read the Langfuse settings. Raises ``RuntimeError`` when tracing is enabled without keys,
+        or when `required` and tracing is disabled.
+        """
         enabled = os.getenv("INTELLIGENCE_LANGFUSE_ENABLED", "false").lower() in {
             "1", "true", "yes", "on",
         }

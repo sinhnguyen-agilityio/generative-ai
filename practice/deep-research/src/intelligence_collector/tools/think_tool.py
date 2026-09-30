@@ -1,7 +1,12 @@
+"""The supervisor's ``think_tool``: decides whether research is complete enough to synthesize."""
+
 from intelligence_collector.contracts import ProgressAssessment, ResearchTodo, TodoStatus
 
 
 def think_tool(todos: list[ResearchTodo], artifact_count: int, index_count: int) -> ProgressAssessment:
+    """List what blocks synthesis (unfinished todos, nothing stored or indexed); ready only when
+    nothing does.
+    """
     complete = [t.todo_id for t in todos if t.status == TodoStatus.COMPLETED]
     blockers = [
         f"Task not completed ({t.status.value}): {t.research_question}"

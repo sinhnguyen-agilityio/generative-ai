@@ -1,3 +1,7 @@
+"""Pydantic contracts shared across the workflow: stages, LLM structured outputs, artifacts,
+verification, approval and publication records.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -5,19 +9,17 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
 
-try:
-    from pydantic import BaseModel, ConfigDict, Field, model_validator
-except ImportError:  # pragma: no cover
-    BaseModel = object  # type: ignore
-    ConfigDict = dict  # type: ignore
-    def Field(default=None, **_: Any): return default
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def now() -> datetime:
+    """Current UTC time (timezone-aware)."""
     return datetime.now(timezone.utc)
 
 
 class Stage(str, Enum):
+    """Workflow stage shown in the UI and stored in the graph state."""
+
     SCOPING = "Scoping"
     PLANNING = "Planning"
     RESEARCHING = "Researching"
@@ -30,6 +32,8 @@ class Stage(str, Enum):
 
 
 class TodoStatus(str, Enum):
+    """Lifecycle of one research todo."""
+
     PLANNED = "planned"
     ASSIGNED = "assigned"
     IN_PROGRESS = "in_progress"
@@ -38,27 +42,26 @@ class TodoStatus(str, Enum):
 
 
 class IssueType(str, Enum):
+    """Why a verification failed: ``DRAFT_DEFECT`` (a rewrite fixes it) or ``EVIDENCE_GAP`` (more
+    research is needed).
+    """
+
     DRAFT_DEFECT = "DRAFT_DEFECT"
     EVIDENCE_GAP = "EVIDENCE_GAP"
-    PLAN_GAP = "PLAN_GAP"
 
 
 class Model(BaseModel):
+    """Base for strict contracts: unknown fields are rejected."""
+
     model_config = ConfigDict(extra="forbid")
     schema_version: int = 1
 
 
-class ScopedRequest(Model):
-    objective: str
-    research_boundaries: str
-    constraints: str
-    success_criteria: str
-    deliverable_format: str
-    clarification_turn_ids: list[str] = Field(default_factory=list)
-    scope_hash: str = ""
-
-
 class ScopeAssessment(BaseModel):
+    """Scope Agent decision: ask one clarifying question, or confirm the scope with a verification
+    message, never both.
+    """
+
     model_config = ConfigDict(extra="forbid")
     need_clarification: bool
     question: str = ""
@@ -80,6 +83,8 @@ class ScopeAssessment(BaseModel):
 
 
 class ResearchBrief(Model):
+    """The research question the whole run answers, written from the scope conversation."""
+
     research_question: str = Field(min_length=20)
 
     @model_validator(mode="after")
@@ -90,6 +95,8 @@ class ResearchBrief(Model):
 
 
 class ResearchTodo(Model):
+    """One planned research question and its status."""
+
     todo_id: str = Field(default_factory=lambda: str(uuid4()))
     research_question: str = Field(min_length=1)
     status: TodoStatus = TodoStatus.PLANNED
@@ -119,19 +126,6 @@ class TodoPlan(Model):
         return self
 
 
-class WorkerSearchPlan(Model):
-    queries: list[str] = Field(min_length=1, max_length=5)
-    stop_condition: str = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_search_plan(self):
-        if any(not query.strip() for query in self.queries):
-            raise ValueError("worker queries must not be blank")
-        if not self.stop_condition.strip():
-            raise ValueError("worker stop condition must not be blank")
-        return self
-
-
 class ResearchFindings(Model):
     """Compressed output of one research sub-agent for one research question."""
 
@@ -149,46 +143,16 @@ class ResearchFindings(Model):
         return self
 
 
-class VerificationAssessment(Model):
-    passed: bool
-    issue_type: IssueType | None = None
-    affected_claims: list[str] = Field(default_factory=list)
-    feedback: str = ""
-
-    @model_validator(mode="after")
-    def validate_outcome(self):
-        if self.passed and self.issue_type is not None:
-            raise ValueError("passed verification cannot contain an issue type")
-        if not self.passed and (self.issue_type is None or not self.feedback.strip()):
-            raise ValueError("failed verification requires one issue type and feedback")
-        return self
-
-
-class SupervisorAssessment(Model):
-    coverage_complete: bool
-    research_complete: bool
-    blockers: list[str] = Field(default_factory=list)
-    delegation: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_completion(self):
-        if self.research_complete and (not self.coverage_complete or self.blockers):
-            raise ValueError("research completion requires coverage and no blockers")
-        return self
-
-
 class DraftAssessment(Model):
+    """Report writer output: the report as Markdown."""
+
     report_markdown: str = Field(min_length=1)
     claim_evidence_ids: dict[str, list[str]] = Field(default_factory=dict)
 
 
-class FixDecision(Model):
-    action: str = Field(pattern="^(revise|research|replan|needs_review)$")
-    reason: str = Field(min_length=1)
-    target_ids: list[str] = Field(default_factory=list)
-
-
 class ArtifactRef(Model):
+    """Pointer to one file a run wrote to the VFS, with its content hash."""
+
     artifact_id: str = Field(default_factory=lambda: str(uuid4()))
     run_id: str
     kind: str
@@ -200,6 +164,8 @@ class ArtifactRef(Model):
 
 
 class SourceRecord(Model):
+    """One captured web source and where it came from (MCP server and tool, provenance)."""
+
     source_id: str = Field(default_factory=lambda: str(uuid4()))
     locator: str
     retrieved_at: datetime = Field(default_factory=now)
@@ -209,6 +175,8 @@ class SourceRecord(Model):
 
 
 class IndexedChunk(Model):
+    """A piece of source text stored in the vector index, with provenance metadata."""
+
     chunk_id: str = Field(default_factory=lambda: str(uuid4()))
     source_id: str
     artifact_id: str
@@ -227,6 +195,8 @@ class VerificationCheck(Model):
 
 
 class VerificationResult(Model):
+    """Outcome of the Verify step for one exact draft, bound to it by ``artifact_hash``."""
+
     verification_id: str = Field(default_factory=lambda: str(uuid4()))
     artifact_hash: str
     passed: bool
@@ -278,6 +248,8 @@ class ReportJudgeVerdict(Model):
 
 
 class ApprovalDecision(Model):
+    """A reviewer's decision, bound to the exact text and the verification it approves."""
+
     approval_id: str = Field(default_factory=lambda: str(uuid4()))
     artifact_hash: str
     verification_id: str
@@ -287,6 +259,8 @@ class ApprovalDecision(Model):
 
 
 class PublicationRecord(Model):
+    """Result of a publish attempt: where the report went, or why it was refused."""
+
     destination: str
     artifact_hash: str
     approval_id: str
@@ -307,35 +281,9 @@ class FeedbackDecision(Model):
 
 
 class ProgressAssessment(Model):
+    """Supervisor check of whether research is ready for synthesis."""
+
     completed_todos: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     ready_for_synthesis: bool = False
     next_action: str = ""
-
-
-class ResearchGraphState(Model):
-    run_id: str
-    thread_id: str
-    stage: Stage = Stage.SCOPING
-    status: str = "active"
-    input_turns: list[str] = Field(default_factory=list)
-    scoped_request: ScopedRequest | None = None
-    scope_questions: list[str] = Field(default_factory=list)
-    todo_ids: list[str] = Field(default_factory=list)
-    todos: list[ResearchTodo] = Field(default_factory=list)
-    artifacts: list[ArtifactRef] = Field(default_factory=list)
-    evidence: list[ArtifactRef] = Field(default_factory=list)
-    index_refs: list[str] = Field(default_factory=list)
-    progress_assessment: ProgressAssessment | None = None
-    draft: str = ""
-    previous_draft: str = ""
-    verification: VerificationResult | None = None
-    verification_history: list[VerificationResult] = Field(default_factory=list)
-    recovery_attempt: int = 0
-    recovery_budget: int = 3
-    progress_fingerprint: str = ""
-    approval: ApprovalDecision | None = None
-    publication: PublicationRecord | None = None
-    last_error: str = ""
-    human_feedback: str = ""
-    feedback_route: str = ""

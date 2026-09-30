@@ -62,6 +62,9 @@ SEARCH_TOOL = {
 
 
 class ResearcherState(TypedDict, total=False):
+    """State of one research sub-agent's own LangGraph loop (LLM and search tool, then compression).
+    """
+
     research_question: str
     messages: Annotated[list[BaseMessage], add_messages]
     llm_calls: int
@@ -86,6 +89,7 @@ class ResearchOutcome:
 
     @property
     def unique_sources(self) -> list[dict[str, Any]]:
+        """This outcome's sources with duplicate URLs removed."""
         return unique_sources(self.sources)
 
 
@@ -163,6 +167,10 @@ class ResearchAgent:
         task_id: str = "",
         claims: UrlClaims | None = None,
     ) -> ResearchOutcome:
+        """Run one sub-agent for `question`: search through MCP within the search and source
+        budgets, then compress what was found into ``ResearchFindings``. `claims` is shared by
+        parallel sub-agents so each page is captured by one task only.
+        """
         # A fresh MCP client per sub-agent keeps search budgets and request logs per task.
         mcp = self.mcp_factory()
         budget = min(self.max_search_calls, getattr(mcp, "max_calls", HARD_SEARCH_LIMIT))
@@ -201,6 +209,9 @@ class ResearchAgent:
         owned_urls: set[str] = set()
 
         def llm_call(state: ResearcherState) -> ResearcherState:
+            """Ask the researcher LLM for its next step: search queries (tool calls) or a final
+            note.
+            """
             messages = RESEARCHER_TEMPLATE.format_messages(
                 messages=state["messages"],
                 date=date.today().isoformat(),
@@ -220,6 +231,7 @@ class ResearchAgent:
             return {"messages": [response], "llm_calls": state.get("llm_calls", 0) + 1}
 
         def tool_node(state: ResearcherState) -> ResearcherState:
+            """Run each requested search within the budgets and record the sources found."""
             calls = state.get("search_calls", 0)
             replies: list[BaseMessage] = []
             sources: list[dict[str, Any]] = []
@@ -288,6 +300,9 @@ class ResearchAgent:
             return {"messages": replies, "search_calls": calls, "sources": sources, "errors": errors}
 
         def compress_research(state: ResearcherState) -> ResearcherState:
+            """Compress the gathered sources into ``ResearchFindings``; no sources means no
+            findings.
+            """
             if not state.get("sources"):
                 return {"findings": None}
             last = state["messages"][-1]
@@ -310,6 +325,7 @@ class ResearchAgent:
             return {"findings": findings}
 
         def route_after_llm(state: ResearcherState) -> str:
+            """Search again while the LLM asks for it and budgets remain; otherwise compress."""
             last = state["messages"][-1]
             wants_search = isinstance(last, AIMessage) and bool(last.tool_calls)
             if (

@@ -1,3 +1,8 @@
+"""Every LLM prompt of the workflow as a LangChain ``ChatPromptTemplate``, one per role: guardrail,
+feedback router, scope, research brief, planner, researcher, compressor, report writer, reformat,
+reflection and report judge.
+"""
+
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 GUARDRAIL_PROMPT = """You are a content-safety classifier that runs before the Scope Agent for a
@@ -317,41 +322,3 @@ REPORT_JUDGE_TEMPLATE = ChatPromptTemplate.from_messages([
               "\n\nKnown evidence gaps (for classifying a failure as EVIDENCE_GAP):\n{gaps}\n\n"
               "Final report:\n{report}"),
 ])
-
-
-ROLE_TEMPLATES = {
-    "planner": PLANNER_TEMPLATE,
-    "supervisor": ChatPromptTemplate.from_messages([
-        ("system", """You are the Research Supervisor. Determine whether all planned questions are
-covered by durable evidence and indexed source data. Set research_complete only when coverage is
-complete and blockers is empty; otherwise describe blockers and focused delegation. Return only
-valid SupervisorAssessment JSON."""),
-        ("human", "Research progress data:\n{context}"),
-    ]),
-    "worker": ChatPromptTemplate.from_messages([
-        ("system", """You are an isolated MCP research worker. Produce one to five broad-to-narrow
-search queries and a concrete evidence-based stop condition. Prefer primary or official sources and
-never claim that retrieval has occurred. Return only valid WorkerSearchPlan JSON."""),
-        ("human", "Task question:\n{question}"),
-    ]),
-    "synthesizer": ChatPromptTemplate.from_messages([
-        ("system", """You are the Synthesizer. Write a report using only the supplied stored evidence.
-Every factual claim must map to one or more supplied evidence IDs in claim_evidence_ids. Do not fill
-evidence gaps with prior knowledge. Return only valid DraftAssessment JSON."""),
-        ("human", "Stored evidence data:\n{evidence}"),
-    ]),
-    "verifier": ChatPromptTemplate.from_messages([
-        ("system", """You are the Semantic Verifier. Check scope coverage and claim-to-evidence
-traceability. A failure must select exactly one primary issue type: DRAFT_DEFECT, EVIDENCE_GAP, or
-PLAN_GAP, identify affected claims, and provide actionable feedback. A pass has no issue type.
-Return only valid VerificationAssessment JSON."""),
-        ("human", "Draft and stored evidence:\n{draft}"),
-    ]),
-    "fixer": ChatPromptTemplate.from_messages([
-        ("system", """You are the Fixer. Choose exactly one bounded repair action: revise for a draft
-defect, research for an evidence gap, replan for a plan gap, or needs_review when safe automatic
-repair is impossible. Identify only affected target IDs and preserve valid work. Return only valid
-FixDecision JSON."""),
-        ("human", "Verification feedback:\n{feedback}"),
-    ]),
-}

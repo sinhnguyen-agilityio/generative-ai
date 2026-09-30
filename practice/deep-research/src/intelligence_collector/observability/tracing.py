@@ -1,3 +1,7 @@
+"""Langfuse tracing: one root span per chat turn (all turns of a thread share one trace), nested
+node spans and scores, plus a local, credential-free record of every span for tests.
+"""
+
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -37,6 +41,8 @@ def _text_payload(value: Any) -> str:
 
 @dataclass
 class TraceSpan:
+    """Local record of one span: what was sent to Langfuse, with credentials redacted."""
+
     name: str
     run_id: str
     thread_id: str
@@ -58,6 +64,9 @@ class Tracer:
 
     @classmethod
     def from_settings(cls, settings: LangfuseSettings):
+        """Create a tracer from settings; disabled settings give a local-only tracer. Raises
+        ``RuntimeError`` if Langfuse rejects the keys.
+        """
         if not settings.enabled:
             return cls()
         from langfuse import Langfuse
@@ -80,10 +89,12 @@ class Tracer:
 
     @classmethod
     def from_env(cls, *, required: bool = False):
+        """``from_settings`` with the settings read from the environment."""
         return cls.from_settings(LangfuseSettings.from_env(required=required))
 
     @property
     def callbacks(self) -> list[Any]:
+        """LangChain callbacks that report model calls to Langfuse (empty when tracing is off)."""
         return [self.callback_handler] if self.callback_handler is not None else []
 
     @contextmanager
@@ -158,6 +169,10 @@ class Tracer:
         input: Any = None,
         **attributes: Any,
     ) -> Iterator[TraceSpan]:
+        """Open a child span under the current execution. Yields the local record; its ``output`` is
+        sent when the block ends, and an exception marks the span as an error (a human-review pause
+        does not).
+        """
         local = TraceSpan(name, run_id, thread_id, _safe(attributes))
         self.spans.append(local)
         if self.client is None:
@@ -200,6 +215,7 @@ class Tracer:
             record["error"] = f"{type(exc).__name__}: {exc}"
 
     def model_event(self, **event: Any) -> None:
+        """Record a model validation event (e.g. a structured-output retry) as its own span."""
         run_id = str(event.get("run_id", ""))
         thread_id = str(event.get("thread_id", ""))
         name = f"model.validation.{event.get('role', 'unknown')}"
@@ -220,5 +236,6 @@ class Tracer:
             span.output = output_text
 
     def flush(self) -> None:
+        """Send buffered events to Langfuse."""
         if self.client is not None:
             self.client.flush()

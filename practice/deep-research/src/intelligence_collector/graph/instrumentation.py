@@ -1,7 +1,8 @@
 """Cross-cutting behaviour applied uniformly to every graph node.
 
 Nodes stay pure ``state -> state update`` functions; this module layers on
-lifecycle notifications (UI progress), checkpoint load/save, and tracing.
+lifecycle notifications (UI progress) and tracing. State persistence between turns is
+LangGraph's own checkpointer (``SqliteSaver`` in the app), not this wrapper.
 """
 
 from collections.abc import Callable
@@ -58,13 +59,20 @@ def node_wrapper(
     name: str,
     fn: NodeFn,
     tracer=None,
-    checkpoint_store=None,
     lifecycle: Lifecycle | None = None,
 ) -> NodeFn:
-    """Normalize node execution so every graph node returns a serializable state update."""
+    """Wrap a graph node with UI lifecycle notifications and a Langfuse span.
+
+    `lifecycle(node, status)` is called with "running", then "success" or "failure"; a
+    ``GraphInterrupt`` (the human-review pause) is re-raised without being marked failed. With a
+    `tracer`, the node runs inside a ``graph.<name>`` span and any score fields in its result
+    (see ``SCORE_FIELDS``) are attached to the trace. Raises ``TypeError`` if the node returns
+    something other than a mapping.
+    """
     notify = lifecycle or (lambda _node, _status: None)
 
     def run(state: GraphState) -> GraphState:
+        """Run the node, inside a Langfuse span when tracing is on."""
         if tracer is None:
             return fn(state)
         with tracer.span(
@@ -82,15 +90,10 @@ def node_wrapper(
             return result
 
     def wrapped(state: GraphState) -> GraphState:
+        """Report lifecycle status around the node and check that it returns a mapping."""
         notify(name, "running")
-        current = dict(state)
-        thread_id = current.get("thread_id", "")
-        if checkpoint_store is not None and thread_id:
-            persisted = checkpoint_store.load(thread_id) or {}
-            current = {**persisted, **current}
-
         try:
-            result = run(current)
+            result = run(dict(state))
         except GraphInterrupt:
             # An intentional pause for a human decision (see graph/nodes.py's ApprovalNodes),
             # not a failure — GraphInterrupt is a real Exception subclass (so a bare `except
@@ -104,10 +107,6 @@ def node_wrapper(
 
         if not isinstance(result, dict):
             raise TypeError(f"{name} must return a mapping state update")
-        if checkpoint_store is not None:
-            result_thread_id = result.get("thread_id", thread_id)
-            if result_thread_id:
-                checkpoint_store.save(result_thread_id, result)
         return result
 
     wrapped.__name__ = name

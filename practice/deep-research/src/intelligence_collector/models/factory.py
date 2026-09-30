@@ -12,6 +12,8 @@ from intelligence_collector.models.router import MAX_MODEL_ATTEMPTS, ModelRouter
 
 @dataclass(frozen=True)
 class ModelConfig:
+    """How to build one chat model: name, provider, timeout and extra provider kwargs."""
+
     model: str
     provider: str | None = None
     timeout: float = 30.0
@@ -31,6 +33,10 @@ class ModelRouters(NamedTuple):
 
 
 class ModelFactory:
+    """Creates chat models through ``init_chat_model`` and builds the reasoning and standard
+    ``ModelRouter`` tiers.
+    """
+
     def create(self, config: ModelConfig):
         """Instantiate one chat model through LangChain's provider-agnostic `init_chat_model`."""
         kwargs = {"timeout": config.timeout, **(config.kwargs or {})}
@@ -43,6 +49,9 @@ class ModelFactory:
         optional fallback model. `trace` and `callbacks` are shared by both tiers."""
 
         def tier(model, provider, kwargs, fallback_model, fallback_provider, timeout, **router_kwargs) -> ModelRouter:
+            """Build one tier: the primary model plus an optional fallback created without the extra
+            kwargs.
+            """
             primary = self.create(ModelConfig(model, provider=provider, timeout=timeout, kwargs=kwargs))
             # The fallback runs with default settings: it only has to be a reliable safety net.
             fallback = (

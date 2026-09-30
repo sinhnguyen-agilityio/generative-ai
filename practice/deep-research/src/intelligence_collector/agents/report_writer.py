@@ -49,6 +49,9 @@ def _bullets(items: list[str], empty: str = "(none)") -> str:
 
 
 def format_evidence(catalog: SourceCatalog) -> str:
+    """Render the catalog as prompt text: per research question, its findings summary and each
+    source's ``[S<n>]`` id, title, URL and excerpt.
+    """
     blocks = []
     for bundle in catalog.bundles:
         sources = [
@@ -136,6 +139,10 @@ def merge_lessons(existing: list[str], new: list[str]) -> list[str]:
 
 
 class ReportWriter:
+    """LLM report writer (role ``synthesizer``): writes and revises drafts from the evidence
+    catalog, applies a reviewer's formatting request, and reflects on failed verifications.
+    """
+
     def __init__(self, router):
         self.router = router
 
@@ -206,6 +213,11 @@ class ReportWriter:
         run_id: str = "",
         thread_id: str = "",
     ) -> Reflection:
+        """Diagnose a failed verification and return lessons plus a fix strategy for the next draft.
+
+        `history` lists the earlier fix attempts and `lessons` what was already learned; `stalled`
+        means the same checks failed again after the last fix, so a different approach is needed.
+        """
         previous = [
             {key: entry.get(key) for key in ("attempt", "failed_checks", "diagnosis", "strategy")}
             for entry in history

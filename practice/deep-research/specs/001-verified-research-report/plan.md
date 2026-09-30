@@ -199,45 +199,45 @@ alternatives that would violate the constitution or clarified specification.
 
 ```text
 src/intelligence_collector/
-├── app.py
-├── config.py
-├── contracts.py
+├── app.py              # Streamlit UI: chat + framed Pipeline / Activity log / Details panel
+├── config.py           # Settings, RoleModelSettings (reasoning + standard tiers), LangfuseSettings
+├── contracts.py        # Pydantic contracts (stages, LLM outputs, verification, approval, publication)
+├── guardrails.py       # deterministic request checks + content-safety verdict contract
+├── publication.py      # approval binding + atomic publish
+├── source_verification.py  # evidence catalog ([S<n>] ids, gaps), cited excerpts, failure fingerprint
 ├── graph/
-│   ├── state.py
+│   ├── state.py            # GraphState
 │   ├── build.py            # wiring only: nodes + edges per topology
-│   ├── nodes.py            # Node names, ScopeNodes, PlannerNodes, ResearchNodes, approval, stubs
-│   ├── routing.py          # named conditional-edge routers + BVF routing
-│   └── instrumentation.py  # node_wrapper: lifecycle, checkpoint, tracing
+│   ├── nodes.py            # Node names, Scope/Planner/Research/BVF/Approval nodes, stubs
+│   ├── routing.py          # named conditional-edge routers
+│   └── instrumentation.py  # node_wrapper: lifecycle notifications + tracing
 ├── agents/
-│   ├── scope.py
-│   ├── planner.py
-│   ├── supervisor.py       # ResearchSupervisor: delegation + ResearchComplete gate
-│   ├── researcher.py       # ResearchAgent sub-agent (LLM ↔ tavily_search loop + compression)
+│   ├── prompts.py          # every role's ChatPromptTemplate
+│   ├── scope.py            # ScopeAgent: guardrail, clarify, research brief
+│   ├── planner.py          # PlannerAgent + create_todos
+│   ├── supervisor.py       # ResearchSupervisor: parallel delegation + ResearchComplete gate
+│   ├── researcher.py       # ResearchAgent sub-agent (LLM <-> tavily_search loop + compression)
 │   ├── worker.py           # persist a sub-agent outcome to VFS + vector index
-│   ├── report_writer.py    # BVF Build/Fix drafts + reflection (lessons, strategy)
-│   ├── acceptance_verifier.py  # LLM goal-achievement check, run only after Verify passes
-│   ├── synthesis.py        # report version persistence (draft.vN / previous / latest)
-│   └── verification.py
+│   ├── report_writer.py    # BVF Build/Fix drafts, reviewer reformat, reflection
+│   ├── report_judge.py     # BVF Verify: LLM-as-judge
+│   ├── feedback_router.py  # classifies the reviewer's chat reply (approve / format / scope)
+│   └── synthesis.py        # report version persistence (draft.vN / previous / latest)
 ├── tools/
 │   ├── write_todos.py
 │   ├── think_tool.py
-│   ├── mcp.py
+│   ├── mcp.py              # MCPResearchPort, ControlledMCP (offline), TavilyMCP
 │   └── url_tracking.py     # normalize_url + run-level UrlRegistry (capture each page once)
 ├── storage/
 │   ├── vfs.py
-│   ├── checkpoints.py
-│   ├── artifacts.py
 │   ├── vector_index.py         # VectorIndex Protocol + LocalVectorIndex (lexical, offline)
 │   └── chroma_vector_index.py  # ChromaVectorIndex: Gemini embeddings (default), local Chroma persistence
 ├── models/
 │   ├── router.py       # ModelRouter: primary/fallback, tracing, structured-output parsing
-│   └── factory.py      # ModelFactory: init_chat_model wiring, create_routers (reasoning + standard)
-├── guardrails.py
-├── publication.py
-├── source_verification.py  # BVF "Verify": programmatic report-vs-sources checks + CLI
+│   ├── factory.py      # ModelFactory: init_chat_model wiring, create_routers (reasoning + standard)
+│   └── redaction.py
 └── observability/
-    ├── tracing.py
-    └── evaluation.py
+    ├── tracing.py      # Langfuse: one trace per chat thread, node spans, scores
+    └── evaluation.py   # RAGAS Faithfulness judge
 
 tests/
 ├── unit/

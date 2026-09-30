@@ -73,6 +73,7 @@ class ChromaVectorIndex:
         )
 
     def index(self, chunks: list[IndexedChunk]) -> list[str]:
+        """Embed and upsert the chunks; returns their ids."""
         if not chunks:
             return []
         vectors = self._embeddings.embed_documents([chunk.text for chunk in chunks])
@@ -101,6 +102,7 @@ class ChromaVectorIndex:
         run_id: str | None = None,
         todo_id: str | None = None,
     ) -> list[IndexedChunk]:
+        """Nearest chunks to `query`, optionally scoped to one run and one research question."""
         if self._collection.count() == 0:
             return []
         result = self._collection.query(

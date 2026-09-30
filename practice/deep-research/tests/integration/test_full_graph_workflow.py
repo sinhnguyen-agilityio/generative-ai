@@ -8,7 +8,6 @@ from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
-from intelligence_collector.storage.vfs import VFS
 from intelligence_collector.tools.mcp import ControlledMCP
 from intelligence_collector.agents.report_writer import ReportWriter
 from tests.fixtures.fake_models import FakeAcceptanceModel, FakeReportModel, FakeResearchModel, cited_report

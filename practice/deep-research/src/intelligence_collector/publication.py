@@ -1,3 +1,7 @@
+"""Publication gate: a report is written to the output folder only with an approval bound to its
+exact text and a passing verification.
+"""
+
 from __future__ import annotations
 import hashlib
 import os
@@ -7,10 +11,12 @@ from intelligence_collector.contracts import ApprovalDecision, PublicationRecord
 
 
 def can_request_approval(verification: VerificationResult) -> bool:
+    """True when the verification passed and is bound to a draft hash."""
     return verification.passed and bool(verification.artifact_hash)
 
 
 def approval_for(artifact_hash: str, verification_id: str, approved: bool, actor: str) -> ApprovalDecision:
+    """Build an ``ApprovalDecision`` for the given text hash and verification."""
     return ApprovalDecision(artifact_hash=artifact_hash, verification_id=verification_id, approved=approved, actor=actor)
 
 

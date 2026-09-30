@@ -53,15 +53,18 @@ class UrlRegistry:
 
     @classmethod
     def load(cls, vfs, run_id: str) -> "UrlRegistry":
+        """Read the run's registry from the VFS (empty when none exists yet)."""
         try:
             return cls(json.loads(vfs.read(run_id, REGISTRY_PATH)))
         except FileNotFoundError:
             return cls()
 
     def get(self, url: str) -> dict | None:
+        """Registry entry of the page `url` points to, if it was already captured."""
         return self._entries.get(normalize_url(url))
 
     def register(self, url: str, entry: dict) -> None:
+        """Record the first capture of a page; later registrations of the same page are ignored."""
         key = normalize_url(url)
         if key not in self._entries:
             self._entries[key] = entry

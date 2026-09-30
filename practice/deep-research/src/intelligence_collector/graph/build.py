@@ -45,7 +45,6 @@ def _chain(graph: StateGraph, *names: str) -> None:
 def build_graph(
     *,
     checkpointer=None,
-    checkpoint_store=None,
     with_approval: bool = False,
     scope_agent=None,
     planner_agent=None,
@@ -91,8 +90,9 @@ def build_graph(
     graph = StateGraph(GraphState)
 
     def add_node(name: str, fn) -> None:
+        """Register a node wrapped with tracing and lifecycle notifications."""
         graph.add_node(name, node_wrapper(
-            name, fn, tracer, checkpoint_store, lifecycle))
+            name, fn, tracer, lifecycle))
 
     # ===== SCOPE AND PLANNING =====
 

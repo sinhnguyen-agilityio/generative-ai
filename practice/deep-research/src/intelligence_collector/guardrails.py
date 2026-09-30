@@ -1,3 +1,7 @@
+"""Input guardrails: deterministic checks on every chat message (empty, too long, prompt injection,
+credentials) and the contracts of the LLM content-safety check.
+"""
+
 from dataclasses import dataclass
 import re
 import unicodedata
@@ -7,6 +11,8 @@ from pydantic import BaseModel, ConfigDict
 
 @dataclass(frozen=True)
 class GuardrailDecision:
+    """Result of the deterministic request check."""
+
     allowed: bool
     reason: str = ""
 
@@ -59,6 +65,9 @@ def normalize_text(text: str) -> str:
 
 
 def validate_request(text: str) -> GuardrailDecision:
+    """Reject empty, oversized, prompt-injection or credential-bearing input before it reaches any
+    model.
+    """
     if not isinstance(text, str) or not text.strip():
         return GuardrailDecision(False, "Request cannot be empty.")
     text = normalize_text(text)

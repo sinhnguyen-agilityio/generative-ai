@@ -14,6 +14,10 @@ MAX_REPORT_EXCERPT_CHARS = 3000
 
 
 class FeedbackRouter:
+    """Reads the reviewer's chat reply with an LLM (role ``feedback_router``) and returns a
+    ``FeedbackDecision``.
+    """
+
     def __init__(self, router):
         self.router = router
 

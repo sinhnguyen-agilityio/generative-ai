@@ -1,10 +1,12 @@
+"""Scope Agent: the content-safety guardrail, the clarify-or-proceed decision, and the research
+brief.
+"""
+
 from __future__ import annotations
-import hashlib
 from datetime import date
 from intelligence_collector.contracts import (
     ResearchBrief,
     ScopeAssessment,
-    ScopedRequest,
 )
 from intelligence_collector.agents.prompts import (
     BRIEF_TEMPLATE,
@@ -15,50 +17,11 @@ from intelligence_collector.guardrails import ContentSafetyVerdict, GuardrailVio
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from intelligence_collector.storage.vfs import VFS
 
-REQUIRED = ("objective", "research_boundaries", "constraints",
-            "success_criteria", "deliverable_format")
-
-
-def missing_scope_fields(scope: dict[str, str]) -> list[str]:
-    return [key for key in REQUIRED if not scope.get(key, "").strip()]
-
-
-def narrowing_suggestions(scope: dict[str, str]) -> list[str]:
-    """Return actionable narrowing prompts for broad or underspecified requests."""
-    suggestions = []
-    if not scope.get("research_boundaries", "").strip():
-        suggestions.append(
-            "Limit the topic to a defined audience, time period, or technical scope.")
-    if not scope.get("success_criteria", "").strip():
-        suggestions.append(
-            "State what evidence would make the research answer successful.")
-    if not scope.get("deliverable_format", "").strip():
-        suggestions.append(
-            "Choose one deliverable format, such as a comparison or technical report.")
-    if len(scope.get("objective", "")) > 1000:
-        suggestions.append(
-            "Split the objective into one primary question and explicit exclusions.")
-    return suggestions
-
-
-def scope_ready(scope: dict[str, str]) -> bool:
-    return all(scope.get(k, "").strip() for k in REQUIRED)
-
-
-def build_scope(scope: dict[str, str], vfs: VFS | None = None, run_id: str | None = None) -> ScopedRequest:
-    if not scope_ready(scope):
-        raise ValueError("scope is incomplete: " +
-                         ", ".join(missing_scope_fields(scope)))
-    value = "|".join(scope[k].strip() for k in REQUIRED)
-    result = ScopedRequest(
-        **scope, scope_hash=hashlib.sha256(value.encode()).hexdigest())
-    if vfs and run_id:
-        vfs.write_json(run_id, "scope/brief_summary.v1.json",
-                       result.model_dump(mode="json"), "brief_summary")
-    return result
-
-
 class ScopeAgent:
+    """Turns the user's chat into a research brief. `router` runs the scope and brief calls;
+    `guardrail_router` (default: the same router) runs the content-safety check.
+    """
+
     def __init__(self, router, guardrail_router=None):
         self.router = router
         self.guardrail_router = guardrail_router or router
@@ -101,6 +64,10 @@ class ScopeAgent:
         run_id: str = "",
         thread_id: str = "",
     ) -> ScopeAssessment:
+        """Check the latest message with the guardrail, then decide from the whole conversation
+        whether to ask one clarifying question or confirm the scope. Raises
+        ``GuardrailViolation`` for a blocked request.
+        """
         verdict = self.check_content_safety(request, run_id=run_id, thread_id=thread_id)
         if not verdict.allowed:
             raise GuardrailViolation(verdict.reason or "This request cannot be researched.")
@@ -127,6 +94,10 @@ class ScopeAgent:
         thread_id: str = "",
         vfs: VFS | None = None,
     ) -> ResearchBrief:
+        """Write the ``ResearchBrief`` from the conversation once the scope is clear, saving it to
+        the VFS when `vfs` is given. Raises ``ValueError`` if `assessment` still needs
+        clarification.
+        """
         if assessment.need_clarification:
             raise ValueError("write_research_brief requires a clear scope decision")
         conversation = self._messages(prior_turns)
@@ -159,6 +130,9 @@ class ScopeAgent:
         thread_id: str = "",
         vfs: VFS | None = None,
     ) -> ScopeAssessment | ResearchBrief:
+        """Clarify, and when the scope is clear also write the brief. Returns the assessment or the
+        brief.
+        """
         assessment = self.clarify_with_user(
             request, prior_turns, run_id=run_id, thread_id=thread_id
         )

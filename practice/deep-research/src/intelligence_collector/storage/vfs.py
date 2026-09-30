@@ -1,3 +1,7 @@
+"""Run-scoped virtual file system: every artifact of a run lives under ``<root>/<run_id>/``, written
+atomically, with path escapes rejected.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -35,6 +39,8 @@ def _artifact_safe(value: Any) -> Any:
 
 
 class VFS:
+    """Path-safe, atomic file storage per run."""
+
     def __init__(self, root: str | Path):
         self.root = Path(root).resolve()
 
@@ -61,6 +67,9 @@ class VFS:
         *,
         task_id: str | None = None,
     ) -> ArtifactRef:
+        """Atomically write `content` under the run and return its ``ArtifactRef`` (with the content
+        hash).
+        """
         data = content.encode() if isinstance(content, str) else content
         target = self._safe(run_id, relative)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -90,8 +99,10 @@ class VFS:
         kind: str,
         **kwargs: Any,
     ) -> ArtifactRef:
+        """Write `value` as indented JSON, redacting credential-shaped keys."""
         payload = json.dumps(_artifact_safe(value), default=str, indent=2)
         return self.write(run_id, relative, payload, kind, **kwargs)
 
     def read(self, run_id: str, relative: str) -> bytes:
+        """Read one file of the run as bytes."""
         return self._safe(run_id, relative).read_bytes()

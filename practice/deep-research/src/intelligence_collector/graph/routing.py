@@ -1,7 +1,10 @@
+"""Conditional edges of the graph: each router reads the state and names the next node (see
+``build.py``).
+"""
+
 from langgraph.graph import END
 
-from intelligence_collector.agents.recovery import choose_repair
-from intelligence_collector.contracts import IssueType, Stage
+from intelligence_collector.contracts import IssueType
 from intelligence_collector.graph.nodes import (
     DEFAULT_RECOVERY_BUDGET,
     MAX_STALLED_ATTEMPTS,
@@ -64,20 +67,4 @@ def route_after_fix(state: GraphState) -> str:
         return Node.SYNTHESIZE
     if issue == IssueType.EVIDENCE_GAP.value:
         return Node.RESEARCH_GAPS
-    return Node.NEEDS_REVIEW  # PLAN_GAP is never emitted by the source-verification script
-
-
-# ===== RECOVERY ROUTING =====
-
-
-def route_verification(result):
-    if result.passed:
-        return Stage.AWAITING_APPROVAL
-    return {
-        IssueType.DRAFT_DEFECT: Stage.SYNTHESIZING,
-        IssueType.EVIDENCE_GAP: Stage.RESEARCHING,
-        IssueType.PLAN_GAP: Stage.PLANNING}[result.issue_type]
-
-
-def route_repair(state, result, fingerprint):
-    return choose_repair(state, result.issue_type, fingerprint)
+    return Node.NEEDS_REVIEW  # an unknown issue type has no automatic repair

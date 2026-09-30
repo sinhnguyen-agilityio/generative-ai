@@ -1,3 +1,8 @@
+"""Streamlit UI: the chat on the left and a framed Pipeline / Activity log / Details panel on the
+right. Each chat message drives one graph turn; while a report awaits review, the message is the
+reviewer's reply.
+"""
+
 from __future__ import annotations
 import json
 import os
@@ -160,7 +165,7 @@ def _start_new_thread(st):
     st.session_state.activity = []
     st.session_state.stage = "Scoping"
     st.session_state.progress = "No research started"
-    for key in ("verification", "last_trace_id", "publication_decision"):
+    for key in ("verification",):
         st.session_state.pop(key, None)
 
 
@@ -568,6 +573,7 @@ def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
     with st.status("Processing your reply" if reviewing else "Processing research request",
                    expanded=False) as indicator:
         def lifecycle(node, status):
+            """Record node progress in the activity log and the status indicator."""
             item = _record_lifecycle(st, node, status)
             indicator.update(label=item["label"], state="running")
 
@@ -614,7 +620,6 @@ def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
             }, ensure_ascii=False, indent=2, default=str)
         indicator.update(label="Processing complete", state="complete", expanded=False)
     result["activity"] = list(st.session_state.activity)
-    st.session_state.last_trace_id = execution.trace_id
     result["trace_id"] = execution.trace_id
     st.session_state.scope_state = result
     st.session_state.stage = result.get("stage", "Scoping")
@@ -624,6 +629,7 @@ def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
 
 
 def render():
+    """Render the page and handle the chat input (the Streamlit script entry point)."""
     load_local_env()
     try:
         import streamlit as st

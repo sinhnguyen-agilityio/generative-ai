@@ -98,6 +98,9 @@ class ScopeNodes:
         self.vfs = vfs
 
     def clarify_with_user(self, state: GraphState) -> GraphState:
+        """Scope turn: guardrail and clarify decision. Appends the user's message and the agent's
+        reply to ``messages``.
+        """
         request = state.get("request", "")
         history = list(state.get("messages", []))
         assessment = self.scope_agent.clarify_with_user(
@@ -115,6 +118,7 @@ class ScopeNodes:
         }
 
     def write_research_brief(self, state: GraphState) -> GraphState:
+        """Write the research brief once the scope is clear and move to planning."""
         assessment = ScopeAssessment.model_validate(state["scope_assessment"])
         brief = self.scope_agent.write_research_brief(
             state.get("request", ""),
@@ -244,6 +248,9 @@ class ResearchNodes:
         }
 
     def research_complete(self, state):
+        """Gate before synthesis: raise if the supervisor finds research incomplete, otherwise
+        record its assessment.
+        """
         todos = [ResearchTodo.model_validate(
             todo) for todo in state.get("todos", [])]
         assessment = self.supervisor.assess(
@@ -689,6 +696,9 @@ class ApprovalNodes:
         ).model_dump(mode="json")
 
     def approval(self, state: GraphState) -> GraphState:
+        """Human review: pause (``interrupt``) for the reviewer's reply. An explicit approval goes
+        to ``publishing``; a chat reply or a rejection goes to ``classify_feedback``.
+        """
         from langgraph.types import interrupt
 
         decision = interrupt({"kind": "publication_approval", "run_id": state.get("run_id")})

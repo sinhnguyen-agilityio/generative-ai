@@ -12,7 +12,7 @@ from intelligence_collector.contracts import (
     VerificationResult,
 )
 from intelligence_collector.graph.build import build_graph, node_wrapper
-from intelligence_collector.graph.routing import route_verification
+from intelligence_collector.graph.routing import PASSED, route_after_verify
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.publication import can_request_approval
 from intelligence_collector.storage.vfs import VFS
@@ -117,8 +117,8 @@ def test_unverified_result_cannot_traverse_to_approval_or_publication():
         repair_details="The draft omits a required comparison.",
     )
 
-    assert route_verification(result) == Stage.SYNTHESIZING
-    assert route_verification(result) != Stage.AWAITING_APPROVAL
+    route = route_after_verify({"verification": result.model_dump(mode="json")})
+    assert route != PASSED  # a failed report never reaches faithfulness, writer or approval
     assert can_request_approval(result) is False
 
 

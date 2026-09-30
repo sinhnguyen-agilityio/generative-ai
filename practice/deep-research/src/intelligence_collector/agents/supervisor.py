@@ -26,6 +26,10 @@ def assess(todos, artifacts, indexes) -> ProgressAssessment:
 
 
 class ResearchSupervisor:
+    """Delegates research questions to parallel sub-agents (bounded concurrency), skips todos
+    already researched, and persists each outcome.
+    """
+
     def __init__(
         self,
         researcher: ResearchAgent,
@@ -83,6 +87,7 @@ class ResearchSupervisor:
         semaphore = asyncio.Semaphore(self.max_concurrent_researchers)
 
         async def bounded(todo: ResearchTodo) -> tuple[str, ResearchOutcome]:
+            """Research one todo while holding a concurrency slot."""
             async with semaphore:
                 outcome = await asyncio.to_thread(
                     self._research_one, run_id, todo, thread_id, claims
@@ -108,4 +113,6 @@ class ResearchSupervisor:
             return failed_outcome(todo, f"Research sub-agent failed: {redact_mcp_error(exc)}")
 
     def assess(self, todos, artifacts, index_refs) -> ProgressAssessment:
+        """Decide whether research is complete enough to synthesize (see ``tools/think_tool.py``).
+        """
         return assess(todos, artifacts, index_refs)

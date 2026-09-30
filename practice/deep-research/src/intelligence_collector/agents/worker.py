@@ -9,10 +9,8 @@ from __future__ import annotations
 from intelligence_collector.agents.researcher import ResearchAgent, ResearchOutcome
 from intelligence_collector.contracts import (
     IndexedChunk,
-    ResearchGraphState,
     ResearchTodo,
     SourceRecord,
-    Stage,
     TodoStatus,
 )
 from intelligence_collector.tools.url_tracking import UrlRegistry
@@ -187,35 +185,3 @@ def run_worker(vfs, index, run_id, todo: ResearchTodo, researcher: ResearchAgent
     outcome = researcher.research(todo.research_question, run_id=run_id, thread_id=thread_id)
     return persist_research(vfs, index, run_id, todo, outcome)
 
-
-def targeted_research(vfs, index, run_id, question, researcher: ResearchAgent):
-    todo = ResearchTodo(research_question=question)
-    return run_worker(vfs, index, run_id, todo, researcher)
-
-
-def targeted_research_node(
-    state: ResearchGraphState,
-    vfs,
-    index,
-    question: str,
-    researcher: ResearchAgent,
-) -> ResearchGraphState:
-    """Research only the identified gap while retaining prior valid evidence."""
-    if not question.strip():
-        raise ValueError("targeted research requires a non-empty gap question")
-    todo, refs, chunks = targeted_research(vfs, index, state.run_id, question, researcher)
-    evidence_refs = [ref for ref in refs if ref.kind == "evidence_bundle"]
-    return state.model_copy(update={
-        "stage": Stage.SYNTHESIZING,
-        "status": "active",
-        "todo_ids": [*state.todo_ids, todo.todo_id],
-        "todos": [*state.todos, todo],
-        "artifacts": [*state.artifacts, *refs],
-        "evidence": [*state.evidence, *evidence_refs],
-        "index_refs": [*state.index_refs, *(chunk.chunk_id for chunk in chunks)],
-        "progress_assessment": None,
-        "verification": None,
-        "approval": None,
-        "publication": None,
-        "last_error": "",
-    })

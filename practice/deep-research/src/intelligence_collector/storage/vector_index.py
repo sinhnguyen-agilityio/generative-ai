@@ -1,3 +1,7 @@
+"""Vector index adapters: the ``VectorIndex`` protocol and ``LocalVectorIndex``, a dependency-free
+lexical index used offline and in tests.
+"""
+
 from __future__ import annotations
 import json
 from pathlib import Path
@@ -41,6 +45,7 @@ class LocalVectorIndex:
         self.path.read_text()) if self.path.exists() else []
 
     def index(self, chunks: list[IndexedChunk]) -> list[str]:
+        """Append the chunks to the JSON file; returns their ids."""
         rows = self._all()
         rows.extend([c.model_dump(mode="json") for c in chunks])
         self.path.write_text(json.dumps(rows), encoding="utf-8")
@@ -54,6 +59,9 @@ class LocalVectorIndex:
         run_id: str | None = None,
         todo_id: str | None = None,
     ) -> list[IndexedChunk]:
+        """Rank chunks by word overlap with `query`, optionally scoped to one run and one research
+        question.
+        """
         terms = set(query.lower().split())
         rows = self._all()
         if run_id is not None:

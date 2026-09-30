@@ -1,6 +1,5 @@
 import hashlib
 
-from intelligence_collector.contracts import IndexedChunk
 
 
 class FakeVectorIndex:

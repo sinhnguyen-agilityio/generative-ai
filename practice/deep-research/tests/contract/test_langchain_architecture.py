@@ -1,5 +1,5 @@
 from langchain_core.messages import HumanMessage, SystemMessage
-from intelligence_collector.agents.prompts import ROLE_TEMPLATES, SCOPE_TEMPLATE
+from intelligence_collector.agents.prompts import SCOPE_TEMPLATE
 from intelligence_collector.models.factory import ModelConfig, ModelFactory
 
 def test_role_prompts_are_chat_templates_and_scope_has_history_placeholder():
@@ -9,7 +9,6 @@ def test_role_prompts_are_chat_templates_and_scope_has_history_placeholder():
     )
     assert isinstance(messages[0], SystemMessage)
     assert any("prior" in str(message.content) for message in messages)
-    assert set(ROLE_TEMPLATES) == {"planner", "supervisor", "worker", "synthesizer", "verifier", "fixer"}
 
 def test_model_factory_uses_langchain_initializer(monkeypatch):
     calls = []

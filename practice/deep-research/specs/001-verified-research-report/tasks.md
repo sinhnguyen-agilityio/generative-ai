@@ -1107,3 +1107,17 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   scope change that re-enters the Scope Agent) is its own root span in the same trace, and only
   "New thread" starts a new one. Without a key, each execution keeps its own trace. Tests:
   `tests/contract/test_observability_contract.py`. Full suite: 230 passed, 2 skipped.
+- [X] T159 Remove dead code left over from the MVP and document the codebase. Removed modules never
+  reached by the graph: `agents/llm_roles.py` (SemanticRoles + ROLE_TEMPLATES), `agents/recovery.py`
+  (with `routing.route_verification`/`route_repair`), `observability/events.py`,
+  `storage/artifacts.py`, `storage/checkpoints.py` (a JSON checkpoint store parallel to LangGraph's
+  `SqliteSaver`; `checkpoint_store` removed from `build_graph`/`node_wrapper`). Removed functions:
+  `synthesis.synthesize/revise_draft/revise_draft_node`, `planner.replan/replan_affected_node`,
+  `scope.build_scope/narrowing_suggestions/scope_ready/missing_scope_fields`,
+  `worker.targeted_research/targeted_research_node`, the deterministic report checks and CLI of
+  `source_verification.py` (replaced by the LLM judge; the module keeps the evidence catalog), the
+  legacy contracts `ScopedRequest`, `ResearchGraphState`, `WorkerSearchPlan`,
+  `VerificationAssessment`, `SupervisorAssessment`, `FixDecision`, `IssueType.PLAN_GAP`, the
+  pydantic ImportError fallback, unused `GraphState` keys and stale Streamlit session keys, plus
+  the tests that only covered removed code. Added docstrings to every public module, class and
+  function in `src/` (ruff D100/D101/D103 clean). Full suite: 196 passed, 2 skipped.

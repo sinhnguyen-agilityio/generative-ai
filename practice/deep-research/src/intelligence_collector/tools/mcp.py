@@ -1,3 +1,7 @@
+"""Search adapters for research sub-agents: the ``MCPResearchPort`` boundary, the offline
+``ControlledMCP`` and the Tavily MCP client.
+"""
+
 from __future__ import annotations
 
 import json
@@ -44,6 +48,7 @@ class ControlledMCP:
         self.requests: list[dict[str, str]] = []
 
     def search(self, query, *, server="controlled", tool="search", max_results=None):
+        """Return the next scripted response, enforcing the search budget."""
         if self.calls >= self.max_calls:
             raise RuntimeError("search budget exhausted")
         response_index = min(self.calls, len(self._responses) - 1)
@@ -128,6 +133,9 @@ class TavilyMCP:
         return normalized
 
     def search(self, query, *, server="tavily", tool="tavily_search", max_results=None):
+        """Call Tavily's search tool through MCP within the call budget; returns normalized result
+        rows.
+        """
         if self.calls >= self.max_calls:
             raise RuntimeError("search budget exhausted")
         if not str(query).strip():

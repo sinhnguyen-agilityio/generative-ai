@@ -1,3 +1,7 @@
+"""RAGAS Faithfulness scoring of the final report. Observability only: a score never gates
+verification or publication.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -82,6 +86,7 @@ def make_faithfulness_evaluator(
         raise ValueError(f"Unsupported faithfulness provider {provider!r}; use one of {sorted(_JUDGE_LLMS)}")
 
     def evaluate(question: str, report: str, contexts: list[str]) -> float | None:
+        """Score one report; ``None`` when there is nothing to score."""
         if not report.strip() or not contexts:
             return None
         return asyncio.run(

@@ -57,6 +57,10 @@ def _known_gaps(catalog: SourceCatalog, researched_gaps: list[str]) -> str:
 
 
 class ReportJudge:
+    """The Verify step: one LLM call (role ``verify``) that judges a report against the fact-check
+    criterion and the report guidelines.
+    """
+
     def __init__(self, router):
         self.router = router
 
