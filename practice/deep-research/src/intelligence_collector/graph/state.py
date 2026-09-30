@@ -43,16 +43,12 @@ class GraphState(TypedDict, total=False):
     bvf_lessons: list[str]
     bvf_history: list[dict[str, Any]]
     fix_strategy: str
-    researched_gaps: list[str]
-    # Human review (see ApprovalNodes): the reviewer's reply, how it was classified, and who gave it
+    # Human review (see ApprovalNodes): the latest reply, how it was classified, who gave it, and
+    # every "revise" request since the last scope change (kept in force through re-verification)
     human_feedback: str
     feedback_route: str
     reviewer: str
-    # writer node: the verified report the presented `draft` was formatted from (publication is
-    # bound to it), how many formatting requests were applied, and whether the last changed nothing
-    verified_draft: str
-    format_revision: int
-    format_unchanged: bool
+    reviewer_requests: list[str]
     # Publication
     approval: dict | None
     publication: dict | None

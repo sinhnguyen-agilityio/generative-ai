@@ -157,7 +157,6 @@ def test_unverified_snapshot_never_renders_verified_or_publication_controls():
         "verification": {
             "passed": False,
             "artifact_hash": "candidate-hash",
-            "issue_type": "EVIDENCE_GAP",
             "repair_details": "A comparison claim has no source.",
         },
         "report": "# Unverified draft",
@@ -165,7 +164,7 @@ def test_unverified_snapshot_never_renders_verified_or_publication_controls():
 
     text = _visible_text(app).lower()
     assert "verification: failed" in text
-    assert "evidence_gap" in text
+    assert "a comparison claim has no source." in text
     assert "verified report" not in text
     assert "reply **approve** to publish" not in text
     assert app.chat_input[0].placeholder == "What should we research?"

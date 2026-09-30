@@ -22,13 +22,12 @@ from intelligence_collector.graph.routing import (
     NEEDS_REVIEW,
     PASSED,
     REJECTED,
-    TO_FORMAT,
     TO_PUBLISH,
+    TO_REVISE,
     TO_SCOPE,
     route_after_approval,
     route_after_clarify,
     route_after_feedback,
-    route_after_fix,
     route_after_verify,
 )
 from intelligence_collector.graph.state import GraphState
@@ -63,16 +62,13 @@ def build_graph(
             START -> clarify_with_user --(needs clarification)--> END
                                        \\-> write_research_brief -> planning
                   -> researching -> research_complete -> synthesizing -> verifying
-            verifying --(all checks pass)--> evaluating_faithfulness -> writer (with_approval) | END
-                      --(failed, budget left)--> fixing --(DRAFT_DEFECT)--> synthesizing
-                                                        \\-(EVIDENCE_GAP)-> researching_gaps
-                                                                            -> synthesizing
+            verifying --(all checks pass)--> evaluating_faithfulness -> approval (with_approval) | END
+                      --(failed, budget left)--> fixing (reflect) -> synthesizing (rewrite)
                       --(budget exhausted / no progress)--> needs_review -> END
-            writer (presents the report; applies a reviewer's formatting request) -> approval
             approval (human-in-the-loop review) --(explicit approve)--> publishing -> END
                      --(chat reply / reject)--> classify_feedback (LLM reads the reply)
             classify_feedback --(approve)--> publishing -> END
-                              --(format)--> writer (reformat only: no re-synthesis, no re-verify)
+                              --(revise)--> synthesizing (rewrite with the request, re-verified)
                               --(scope)--> clarify_with_user -> brief -> planning
                                            (fresh plan, discards prior draft/verification)
 
@@ -142,11 +138,10 @@ def build_graph(
     add_node(Node.VERIFY, bvf.verifying)
     add_node(Node.EVALUATE_FAITHFULNESS, bvf.evaluating_faithfulness)
     add_node(Node.FIX, bvf.fixing)
-    add_node(Node.RESEARCH_GAPS, bvf.researching_gaps)
     add_node(Node.NEEDS_REVIEW, bvf.needs_review)
 
     graph.add_edge(Node.SYNTHESIZE, Node.VERIFY)
-    passed_target = Node.WRITER if with_approval else END
+    passed_target = Node.APPROVE if with_approval else END
     # RAGAS Faithfulness (evaluating_faithfulness) runs only on this PASSED edge — once, on the
     # final report that actually left the BVF loop — never on a draft that gets fixed and
     # reverified.
@@ -156,22 +151,16 @@ def build_graph(
         {PASSED: Node.EVALUATE_FAITHFULNESS, FIX: Node.FIX, NEEDS_REVIEW: Node.NEEDS_REVIEW},
     )
     graph.add_edge(Node.EVALUATE_FAITHFULNESS, passed_target)
-    graph.add_conditional_edges(
-        Node.FIX,
-        route_after_fix,
-        [Node.SYNTHESIZE, Node.RESEARCH_GAPS, Node.NEEDS_REVIEW],
-    )
-    graph.add_edge(Node.RESEARCH_GAPS, Node.SYNTHESIZE)
+    # The fix is always a rewrite from the same evidence.
+    graph.add_edge(Node.FIX, Node.SYNTHESIZE)
     graph.add_edge(Node.NEEDS_REVIEW, END)
 
     # ===== APPROVAL =====
     if with_approval:
         approval_nodes = ApprovalNodes(vfs, output_dir, feedback_router)
-        add_node(Node.WRITER, bvf.writing)
         add_node(Node.APPROVE, approval_nodes.approval)
         add_node(Node.CLASSIFY_FEEDBACK, approval_nodes.classify_feedback)
         add_node(Node.PUBLISH, approval_nodes.publishing)
-        graph.add_edge(Node.WRITER, Node.APPROVE)
         graph.add_conditional_edges(
             Node.APPROVE,
             route_after_approval,
@@ -183,7 +172,7 @@ def build_graph(
             route_after_feedback,
             {
                 TO_PUBLISH: Node.PUBLISH,
-                TO_FORMAT: Node.WRITER,
+                TO_REVISE: Node.SYNTHESIZE,
                 # A scope change re-enters scoping (the stub scope node when no scope agent).
                 TO_SCOPE: Node.CLARIFY if scope_agent is not None else Node.STUB_SCOPE,
             },

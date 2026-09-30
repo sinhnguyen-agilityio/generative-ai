@@ -41,15 +41,6 @@ class TodoStatus(str, Enum):
     FAILED = "failed"
 
 
-class IssueType(str, Enum):
-    """Why a verification failed: ``DRAFT_DEFECT`` (a rewrite fixes it) or ``EVIDENCE_GAP`` (more
-    research is needed).
-    """
-
-    DRAFT_DEFECT = "DRAFT_DEFECT"
-    EVIDENCE_GAP = "EVIDENCE_GAP"
-
-
 class Model(BaseModel):
     """Base for strict contracts: unknown fields are rejected."""
 
@@ -185,11 +176,10 @@ class IndexedChunk(Model):
 
 
 class VerificationCheck(Model):
-    """One programmatic source-verification check and, when it fails, why."""
+    """One judged criterion: whether it passed and, when it failed, why."""
 
     name: str
     passed: bool
-    issue_type: IssueType | None = None
     details: list[str] = Field(default_factory=list)
     affected_ids: list[str] = Field(default_factory=list)
 
@@ -201,7 +191,6 @@ class VerificationResult(Model):
     artifact_hash: str
     passed: bool
     checks: list[str] = Field(default_factory=list)
-    issue_type: IssueType | None = None
     affected_ids: list[str] = Field(default_factory=list)
     repair_details: str = ""
     check_results: list[VerificationCheck] = Field(default_factory=list)
@@ -223,17 +212,10 @@ class Reflection(Model):
 
 
 class ReportJudgeCriterion(Model):
-    """One report-judge criterion verdict.
-
-    ``issue_type`` lets the judge itself decide, per criterion, whether an unmet criterion is a
-    wording/interpretation problem the writer can fix by revising (``DRAFT_DEFECT``) or a sign
-    the gathered evidence itself is insufficient (``EVIDENCE_GAP``, routes back to targeted
-    research instead of a rewrite). Defaults to ``DRAFT_DEFECT``, the far more common case.
-    """
+    """One report-judge criterion verdict: met or not, and why."""
 
     criterion: str = Field(min_length=1)
     met: bool
-    issue_type: IssueType = IssueType.DRAFT_DEFECT
     justification: str = Field(min_length=1)
 
 
@@ -271,12 +253,11 @@ class PublicationRecord(Model):
 
 class FeedbackDecision(Model):
     """Structured output of the reviewer-reply classifier (see agents/feedback_router.py).
-    Decides whether the reviewer's chat reply approves the report ("approve": publish it), only
-    asks for a formatting change ("format": the writer re-presents the existing text) or asks for
-    a change in what the report covers ("scope": back to scope clarification, the brief and the
-    planner)."""
+    Decides whether the reviewer's chat reply approves the report ("approve": publish it), asks
+    for a change the existing evidence can support ("revise": rewrite and verify again), or needs
+    different evidence ("scope": back to scope clarification, the brief, planning and research)."""
 
-    route: Literal["approve", "format", "scope"]
+    route: Literal["approve", "revise", "scope"]
     reason: str = ""
 
 

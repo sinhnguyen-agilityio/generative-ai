@@ -1,9 +1,8 @@
-from intelligence_collector.contracts import IssueType, VerificationCheck, VerificationResult
+from intelligence_collector.contracts import VerificationCheck, VerificationResult
 from intelligence_collector.source_verification import (
     catalog_from_bundles,
     cited_source_excerpts,
     failure_fingerprint,
-    gap_id,
 )
 from tests.fixtures.fake_models import cited_report
 
@@ -32,10 +31,8 @@ def _failed_result(artifact_hash, *failing):
     return VerificationResult(
         artifact_hash=artifact_hash,
         passed=False,
-        issue_type=IssueType.DRAFT_DEFECT,
         check_results=[
-            VerificationCheck(name=name, passed=False, issue_type=IssueType.DRAFT_DEFECT,
-                              affected_ids=list(ids))
+            VerificationCheck(name=name, passed=False, affected_ids=list(ids))
             for name, ids in failing
         ],
     )
@@ -58,7 +55,7 @@ def test_catalog_assigns_stable_ids_per_unique_url_and_keeps_gaps():
 
     assert list(catalog.sources) == ["S1"]
     assert [bundle.source_ids for bundle in catalog.bundles] == [["S1"], ["S1"]]
-    assert [gap.gap_id for gap in catalog.gaps] == [gap_id("t1", "No benchmark data")]
+    assert [(gap.todo_id, gap.text) for gap in catalog.gaps] == [("t1", "No benchmark data")]
 
 
 def test_cited_source_excerpts_returns_only_the_excerpts_the_report_actually_cites():

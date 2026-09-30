@@ -61,13 +61,13 @@ def persist_research(
     """Write raw captures, notes, excerpts, and the evidence bundle; index raw content.
 
     Each URL is captured and indexed once per run: a URL already in the run's ``UrlRegistry``
-    (from another task, gap research, or an earlier invocation) is referenced by its first
+    (from another task, a re-scoped plan, or an earlier invocation) is referenced by its first
     capture instead of being written and indexed again. Pass a shared ``registry`` when
     persisting several tasks; otherwise it is loaded from and saved to the VFS here.
 
     A task is COMPLETED when it gathered sources and compressed findings, even if the findings
-    report unresolved gaps (recorded in the evidence bundle for Verification). It is FAILED only
-    when retrieval or compression produced nothing usable.
+    report unresolved gaps (recorded in the evidence bundle; the writer discloses them). It is
+    FAILED only when retrieval or compression produced nothing usable.
     """
     sources = outcome.unique_sources
     if not sources or outcome.findings is None:

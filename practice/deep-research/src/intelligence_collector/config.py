@@ -18,8 +18,8 @@ MAX_RECOVERY_ATTEMPTS = 10
 MAX_CONCURRENT_RESEARCHERS = 5
 
 # Report Judge guideline checklist (see agents/report_judge.py) -- fixed formatting/language
-# rules every report must clear, alongside the judge's fact check. Unmet
-# guidelines are DRAFT_DEFECT failures, fed to the same Build-Verify-Fix fix/reflect loop.
+# rules every report must clear, alongside the judge's fact check. An unmet guideline is
+# fixed like any other failure: the Build-Verify-Fix loop reflects and rewrites the report.
 DEFAULT_REPORT_GUIDELINES: list[str] = [
     "The report MUST be written in Markdown format.",
     # Matches the writer's own layout (agents/prompts.py::REPORT_WRITER_PROMPT): sources are cited

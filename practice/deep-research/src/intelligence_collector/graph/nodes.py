@@ -32,7 +32,6 @@ from intelligence_collector.agents.synthesis import persist_report
 from intelligence_collector.contracts import (
     ApprovalDecision,
     FeedbackDecision,
-    IssueType,
     ResearchBrief,
     ResearchTodo,
     ScopeAssessment,
@@ -68,10 +67,8 @@ class Node:
     VERIFY = "verifying"
     EVALUATE_FAITHFULNESS = "evaluating_faithfulness"
     FIX = "fixing"
-    RESEARCH_GAPS = "researching_gaps"
     NEEDS_REVIEW = "needs_review"
     # Human review and publication
-    WRITER = "writer"
     APPROVE = "approval"
     CLASSIFY_FEEDBACK = "classify_feedback"
     PUBLISH = "publishing"
@@ -202,7 +199,6 @@ class ResearchNodes:
         self.bvf = BVFNodes(
             vfs,
             index,
-            self.supervisor,
             report_writer or ReportWriter(researcher.router),
             report_judge=report_judge,
             report_guidelines=report_guidelines,
@@ -279,21 +275,6 @@ class ResearchNodes:
         }
 
 
-def _merge_research(state, results):
-    """Fold supervisor results into the accumulated todos/artifacts/evidence/index refs."""
-    todos = list(state.get("todos", []))
-    artifacts = list(state.get("artifacts", []))
-    evidence = list(state.get("evidence", []))
-    index_refs = list(state.get("index_refs", []))
-    for todo, refs, chunks in results:
-        todos.append(todo.model_dump(mode="json"))
-        artifacts.extend(ref.model_dump(mode="json") for ref in refs)
-        evidence.extend(ref.model_dump(mode="json")
-                        for ref in refs if ref.kind == "evidence_bundle")
-        index_refs.extend(chunk.chunk_id for chunk in chunks)
-    return {"todos": todos, "artifacts": artifacts, "evidence": evidence, "index_refs": index_refs}
-
-
 # ===== BUILD-VERIFY-FIX =====
 
 
@@ -301,20 +282,18 @@ class BVFNodes:
     """Mandatory Build-Verify-Fix loop around the report.
 
     Build (``synthesizing``) -> Verify (``verifying``, one LLM-as-judge call — see
-    ``agents/report_judge.py`` — judging goal achievement, per-question coverage, fair
-    representation of the evidence, uncertainty disclosure, plain language, and safe content) ->
-    on failure Fix (``fixing``: record the attempt and reflect to learn lessons) -> either a
-    revised draft (DRAFT_DEFECT) or targeted gap research (EVIDENCE_GAP, when the judge decides
-    the evidence itself is insufficient) -> Build again. Only a report that passes every criterion
-    leaves the loop normally; exhausting the recovery budget or repeating the same failures ends
-    in ``needs_review``.
+    ``agents/report_judge.py`` — that says which criteria failed and why) -> on failure Fix
+    (``fixing``: record the attempt and reflect to learn lessons) -> Build again, rewriting the
+    report from the same evidence. No new research happens inside the loop: a claim the evidence
+    cannot support is removed, narrowed, or disclosed under ``## Limitations``. Only a report that
+    passes every criterion leaves the loop normally; exhausting the recovery budget or repeating
+    the same failures ends in ``needs_review``.
     """
 
     def __init__(
         self,
         vfs,
         index,
-        supervisor: ResearchSupervisor,
         writer: ReportWriter,
         *,
         report_judge: ReportJudge,
@@ -325,7 +304,6 @@ class BVFNodes:
     ):
         self.vfs = vfs
         self.index = index
-        self.supervisor = supervisor
         self.writer = writer
         self.report_judge = report_judge
         self.report_guidelines = list(report_guidelines)
@@ -334,12 +312,17 @@ class BVFNodes:
         self.faithfulness_evaluator = faithfulness_evaluator
 
     def _catalog(self, state):
-        """Full, unfiltered catalog — used by Verify and gap research, never narrowed."""
+        """Full, unfiltered catalog — used by Verify and faithfulness scoring, never narrowed."""
         return load_catalog(self.vfs, state["run_id"], state.get("evidence", []))
 
     def synthesizing(self, state):
-        """Build the first draft, or a Fix revision applying every automated lesson learned so
-        far. A human reviewer's formatting request never comes here — see ``writing``."""
+        """Build the first draft, a Fix revision applying every lesson learned so far, or a
+        rewrite of the reviewed report applying the human reviewer's requests.
+
+        ``human_feedback`` is set only on the pass right after a reviewer's "revise" reply: the
+        report they commented on is rewritten. ``reviewer_requests`` (every request since the
+        last scope change) stays in force for this rewrite and any BVF fix that follows it.
+        """
         brief = ResearchBrief.model_validate(state["scoped_request"])
         previous = state.get("verification")
         revision = None
@@ -356,10 +339,14 @@ class BVFNodes:
         catalog = select_relevant_evidence(
             self._catalog(state), self.index, state["run_id"], top_k=self.evidence_top_k
         )
+        reviewer_requests = list(state.get("reviewer_requests", []))
+        reviewing = bool(state.get("human_feedback"))
         report = self.writer.write(
             brief,
             catalog,
             revision=revision,
+            reviewer_requests=reviewer_requests,
+            reviewed_report=state.get("draft", "") if reviewing else "",
             guidelines=self.report_guidelines,
             run_id=state["run_id"],
             thread_id=state.get("thread_id", ""),
@@ -370,9 +357,11 @@ class BVFNodes:
             **state,
             "stage": Stage.VERIFYING.value,
             "current_action": (
-                f"Draft v{version} revised with {len(revision.lessons)} lesson(s)"
-                if revision else "First draft built from stored evidence"
+                f"Draft v{version} revised with {len(revision.lessons)} lesson(s)" if revision
+                else f"Draft v{version} rewritten per the reviewer's request" if reviewing
+                else "First draft built from stored evidence"
             ),
+            "human_feedback": "",  # consumed
             "activity": _activity(state, "Synthesizing report"),
             "previous_draft": state.get("draft", ""),
             "draft": report,
@@ -380,57 +369,11 @@ class BVFNodes:
             "verification": None,  # a changed artifact never inherits a previous verification
         }
 
-    def writing(self, state):
-        """The ``writer`` node: presentation step between the verified report and the human review (``approval``).
-
-        Straight from verification (no request): the report is presented as-is and remembered
-        as ``verified_draft``. With a reviewer's formatting request (routed here by
-        ``classify_feedback``): the current report is re-presented in the requested format by
-        ``ReportWriter.reformat`` — no re-synthesis and no re-verification; the reformat prompt
-        forbids changing any claim, number or citation. Publication stays bound to the verified
-        source (``verified_draft``) and to the exact text the reviewer approves.
-        """
-        draft = state.get("draft", "")
-        verification = state.get("verification") or {}
-        verified_draft = state.get("verified_draft", "")
-        if draft and hashlib.sha256(draft.encode()).hexdigest() == verification.get("artifact_hash"):
-            verified_draft = draft  # fresh from verification
-        base = {**state, "verified_draft": verified_draft, "human_feedback": "",
-                "stage": Stage.AWAITING_APPROVAL.value, "status": "paused"}
-
-        request = state.get("human_feedback", "")
-        if not request:
-            return {**base, "format_unchanged": False, "current_action": "Report ready for review",
-                    "activity": _activity(state, "Presenting report for review")}
-
-        report = self.writer.reformat(
-            draft, request, run_id=state["run_id"], thread_id=state.get("thread_id", ""),
-        )
-        revision = state.get("format_revision", 0) + 1
-        ref = self.vfs.write(state["run_id"], f"reports/formatted.v{revision}.md", report, "draft")
-        unchanged = report.strip() == draft.strip()
-        outcome = (
-            "The formatting request left the report unchanged" if unchanged
-            else f"Report reformatted per the reviewer's request (format v{revision})"
-        )
-        return {
-            **base,
-            "current_action": outcome,
-            "messages": [*state.get("messages", []), AIMessage(content=outcome)],
-            "format_unchanged": unchanged,
-            "format_revision": revision,
-            "activity": _activity(state, "Reformatting report"),
-            "previous_draft": draft,
-            "draft": report,
-            "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
-        }
-
     def verifying(self, state):
         """LLM-as-judge is the sole Verify gate: one reasoning-tier call (no search/scrape tools)
         re-reads the report against the gathered evidence and decides whether it is factually
         faithful and follows the configured report guidelines — see ``agents/report_judge.py``."""
         catalog = self._catalog(state)
-        researched = list(state.get("researched_gaps", []))
         brief = ResearchBrief.model_validate(state["scoped_request"])
         criteria = build_report_judge_criteria(self.report_guidelines)
         report = state.get("draft", "")
@@ -439,8 +382,7 @@ class BVFNodes:
             criteria,
             report,
             format_evidence(catalog),
-            catalog,
-            researched_gaps=researched,
+            reviewer_requests=list(state.get("reviewer_requests", [])),
             run_id=state["run_id"],
             thread_id=state.get("thread_id", ""),
         )
@@ -450,8 +392,7 @@ class BVFNodes:
         stalled = not result.passed and fingerprint == state.get(
             "progress_fingerprint")
         run_id = state["run_id"]
-        save_catalog_state(self.vfs, run_id, state.get(
-            "evidence", []), researched)
+        save_catalog_state(self.vfs, run_id, state.get("evidence", []))
         ref = self.vfs.write_json(
             run_id,
             f"verification/result.{result.verification_id}.json",
@@ -524,7 +465,8 @@ class BVFNodes:
         }
 
     def fixing(self, state):
-        """Self-improving retry: record the failure, and for draft defects reflect before fixing."""
+        """Self-improving retry: record the failure and reflect on it (diagnosis, lessons, strategy)
+        before the next rewrite."""
         verification = VerificationResult.model_validate(state["verification"])
         attempt = state.get("recovery_attempt", 0) + 1
         budget = state.get("recovery_budget", self.recovery_budget)
@@ -532,30 +474,22 @@ class BVFNodes:
         lessons = list(state.get("bvf_lessons", []))
         entry = {
             "attempt": attempt,
-            "issue_type": verification.issue_type.value if verification.issue_type else None,
             "failed_checks": [c.name for c in verification.check_results if not c.passed],
             "fingerprint": state.get("progress_fingerprint", ""),
             "stalled": state.get("stall_count", 0) > 0,
         }
-        strategy = ""
-        if verification.issue_type == IssueType.DRAFT_DEFECT:
-            reflection = self.writer.reflect(
-                state.get("draft", ""),
-                verification,
-                history=history,
-                lessons=lessons,
-                stalled=entry["stalled"],
-                run_id=state["run_id"],
-                thread_id=state.get("thread_id", ""),
-            )
-            lessons = merge_lessons(lessons, reflection.lessons)
-            strategy = reflection.strategy
-            entry.update(diagnosis=reflection.diagnosis,
-                         lessons=reflection.lessons, strategy=strategy)
-            action = "revising the draft"
-        else:
-            entry["gaps"] = verification.affected_ids
-            action = "researching evidence gaps"
+        reflection = self.writer.reflect(
+            state.get("draft", ""),
+            verification,
+            history=history,
+            lessons=lessons,
+            stalled=entry["stalled"],
+            run_id=state["run_id"],
+            thread_id=state.get("thread_id", ""),
+        )
+        lessons = merge_lessons(lessons, reflection.lessons)
+        strategy = reflection.strategy
+        entry.update(diagnosis=reflection.diagnosis, lessons=reflection.lessons, strategy=strategy)
         history.append(entry)
         run_id = state["run_id"]
         refs = [
@@ -566,43 +500,14 @@ class BVFNodes:
         ]
         return {
             **state,
-            "stage": (
-                Stage.RESEARCHING if verification.issue_type == IssueType.EVIDENCE_GAP
-                else Stage.SYNTHESIZING
-            ).value,
+            "stage": Stage.SYNTHESIZING.value,
             "recovery_attempt": attempt,
-            "current_action": f"BVF fix attempt {attempt}/{budget}: {action}",
-            "activity": _activity(state, f"Fix attempt {attempt}: {action}"),
+            "current_action": f"BVF fix attempt {attempt}/{budget}: revising the draft",
+            "activity": _activity(state, f"Fix attempt {attempt}: revising the draft"),
             "bvf_history": history,
             "bvf_lessons": lessons,
             "fix_strategy": strategy,
             "artifacts": [*state.get("artifacts", []), *(ref.model_dump(mode="json") for ref in refs)],
-        }
-
-    def researching_gaps(self, state):
-        """EVIDENCE_GAP repair: one targeted research sub-agent per unresearched gap."""
-        catalog = self._catalog(state)
-        researched = list(state.get("researched_gaps", []))
-        gaps = [gap for gap in catalog.gaps if gap.gap_id not in researched]
-        todos = [
-            ResearchTodo(
-                research_question=f"{gap.text} (Context: {gap.question})")
-            for gap in gaps
-        ]
-        results = self.supervisor.delegate(
-            state["run_id"], todos, thread_id=state.get("thread_id", "")) if todos else []
-        merged = {**state, **_merge_research(state, results)}
-        # Each gap gets one targeted research round; whatever remains must be disclosed.
-        researched += [gap.gap_id for gap in gaps]
-        researched += [gap.gap_id for gap in self._catalog(
-            merged).gaps if gap.gap_id not in researched]
-        return {
-            **merged,
-            "stage": Stage.SYNTHESIZING.value,
-            "current_action": f"Researched {len(gaps)} evidence gap(s)",
-            "activity": _activity(state, "Researching evidence gaps"),
-            "todo_ids": [todo["todo_id"] for todo in merged["todos"]],
-            "researched_gaps": researched,
         }
 
     def needs_review(self, state):
@@ -652,29 +557,28 @@ def approval(state: GraphState) -> GraphState:
 
 
 class ApprovalNodes:
-    """The human-in-the-loop review, reached through ``writer`` once a report has fully passed
-    verification (and faithfulness scoring):
+    """The human-in-the-loop review, reached once a report has fully passed verification (and
+    faithfulness scoring):
 
-    * ``approval`` interrupts the graph until the reviewer answers the report ``writer``
-      presented. The normal answer is a free-text chat reply (``{"reply": ...}``), always handed
-      to ``classify_feedback``. An explicit ``{"approved": True}`` goes straight to
-      ``publishing``; an explicit ``{"approved": False, "feedback": ...}`` is classified but can
-      never be read as an approval.
+    * ``approval`` interrupts the graph until the reviewer answers the verified report. The normal
+      answer is a free-text chat reply (``{"reply": ...}``), always handed to
+      ``classify_feedback``. An explicit ``{"approved": True}`` goes straight to ``publishing``;
+      an explicit ``{"approved": False, "feedback": ...}`` is classified but can never be read as
+      an approval.
     * ``classify_feedback`` asks an LLM (``feedback_router``) what the reply means:
       - ``approve``: the reply accepts the report as-is -> ``publishing``;
-      - ``format`` (presentation only): back to ``writer``, which re-presents the same report in
-        the requested format — no re-synthesis, no re-verification — then back to ``approval``;
-      - ``scope`` (a change in what the report covers): back to ``clarify_with_user``, with the
+      - ``revise``: change the report using the same evidence -> ``synthesizing`` rewrites it
+        with the reviewer's request, and it goes through Verify again before coming back here;
+      - ``scope``: the change needs different evidence -> ``clarify_with_user``, with the
         feedback as a new user turn, so the scope agent re-assesses it (it may ask a clarifying
-        question first), rewrites the research brief, and the planner then plans new questions,
-        re-entering the full Build-Verify-Fix loop.
+        question first), rewrites the research brief, and the planner and researchers run again.
       Keeping the LLM call in its own node means a failed classification is retried on its
       own, never re-prompting the reviewer for a decision already given.
-    * ``publishing`` writes the approved text to the permanent output location and ends the run.
+    * ``publishing`` writes the approved, verified report to the permanent output location.
 
-    Approvals always bind to the hash of the exact text ``writer`` presented. The reviewer's
-    replies and the agent's acknowledgements are appended to ``messages`` so the review reads as
-    part of the chat conversation.
+    Approvals always bind to the hash of the exact verified report shown. The reviewer's replies
+    and the agent's acknowledgements are appended to ``messages`` so the review reads as part of
+    the chat conversation.
     """
 
     def __init__(self, vfs, output_dir: str, feedback_router=None):
@@ -684,7 +588,7 @@ class ApprovalNodes:
 
     @staticmethod
     def _approval_for(state: GraphState, approved: bool) -> dict:
-        """The reviewer decides on the text writer presented, so the approval binds to it."""
+        """The reviewer decides on the verified report shown, so the approval binds to it."""
         from intelligence_collector.publication import approval_for
 
         verification = VerificationResult.model_validate(state["verification"])
@@ -722,7 +626,7 @@ class ApprovalNodes:
         }
 
     def publishing(self, state: GraphState) -> GraphState:
-        """Write the approved text, hash-bound to the approval and to its verified source."""
+        """Write the approved report, hash-bound to the approval and the passing verification."""
         from intelligence_collector.publication import publish
 
         run_id = state["run_id"]
@@ -732,7 +636,6 @@ class ApprovalNodes:
             destination,
             ApprovalDecision.model_validate(state["approval"]),
             VerificationResult.model_validate(state["verification"]),
-            verified_source=state.get("verified_draft") or state.get("draft", ""),
         )
         ref = self.vfs.write_json(
             run_id, "publication/record.json", record.model_dump(mode="json"), "publication_record",
@@ -754,8 +657,8 @@ class ApprovalNodes:
         }
 
     def classify_feedback(self, state: GraphState) -> GraphState:
-        """LLM step: read the reviewer's chat reply as an approval, a formatting request or a
-        scope change."""
+        """LLM step: read the reviewer's chat reply as an approval, a revision request or a scope
+        change."""
         feedback = state.get("human_feedback", "")
         if self.feedback_router is not None and feedback:
             verdict = self.feedback_router.route(
@@ -763,16 +666,16 @@ class ApprovalNodes:
                 run_id=state.get("run_id", ""), thread_id=state.get("thread_id", ""),
             )
         else:
-            # No classifier configured, or no reply text: default to the cheaper format path
-            # rather than publishing unasked or discarding the whole research plan.
-            verdict = FeedbackDecision(route="format", reason="No reply to classify; defaulting to format.")
+            # No classifier configured, or no reply text: default to a revision rather than
+            # publishing unasked or discarding the whole research plan.
+            verdict = FeedbackDecision(route="revise", reason="No reply to classify; defaulting to revise.")
         explicit_reject = (state.get("approval") or {}).get("approved") is False
         if verdict.route == "approve" and explicit_reject:
-            verdict = FeedbackDecision(route="format", reason="An explicit rejection is never an approval.")
+            verdict = FeedbackDecision(route="revise", reason="An explicit rejection is never an approval.")
 
         history = [*state.get("bvf_history", []), {
             "attempt": state.get("recovery_attempt", 0),
-            "issue_type": "HUMAN_FEEDBACK",
+            "kind": "HUMAN_FEEDBACK",
             "route": verdict.route,
             "feedback": feedback,
             "reason": verdict.reason,
@@ -790,19 +693,34 @@ class ApprovalNodes:
         if verdict.route == "approve":
             return {**state, **update, "messages": replied, "human_feedback": "",
                     "approval": self._approval_for(state, True)}
-        if verdict.route == "format":
-            # writer consumes human_feedback and re-presents the report in the requested format.
-            return {**state, **update, "messages": replied, "human_feedback": feedback}
+        if verdict.route == "revise":
+            # synthesizing consumes human_feedback and rewrites the reviewed report; the request
+            # joins reviewer_requests so later BVF fixes and the judge keep honouring it. A human
+            # revision starts a fresh Build-Verify-Fix cycle, so the attempt/stall counters restart.
+            requests = [*state.get("reviewer_requests", []), feedback] if feedback else list(
+                state.get("reviewer_requests", []))
+            return {
+                **state, **update,
+                "messages": [*replied, AIMessage(
+                    content="Revising the report with your feedback; it will be verified again.")],
+                "human_feedback": feedback or "(no specific request)",
+                "reviewer_requests": requests,
+                "recovery_attempt": 0,
+                "stall_count": 0,
+                "progress_fingerprint": "",
+                "stage": Stage.SYNTHESIZING.value,
+            }
         # Scope change: the feedback becomes the next user turn of the scope conversation. The
-        # new brief starts a fresh Build-Verify-Fix cycle, so the attempt/stall counters restart.
+        # new brief starts a fresh research + Build-Verify-Fix cycle, so earlier reviewer requests
+        # and the attempt/stall counters restart.
         return {
             **state, **update,
             "request": feedback,
             "human_feedback": "",
-            "verified_draft": "",
-            "format_revision": 0,
+            "reviewer_requests": [],
             "recovery_attempt": 0,
             "stall_count": 0,
+            "progress_fingerprint": "",
             "stage": Stage.SCOPING.value,
         }
 

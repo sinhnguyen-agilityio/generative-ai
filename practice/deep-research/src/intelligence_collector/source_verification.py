@@ -2,7 +2,7 @@
 
 Loads the evidence bundles the research sub-agents stored for a run and gives every unique source
 URL a stable ``S<n>`` id, which is what reports cite (``[S1]``). Also records the sub-agents'
-unresolved evidence gaps, and fingerprints a verification failure so the Build-Verify-Fix loop can
+unresolved evidence gaps (disclosed by the writer), and fingerprints a verification failure so the Build-Verify-Fix loop can
 tell when a fix made no progress.
 
 (The module name predates the LLM judge: the deterministic report checks that once lived here were
@@ -39,9 +39,9 @@ class CatalogSource:
 
 @dataclass(frozen=True)
 class EvidenceGap:
-    """Something a research sub-agent could not find evidence for (its `unresolved_gaps`)."""
+    """Something a research sub-agent could not find evidence for (its `unresolved_gaps`); the
+    writer discloses each one under ``## Limitations``."""
 
-    gap_id: str
     todo_id: str
     question: str
     text: str
@@ -76,11 +76,6 @@ def _normalize_url(url: str) -> str:
     return normalize_url(url.strip().rstrip(".,;:"))
 
 
-def gap_id(todo_id: str, text: str) -> str:
-    """Stable id of one unresolved gap, so a gap is researched at most once."""
-    return f"gap:{todo_id}:{hashlib.sha1(text.strip().casefold().encode()).hexdigest()[:10]}"
-
-
 def catalog_from_bundles(bundles: list[dict]) -> SourceCatalog:
     """Assign stable ``S<n>`` ids (first appearance order) to every unique source URL."""
     catalog = SourceCatalog()
@@ -108,8 +103,7 @@ def catalog_from_bundles(bundles: list[dict]) -> SourceCatalog:
             if by_url[key] not in source_ids:
                 source_ids.append(by_url[key])
         gaps = [
-            EvidenceGap(gap_id(todo_id, text), todo_id,
-                        question, str(text).strip())
+            EvidenceGap(todo_id, question, str(text).strip())
             for text in bundle.get("unresolved_gaps", [])
             if str(text).strip()
         ]
@@ -152,13 +146,12 @@ def load_catalog(vfs, run_id: str, evidence_refs: list[dict]) -> SourceCatalog:
     return catalog_from_bundles(bundles)
 
 
-def save_catalog_state(vfs, run_id: str, evidence_refs: list[dict], researched_gaps: list[str]):
-    """Record which evidence bundles and researched gaps the latest verification used."""
+def save_catalog_state(vfs, run_id: str, evidence_refs: list[dict]):
+    """Record which evidence bundles the latest verification used."""
     return vfs.write_json(
         run_id,
         CATALOG_STATE_PATH,
-        {"task_ids": evidence_task_ids(
-            evidence_refs), "researched_gaps": list(researched_gaps)},
+        {"task_ids": evidence_task_ids(evidence_refs)},
         "verification_catalog",
     )
 

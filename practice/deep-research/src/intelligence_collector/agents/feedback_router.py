@@ -29,7 +29,7 @@ class FeedbackRouter:
         run_id: str = "",
         thread_id: str = "",
     ) -> FeedbackDecision:
-        """Return `route="approve"` (publish), `"format"` (re-present the existing text) or
+        """Return `route="approve"` (publish), `"revise"` (rewrite from the same evidence) or
         `"scope"` (re-scope)."""
         messages = FEEDBACK_ROUTER_TEMPLATE.format_messages(
             feedback=feedback, report=report[:MAX_REPORT_EXCERPT_CHARS],

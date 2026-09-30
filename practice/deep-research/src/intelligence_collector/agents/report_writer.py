@@ -15,8 +15,9 @@ from datetime import date
 
 from intelligence_collector.agents.prompts import (
     REFLECTION_TEMPLATE,
-    REPORT_REFORMAT_TEMPLATE,
     REPORT_WRITER_TEMPLATE,
+    REVIEWER_BLOCK,
+    REVIEWER_CURRENT_REPORT,
     REVISION_BLOCK,
 )
 from intelligence_collector.contracts import (
@@ -140,7 +141,7 @@ def merge_lessons(existing: list[str], new: list[str]) -> list[str]:
 
 class ReportWriter:
     """LLM report writer (role ``synthesizer``): writes and revises drafts from the evidence
-    catalog, applies a reviewer's formatting request, and reflects on failed verifications.
+    catalog, applies a human reviewer's change requests, and reflects on failed verifications.
     """
 
     def __init__(self, router):
@@ -152,47 +153,46 @@ class ReportWriter:
         catalog: SourceCatalog,
         *,
         revision: RevisionContext | None = None,
+        reviewer_requests: list[str] = (),
+        reviewed_report: str = "",
         guidelines: list[str] = (),
         run_id: str = "",
         thread_id: str = "",
     ) -> str:
-        """Draft (or revise) the report. `guidelines` are the operator's report guidelines, shown
-        to the writer up front so the first draft already follows what the judge will enforce."""
-        revision_text = ""
+        """Draft or revise the report from the evidence.
+
+        `revision` carries a failed verification (BVF fix). `reviewer_requests` are the human
+        reviewer's change requests: they win over the layout rules and guidelines when they
+        conflict, and stay in force through later BVF fixes. `reviewed_report` is the report the
+        reviewer just commented on, rewritten here (omitted during a BVF fix, whose `revision`
+        already carries the previous draft). `guidelines` are the operator's report guidelines,
+        shown up front so the first draft already follows what the judge will enforce.
+        """
+        blocks = []
         if revision is not None:
-            revision_text = REVISION_BLOCK.format(
+            blocks.append(REVISION_BLOCK.format(
                 attempt=revision.attempt,
                 failures=revision.failures,
                 lessons=_bullets(revision.lessons),
                 strategy=revision.strategy or "(fix every failed check)",
                 previous_draft=revision.previous_draft,
-            )
+            ))
+        if reviewer_requests:
+            blocks.append(REVIEWER_BLOCK.format(
+                requests=_bullets(list(reviewer_requests)),
+                current_report=(
+                    REVIEWER_CURRENT_REPORT.format(report=reviewed_report)
+                    if reviewed_report and revision is None else ""
+                ),
+            ))
         messages = REPORT_WRITER_TEMPLATE.format_messages(
             date=date.today().isoformat(),
             guidelines=_bullets(list(guidelines)),
             brief=brief.research_question,
             evidence=format_evidence(catalog),
             gaps=_bullets([f"{gap.text} (question: {gap.question})" for gap in catalog.gaps]),
-            revision=revision_text,
+            revision="\n\n".join(blocks),
         )
-        draft = self.router.invoke_messages(
-            "synthesizer",
-            messages,
-            DraftAssessment,
-            run_id=run_id,
-            thread_id=thread_id,
-        )
-        return draft.report_markdown
-
-    def reformat(self, report: str, request: str, *, run_id: str = "", thread_id: str = "") -> str:
-        """Apply a human reviewer's formatting request to an already-verified report.
-
-        This is deliberately not `write()`: re-synthesizing from the evidence puts the writer's
-        fixed layout rules back in charge, so a request that conflicts with them (e.g. "put it on
-        one line") came back as the unchanged report. Here the request wins over the layout, and
-        the content and citations are only carried over, not regenerated.
-        """
-        messages = REPORT_REFORMAT_TEMPLATE.format_messages(request=request, report=report)
         draft = self.router.invoke_messages(
             "synthesizer",
             messages,

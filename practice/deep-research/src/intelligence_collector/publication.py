@@ -20,29 +20,13 @@ def approval_for(artifact_hash: str, verification_id: str, approved: bool, actor
     return ApprovalDecision(artifact_hash=artifact_hash, verification_id=verification_id, approved=approved, actor=actor)
 
 
-def publish(
-    content: str,
-    destination: str,
-    approval: ApprovalDecision,
-    verification: VerificationResult,
-    *,
-    verified_source: str | None = None,
-):
-    """Write `content` only if the human approved exactly it and `verification` passed.
-
-    `verified_source` is the verified text `content` was presented from (the writer node may
-    reformat a verified report without re-verifying it); when omitted, `content` itself must be
-    the verified artifact.
-    """
+def publish(content: str, destination: str, approval: ApprovalDecision, verification: VerificationResult):
+    """Write `content` only if it is the verified report and the human approved exactly it."""
     digest = hashlib.sha256(content.encode()).hexdigest()
-    source_digest = (
-        hashlib.sha256(verified_source.encode()).hexdigest() if verified_source is not None else digest
-    )
     authorized = (
         verification.passed
         and approval.approved
-        and approval.artifact_hash == digest
-        and source_digest == verification.artifact_hash
+        and approval.artifact_hash == digest == verification.artifact_hash
         and approval.verification_id == verification.verification_id
     )
     if not authorized:

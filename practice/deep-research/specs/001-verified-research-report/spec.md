@@ -151,6 +151,13 @@ evidence-backed technical report from a user's research request."
   independent re-verification via new web searches per claim — real fact-checking against
   external reality, but adds search budget/latency to every Verify attempt; deferred as a
   possible future addition rather than built now (FR-016c, FR-016d).
+- Q: Should the verifier still classify failures (`DRAFT_DEFECT` / `EVIDENCE_GAP`) and route evidence
+  gaps to targeted research inside the Build-Verify-Fix loop? → A (2026-09-30): No. The judge only
+  returns met/unmet with a justification per criterion; every failure is fixed the same way, by
+  reflecting and rewriting the report from the same evidence. A claim the evidence cannot support
+  is removed, narrowed, or disclosed under `## Limitations`; no new research happens inside the
+  loop. Unresolved gaps the research sub-agents report are disclosed by the writer. This
+  supersedes the issue-type answers above (FR-016, FR-016c, FR-017, FR-017a).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -271,12 +278,9 @@ again before it is shown as verified.
 5. **Given** the recovery limit is exhausted with unresolved failures, **When** the final attempt
    ends, **Then** the run is marked `NEEDS_REVIEW`, the unresolved feedback is shown, and the artifact
    is never described as verified.
-6. **Given** verification finds a `DRAFT_DEFECT`, **When** adequate stored evidence already exists,
-   **Then** the workflow revises the draft without unnecessary retrieval.
-7. **Given** verification finds an `EVIDENCE_GAP`, **When** a required claim lacks sufficient or
-   consistent support, **Then** the workflow performs targeted additional research for that gap.
-8. **Given** verification finds a `PLAN_GAP`, **When** existing todos do not cover or correctly
-   decompose the scoped request, **Then** the workflow re-plans the affected todos before continuing.
+6. **Given** verification fails, **When** the stored evidence does not support a claim, **Then** the
+   workflow rewrites the report from the same evidence (removing or narrowing the claim, or
+   disclosing it under `## Limitations`) without starting new research.
 
 ---
 
@@ -451,14 +455,11 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   is supported by one or more traceable stored sources.
 - **FR-015**: Each factual claim in a verified artifact MUST link to stored evidence that identifies
   its source and preserves reviewable source context.
-- **FR-016**: A failed verification MUST produce structured feedback with exactly one primary failure
-  type: `DRAFT_DEFECT`, `EVIDENCE_GAP`, or `PLAN_GAP`; it MUST identify the affected scope item or
-  claim, supporting details, and recommended repair path.
+- **FR-016**: A failed verification MUST produce structured feedback naming every failed criterion
+  and why it failed. Failures are not classified by type (superseded 2026-09-30).
 - **FR-016a**: Verification MUST be a single mandatory LLM-as-judge call (`agents/report_judge.py`,
   role `verify`) — there is no separate deterministic pre-check gating it. Superseded 2026-09-29;
-  see FR-016c. The deterministic `source_verification.py` script MAY still be run standalone
-  (non-zero exit code on failure) for manual/offline sanity-checking, but it is no longer part of
-  the graph's Verify gate.
+  see FR-016c. The deterministic checker was removed 2026-09-30.
 - **FR-016b**: Superseded 2026-09-29 by FR-016c — acceptance-criterion judgment is no longer a
   second, conditionally-run stage; it is folded into the single Report Judge call.
 - **FR-016c**: Verification MUST be one LLM-as-judge call, with no search or scrape tools, that
@@ -470,12 +471,8 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   carry a citation) — plus the operator-configured guidelines (FR-016d). Planner acceptance
   criteria, per-question coverage, fair-representation, uncertainty, plain-language and
   safe-content criteria were removed 2026-09-30. For each criterion the judge MUST return met/unmet, a
-  justification (naming every specific problem found, not just the first, when unmet), and — when
-  unmet — an issue type of its own choosing: `DRAFT_DEFECT` when the evidence supports the
-  criterion but the writing does not show it, or `EVIDENCE_GAP` when the gathered evidence itself
-  cannot satisfy the criterion no matter how the report is worded. Any unmet criterion turns the
-  verification result into a failed `DRAFT_DEFECT` or `EVIDENCE_GAP` per that criterion's issue
-  type, feeding the same Build-Verify-Fix fix/reflect-or-research loop as before.
+  justification (naming every specific problem found, not just the first, when unmet). Any unmet
+  criterion fails the verification and feeds the Build-Verify-Fix reflect-and-rewrite loop.
 - **FR-016d**: The system MUST also evaluate the report against an operator-configured guideline
   checklist (`Settings.report_guidelines`, default: Markdown format required; every body section
   (except Scope, Limitations and Sources) must cite its sources with inline `[S<n>]` markers that
@@ -484,10 +481,11 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   Report Writer MUST be shown the guidelines up front, not only after a failed verification) as additional criteria in the same FR-016c judge call. The checklist MUST be overridable
   via environment configuration (a JSON array of strings) without a code change, and each unmet
   guideline MUST be treated exactly like any other unmet FR-016c criterion.
-- **FR-017**: The recovery workflow MUST revise the draft for `DRAFT_DEFECT`, research the specific
-  gap for `EVIDENCE_GAP`, and re-plan affected tasks for `PLAN_GAP`.
-- **FR-017a**: Each unresolved evidence gap MUST receive one targeted research round; gaps that remain
-  afterwards MUST be disclosed under a `## Limitations` section rather than retried indefinitely.
+- **FR-017**: The recovery workflow MUST fix every failed verification by rewriting the report from
+  the same evidence; it MUST NOT start new research inside the Build-Verify-Fix loop.
+- **FR-017a**: Evidence gaps reported by the research sub-agents MUST be disclosed under a
+  `## Limitations` section; a claim the evidence cannot support MUST be removed, narrowed, or
+  disclosed there rather than retried with new research.
 - **FR-017b**: Retries in the Build-Verify-Fix loop MUST be self-improving rather than repeated
   generation: after a failed verification the agent MUST reflect on the failed checks to produce a
   root-cause diagnosis, reusable lessons, and a strategy; lessons MUST accumulate across attempts
@@ -551,24 +549,25 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   an assistant message asking the user to approve it or say what to change, and the user answers
   with a free-text chat reply. The system MUST classify the reply, in a dedicated LLM step
   separate from the review interrupt itself (so a failed classification never re-prompts the
-  reviewer), as an approval (`approve`: publish the report as presented), a formatting-only
-  request (`format`: only the presentation of the existing report changes) or a scope change
-  (`scope`: what the report should cover changes), and route the run accordingly. A reply MUST
-  only count as an approval when it asks for no change at all; an explicit rejection MUST never be
-  read as an approval. With no reply text or no classifier configured, the run MUST default to the
-  `format` path rather than publishing unasked or discarding the existing research plan.
-- **FR-026b**: A `format` rejection MUST NOT re-plan, re-research, re-synthesize or re-verify, and
-  MUST NOT change any claim, number or citation of the report. It is applied by the `writer` node
-  (between faithfulness scoring and the human review) as a dedicated formatting edit of the
-  current report, MUST actually change the presentation as asked (a request that leaves the
-  report unchanged MUST be reported to the reviewer), and returns straight to Awaiting Approval.
-  Publication of a reformatted report MUST stay bound both to the exact text the reviewer approved
-  and to the verified report it was formatted from (FR-027). A `scope` rejection MUST re-enter
-  scope clarification with the feedback as a new user turn (the scope agent MAY ask a clarifying
-  question), rewrite the research brief, and produce a fresh set of research questions, restarting
-  the attempt counters; it re-enters the normal Build-Verify-Fix loop and MUST return to Awaiting
-  Approval only once the replanned artifact fully passes verification again — it MUST NOT publish
-  or re-offer the prior, rejected artifact.
+  reviewer), as an approval (`approve`: publish the verified report), a revision (`revise`: a
+  change the existing evidence can support — presentation, wording, emphasis, dropping or
+  narrowing content) or a scope change (`scope`: the change needs evidence the report was not
+  built from), and route the run accordingly. A reply MUST only count as an approval when it asks
+  for no change at all; an explicit rejection MUST never be read as an approval. A reply that is
+  unclear, empty, or unclassified (no classifier configured) MUST be treated as `revise`, never as
+  an approval.
+- **FR-026b**: A `revise` reply MUST re-enter the Build-Verify-Fix loop at synthesis: the writer
+  rewrites the reviewed report from the same evidence applying the request, and the result MUST
+  pass verification again before it is shown for review (no unverified report is ever shown or
+  published). The reviewer's requests MUST override conflicting formatting/layout guidelines — in
+  the writer and in the judge — but never the evidence rules (every claim true, cited, Sources
+  complete). All `revise` requests since the last scope change MUST stay in force through later
+  rewrites and BVF fixes, and each `revise` MUST restart the attempt counters. A `scope` reply MUST
+  re-enter scope clarification with the feedback as a new user turn (the scope agent MAY ask a
+  clarifying question), rewrite the research brief, and produce a fresh plan and new research,
+  dropping earlier reviewer requests and restarting the attempt counters; it MUST return to
+  Awaiting Approval only once the new report fully passes verification — it MUST NOT publish or
+  re-offer the prior, rejected report.
 - **FR-027**: The system MUST deny publication for an unverified, changed-after-approval, failed, or
   `NEEDS_REVIEW` artifact and provide an actionable reason.
 - **FR-028**: Publication MUST place only the exact approved artifact version in the permanent output
@@ -694,9 +693,8 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **Evidence Bundle**: Reviewable source excerpts and provenance supporting one or more report claims.
 - **Report Artifact**: A versioned draft or final technical report with scope coverage and links from
   factual claims to evidence.
-- **Verification Result**: The outcome, checks performed, structured failures, and affected artifact
-  version for a verification attempt, including one primary `DRAFT_DEFECT`, `EVIDENCE_GAP`, or
-  `PLAN_GAP` type when verification fails.
+- **Verification Result**: The outcome, checks performed, structured failures (each failed criterion
+  and why), and the affected artifact version for a verification attempt.
 - **Checkpoint**: Durable workflow state needed to resume a run without depending on conversation
   history.
 - **Approval Decision**: A human approval or rejection tied to an exact verified artifact version.

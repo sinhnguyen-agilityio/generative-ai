@@ -7,7 +7,7 @@ from intelligence_collector.contracts import ResearchTodo
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
-from intelligence_collector.source_verification import gap_id, load_catalog
+from intelligence_collector.source_verification import load_catalog
 from intelligence_collector.tools.mcp import ControlledMCP
 from tests.fixtures.fake_models import (
     FakeAcceptanceModel,
@@ -30,9 +30,8 @@ def _pass(criterion="Answers the research question"):
     return {"criterion": criterion, "met": True, "justification": "Satisfied."}
 
 
-def _fail(criterion="Answers the research question", justification="Not yet addressed.",
-          issue_type="DRAFT_DEFECT"):
-    return {"criterion": criterion, "met": False, "issue_type": issue_type, "justification": justification}
+def _fail(criterion="Answers the research question", justification="Not yet addressed."):
+    return {"criterion": criterion, "met": False, "justification": justification}
 
 
 def _judge(verdicts) -> FakeAcceptanceModel:
@@ -149,7 +148,9 @@ def test_budget_exhaustion_ends_in_needs_review_without_verification(stores):
     assert review["reason"] == "recovery budget 2 exhausted"
 
 
-def test_evidence_gap_triggers_targeted_research_then_disclosure(stores):
+def test_missing_evidence_is_fixed_by_rewriting_never_by_new_research(stores):
+    """The fix is a rewrite only: an unsupported claim is removed or disclosed under Limitations
+    from the same evidence, and no new research task is ever started inside the loop."""
     research = FakeResearchModel(findings={QUESTION: {
         "summary": f"A cache stores reusable data [{URL}]",
         "sufficient": False,
@@ -160,26 +161,25 @@ def test_evidence_gap_triggers_targeted_research_then_disclosure(stores):
         {"S1": URL},
         limitations=["Cache eviction policy details were not found in the sources."],
     )
-    model = FakeReportModel([GOOD, disclosed])
+    model = FakeReportModel([GOOD, disclosed], reflections=[{
+        "diagnosis": "The draft omits that eviction policy details are missing from the evidence.",
+        "lessons": ["Disclose every unresolved gap under '## Limitations'."],
+        "strategy": "Add a Limitations section stating the missing eviction policy details.",
+    }])
     judge = _judge([
-        {"results": [_fail(
-            criterion="Answers the research question: cache eviction policy details",
-            justification="The gathered evidence says nothing about eviction policy.",
-            issue_type="EVIDENCE_GAP",
-        )]},
+        {"results": [_fail(justification="The evidence says nothing about eviction policy.")]},
         {"results": [_pass()]},
     ])
 
     result = _run(stores, model, research_model=research, report_judge=judge)
 
     assert result["stage"] == "Awaiting Approval", result["verification"]["repair_details"]
-    first = result["verification_history"][0]
-    assert first["issue_type"] == "EVIDENCE_GAP"
-    assert model.prompts("reflect") == []  # evidence gaps are repaired by research, not rewording
-    assert len(result["todos"]) == 2
-    assert result["todos"][1]["research_question"].startswith("cache eviction policy details")
-    assert gap_id("todo-1", "cache eviction policy details") in result["researched_gaps"]
-    assert "BVF fix attempt 1" in model.prompts("write")[1]
+    assert len(result["todos"]) == 1  # no gap-research task was added
+    assert model.prompts("reflect")  # every failure is reflected on before the rewrite
+    fix_prompt = model.prompts("write")[1]
+    assert "BVF fix attempt 1" in fix_prompt
+    assert "cache eviction policy details" in fix_prompt  # the gap reaches the writer
+    assert "No new evidence is available" in fix_prompt
 
 
 def test_evidence_selection_narrows_the_build_prompt_but_not_verification(stores):
@@ -233,7 +233,7 @@ def test_judge_prompt_carries_the_fact_check_criterion_and_the_evidence(stores):
 
 def test_configured_guidelines_flow_into_the_judge_prompt_and_a_violation_is_fixed(stores):
     """Operator-configured guidelines (e.g. Settings.report_guidelines) reach the judge exactly
-    like planner criteria do, and an unmet guideline drives a fix like any other DRAFT_DEFECT."""
+    like planner criteria do, and an unmet guideline drives a rewrite like any other failure."""
     guidelines = ["The report MUST be written in Markdown format.",
                   "The report MUST be written in English."]
     model = FakeReportModel([GOOD, IMPROVED], reflections=[{
@@ -258,7 +258,7 @@ def test_configured_guidelines_flow_into_the_judge_prompt_and_a_violation_is_fix
 
 def test_fact_check_criterion_reaches_the_judge_and_a_hallucination_is_fixed(stores):
     """The built-in factual-accuracy criterion is always included (not configurable, unlike
-    guidelines), and a caught hallucination routes to a rewrite like any other DRAFT_DEFECT."""
+    guidelines), and a caught hallucination routes to a rewrite like any other failure."""
     model = FakeReportModel([GOOD, IMPROVED], reflections=[{
         "diagnosis": "The draft invented a statistic the evidence never states.",
         "lessons": ["Never state a number that isn't in the cited source excerpt."],
@@ -282,7 +282,6 @@ def test_fact_check_criterion_reaches_the_judge_and_a_hallucination_is_fixed(sto
     assert "read the whole report as one continuous piece" in prompt.casefold()
     first = result["verification_history"][0]
     assert first["passed"] is False
-    assert first["issue_type"] == "DRAFT_DEFECT"
     assert "40% speedup" in first["repair_details"]
     assert "Remove the invented statistic" in model.prompts("write")[1]
 

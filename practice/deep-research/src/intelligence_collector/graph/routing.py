@@ -4,7 +4,6 @@
 
 from langgraph.graph import END
 
-from intelligence_collector.contracts import IssueType
 from intelligence_collector.graph.nodes import (
     DEFAULT_RECOVERY_BUDGET,
     MAX_STALLED_ATTEMPTS,
@@ -18,8 +17,8 @@ PASSED, FIX, NEEDS_REVIEW = "passed", "fix", "needs_review"
 # Outcomes of route_after_approval; build.py maps these to PUBLISH or CLASSIFY_FEEDBACK.
 APPROVED, REJECTED = "approved", "rejected"
 
-# Outcomes of route_after_feedback; build.py maps these to PUBLISH, WRITER or CLARIFY.
-TO_PUBLISH, TO_FORMAT, TO_SCOPE = "approve", "format", "scope"
+# Outcomes of route_after_feedback; build.py maps these to PUBLISH, SYNTHESIZE or CLARIFY.
+TO_PUBLISH, TO_REVISE, TO_SCOPE = "approve", "revise", "scope"
 
 # ===== CONDITIONAL EDGE ROUTERS =====
 
@@ -52,19 +51,9 @@ def route_after_approval(state: GraphState) -> str:
 
 
 def route_after_feedback(state: GraphState) -> str:
-    """Send the classified reply to publishing (approve), the writer (format) or back to
-    scoping (scope)."""
+    """Send the classified reply to publishing (approve), a rewrite (revise) or back to scoping
+    for new research (scope). Anything unrecognised is a revision, never a publication."""
     route = state.get("feedback_route")
     if route == "approve" and (state.get("approval") or {}).get("approved"):
         return TO_PUBLISH
-    return TO_SCOPE if route == "scope" else TO_FORMAT
-
-
-def route_after_fix(state: GraphState) -> str:
-    """Send each failure type to its repair: redraft, or research the gaps first."""
-    issue = (state.get("verification") or {}).get("issue_type")
-    if issue == IssueType.DRAFT_DEFECT.value:
-        return Node.SYNTHESIZE
-    if issue == IssueType.EVIDENCE_GAP.value:
-        return Node.RESEARCH_GAPS
-    return Node.NEEDS_REVIEW  # an unknown issue type has no automatic repair
+    return TO_SCOPE if route == "scope" else TO_REVISE

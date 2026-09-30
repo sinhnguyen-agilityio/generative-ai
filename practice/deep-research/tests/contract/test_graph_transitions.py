@@ -5,7 +5,6 @@ from langchain_core.messages import AIMessage
 
 from intelligence_collector.agents.scope import ScopeAgent
 from intelligence_collector.contracts import (
-    IssueType,
     ResearchTodo,
     Stage,
     TodoStatus,
@@ -113,7 +112,6 @@ def test_unverified_result_cannot_traverse_to_approval_or_publication():
     result = VerificationResult(
         artifact_hash="candidate-hash",
         passed=False,
-        issue_type=IssueType.DRAFT_DEFECT,
         repair_details="The draft omits a required comparison.",
     )
 

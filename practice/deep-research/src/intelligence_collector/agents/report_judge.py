@@ -10,9 +10,8 @@ research step already gathered and checks two things:
 * guidelines: does it follow the operator-configured report guidelines
   (see ``config.DEFAULT_REPORT_GUIDELINES``)?
 
-Each criterion verdict carries its own ``issue_type`` (see ``ReportJudgeCriterion``), so a report
-that fails because the evidence is genuinely insufficient still routes to targeted research
-instead of a pointless rewrite -- the same Build-Verify-Fix routing the deterministic script drove.
+The judge only says which criteria failed and why; every failure is fixed the same way, by
+rewriting the report from the same evidence (see ``BVFNodes.fixing``).
 """
 
 from __future__ import annotations
@@ -23,13 +22,11 @@ from intelligence_collector.agents.prompts import (
     REPORT_JUDGE_TEMPLATE,
 )
 from intelligence_collector.contracts import (
-    IssueType,
     ReportJudgeVerdict,
     ResearchBrief,
     VerificationCheck,
     VerificationResult,
 )
-from intelligence_collector.source_verification import EvidenceGap, SourceCatalog
 
 
 def _bullets(items: list[str]) -> str:
@@ -50,12 +47,6 @@ def build_report_judge_criteria(guidelines: list[str] = ()) -> list[str]:
     return [FACT_CHECK_CRITERION, *guidelines]
 
 
-def _known_gaps(catalog: SourceCatalog, researched_gaps: list[str]) -> str:
-    researched = set(researched_gaps)
-    gaps: list[EvidenceGap] = [gap for gap in catalog.gaps if gap.gap_id not in researched]
-    return _bullets([f"{gap.question}: {gap.text}" for gap in gaps])
-
-
 class ReportJudge:
     """The Verify step: one LLM call (role ``verify``) that judges a report against the fact-check
     criterion and the report guidelines.
@@ -70,24 +61,22 @@ class ReportJudge:
         criteria: list[str],
         report: str,
         evidence: str,
-        catalog: SourceCatalog,
         *,
-        researched_gaps: list[str] | None = None,
-        reviewer_request: str = "",
+        reviewer_requests: list[str] = (),
         run_id: str = "",
         thread_id: str = "",
     ) -> ReportJudgeVerdict:
-        """Judge `report` against `criteria`. `reviewer_request` is a human's formatting request
-        already applied to the report; it overrides conflicting formatting guidelines."""
+        """Judge `report` against each of `criteria`, using `evidence` (the formatted catalog).
+        `reviewer_requests` are the human reviewer's change requests the report applies; they
+        override conflicting formatting guidelines, never the evidence rules."""
         messages = REPORT_JUDGE_TEMPLATE.format_messages(
             brief=brief.research_question,
             criteria=_bullets(criteria),
             reviewer_note=(
-                f"Reviewer formatting request (already applied to the report):\n{reviewer_request}\n\n"
-                if reviewer_request else ""
+                f"Reviewer requests (applied to the report):\n{_bullets(list(reviewer_requests))}\n\n"
+                if reviewer_requests else ""
             ),
             evidence=evidence,
-            gaps=_known_gaps(catalog, researched_gaps or []),
             report=report,
         )
         return self.router.invoke_messages(
@@ -111,7 +100,6 @@ def judge_verdict_to_result(verdict: ReportJudgeVerdict, artifact_hash: str) -> 
         VerificationCheck(
             name=f"criterion_{index}",
             passed=item.met,
-            issue_type=None if item.met else item.issue_type,
             details=[] if item.met else [f"{item.criterion} — {item.justification}"],
             affected_ids=[] if item.met else [
                 f"criterion:{hashlib.sha1(item.criterion.strip().casefold().encode()).hexdigest()[:8]}"
@@ -120,18 +108,10 @@ def judge_verdict_to_result(verdict: ReportJudgeVerdict, artifact_hash: str) -> 
         for index, item in enumerate(verdict.results, start=1)
     ]
     failed = [check for check in checks if not check.passed]
-    issue = None
-    if failed:
-        issue = (
-            IssueType.EVIDENCE_GAP
-            if any(check.issue_type == IssueType.EVIDENCE_GAP for check in failed)
-            else IssueType.DRAFT_DEFECT
-        )
     return VerificationResult(
         artifact_hash=artifact_hash,
         passed=not failed,
         checks=[check.name for check in checks],
-        issue_type=issue,
         affected_ids=list(dict.fromkeys(a for check in failed for a in check.affected_ids)),
         repair_details="\n".join(
             f"[{check.name}] {detail}" for check in failed for detail in check.details

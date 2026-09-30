@@ -244,8 +244,7 @@ def _render_details_content(st, snapshot):
         if verification.passed:
             st.success("Verification: passed")
         else:
-            issue = verification.issue_type.value if verification.issue_type else "unresolved"
-            st.error(f"Verification: failed — {issue}")
+            st.error("Verification: failed")
             if verification.repair_details:
                 st.write(verification.repair_details)
         if verification.checks:
@@ -456,8 +455,8 @@ def _render_graph_snapshot(st, snapshot):
 
 
 _REVIEW_PROMPT = (
-    "Reply **approve** to publish this report, or tell me what to change — a formatting request "
-    "is applied to this report directly; a change in what it covers restarts the research."
+    "Reply **approve** to publish this report, or tell me what to change — I'll rewrite and "
+    "re-verify it, or research again if the change needs new sources."
 )
 
 
@@ -503,9 +502,7 @@ _NODE_ACTIVITY = {
     Node.VERIFY: ("Verifying report with LLM judge", "Verifier", "report_judge"),
     Node.EVALUATE_FAITHFULNESS: ("Scoring RAGAS Faithfulness", "Verifier", None),
     Node.FIX: ("Reflecting on verification failures", "Fix Planner", None),
-    Node.RESEARCH_GAPS: ("Researching evidence gaps", "Research Supervisor", "tavily_search"),
     Node.NEEDS_REVIEW: ("Escalating for review", "Verifier", None),
-    Node.WRITER: ("Presenting report for review", "Report Writer", None),
     Node.APPROVE: ("Waiting for publication decision", "Publisher", None),
     Node.CLASSIFY_FEEDBACK: ("Classifying reviewer feedback", "Feedback Router", None),
     Node.PUBLISH: ("Publishing report", "Publisher", None),

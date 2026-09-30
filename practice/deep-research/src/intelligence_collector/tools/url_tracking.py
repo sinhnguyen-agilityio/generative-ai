@@ -3,7 +3,7 @@
 * ``normalize_url`` gives one identity to URL spellings of the same page (case of scheme/host,
   default ports, fragments, trailing slashes, tracking parameters, query order).
 * ``UrlRegistry`` records which normalized URLs a run has already captured, persisted in the VFS
-  at ``research/url_registry.json`` so parallel tasks, gap research, and resumed runs reuse the
+  at ``research/url_registry.json`` so parallel tasks, re-scoped plans, and resumed runs reuse the
   first capture instead of storing and indexing the page again.
 """
 
@@ -92,7 +92,7 @@ class UrlClaims:
     parallel sub-agents both found would take a source slot in each of them. Claiming at search
     time means the first task to retrieve a page owns it; any other task links to it instead of
     spending its own source budget on it (``UrlRegistry`` still stores and indexes it only once).
-    Seeded from the persisted registry, so gap research and resumed runs treat pages captured
+    Seeded from the persisted registry, so re-scoped plans and resumed runs treat pages captured
     earlier in the run the same way.
     """
 

@@ -14,7 +14,7 @@ class _RecordingModel:
 
     def invoke(self, messages):
         self.prompts.append("\n".join(str(m.content) for m in messages))
-        return AIMessage(content=json.dumps({"route": "format", "reason": "Only formatting."}))
+        return AIMessage(content=json.dumps({"route": "revise", "reason": "Only formatting."}))
 
 
 def test_only_a_bounded_excerpt_of_the_report_is_sent_to_the_classifier():
@@ -23,6 +23,6 @@ def test_only_a_bounded_excerpt_of_the_report_is_sent_to_the_classifier():
 
     decision = FeedbackRouter(ModelRouter(model)).route("Use bullet points.", report)
 
-    assert decision.route == "format"
+    assert decision.route == "revise"
     assert "Use bullet points." in model.prompts[0]
     assert "HEAD" in model.prompts[0] and "TAIL" not in model.prompts[0]

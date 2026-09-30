@@ -1121,3 +1121,22 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   pydantic ImportError fallback, unused `GraphState` keys and stale Streamlit session keys, plus
   the tests that only covered removed code. Added docstrings to every public module, class and
   function in `src/` (ruff D100/D101/D103 clean). Full suite: 196 passed, 2 skipped.
+- [X] T160 [US1] Simplify Build-Verify-Fix to reflect-and-rewrite only (FR-016, FR-016c, FR-017,
+  FR-017a): the Report Judge returns met/unmet + justification per criterion with no issue type
+  (`IssueType`, `issue_type` fields and the "Known evidence gaps" / reviewer-request prompt blocks
+  removed); `fixing` always reflects and goes straight back to `synthesizing`
+  (`researching_gaps`, `route_after_fix`, `researched_gaps`, `gap_id` removed). Reflection and
+  revision prompts now state that no new evidence is available, so an unsupported claim is removed,
+  narrowed, or disclosed under `## Limitations`. Tests: `tests/integration/test_bvf_loop.py`,
+  `tests/unit/test_report_judge.py` and others. Full suite: 194 passed, 2 skipped.
+- [X] T161 [US1] Refactor the review (FR-026a/b): the reviewer's chat reply is classified as
+  `approve` (publish), `revise` (rewrite from the same evidence and verify again) or `scope`
+  (re-scope and research again). Removed the `writer` node and its unverified reformat
+  (`ReportWriter.reformat`, `REPORT_REFORMAT_*`, `verified_draft`, `format_revision`,
+  `format_unchanged`, `publish(verified_source=...)`): every shown or published report is a
+  verified one. `revise` requests accumulate in `reviewer_requests`, reach the writer
+  (`REVIEWER_BLOCK`) and the judge (reviewer note), override conflicting layout guidelines but
+  never the evidence rules, survive BVF fixes, and restart the attempt counters; `scope` clears
+  them. Unclear replies default to `revise`. Tests: `tests/integration/test_approval_gate.py`,
+  `tests/unit/test_report_writer_format.py`, `tests/unit/test_feedback_router.py`. Full suite: 194
+  passed, 2 skipped.
