@@ -547,12 +547,16 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   its exact version MUST be recorded before publication.
 - **FR-026**: Rejecting publication MUST leave the permanent output location unchanged and record
   the rejection without representing the artifact as published.
-- **FR-026a**: Rejection MAY include free-text reviewer feedback. When present, the system MUST
-  classify it, in a dedicated LLM step separate from the approval gate itself (so a failed
-  classification never re-prompts the reviewer), as either a formatting-only request (`format`: only the presentation of the existing
-  report changes) or a scope change (`scope`: what the report should cover changes), and route the
-  run accordingly. Rejection without feedback, or without a classifier configured, MUST default to
-  the `format` path rather than discarding the existing research plan.
+- **FR-026a**: The review MUST happen in the chat conversation: the verified report is posted as
+  an assistant message asking the user to approve it or say what to change, and the user answers
+  with a free-text chat reply. The system MUST classify the reply, in a dedicated LLM step
+  separate from the review interrupt itself (so a failed classification never re-prompts the
+  reviewer), as an approval (`approve`: publish the report as presented), a formatting-only
+  request (`format`: only the presentation of the existing report changes) or a scope change
+  (`scope`: what the report should cover changes), and route the run accordingly. A reply MUST
+  only count as an approval when it asks for no change at all; an explicit rejection MUST never be
+  read as an approval. With no reply text or no classifier configured, the run MUST default to the
+  `format` path rather than publishing unasked or discarding the existing research plan.
 - **FR-026b**: A `format` rejection MUST NOT re-plan, re-research, re-synthesize or re-verify, and
   MUST NOT change any claim, number or citation of the report. It is applied by the `writer` node
   (between faithfulness scoring and the human review) as a dedicated formatting edit of the

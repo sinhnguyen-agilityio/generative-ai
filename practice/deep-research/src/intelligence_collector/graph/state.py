@@ -41,6 +41,7 @@ class GraphState(TypedDict, total=False):
     # feedback-router classifier decided it should be addressed (see ApprovalNodes).
     human_feedback: str
     feedback_route: str
+    reviewer: str  # actor who answered the approval interrupt; approvals are recorded for them
     # writer node: the verified report the presented `draft` was formatted from (publication is
     # bound to it), how many reviewer formatting requests were applied, and whether the last one
     # left the report identical.

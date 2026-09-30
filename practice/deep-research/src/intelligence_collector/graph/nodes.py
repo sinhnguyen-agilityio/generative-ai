@@ -402,12 +402,14 @@ class BVFNodes:
         revision = state.get("format_revision", 0) + 1
         ref = self.vfs.write(state["run_id"], f"reports/formatted.v{revision}.md", report, "draft")
         unchanged = report.strip() == draft.strip()
+        outcome = (
+            "The formatting request left the report unchanged" if unchanged
+            else f"Report reformatted per the reviewer's request (format v{revision})"
+        )
         return {
             **base,
-            "current_action": (
-                "The formatting request left the report unchanged" if unchanged
-                else f"Report reformatted per the reviewer's request (format v{revision})"
-            ),
+            "current_action": outcome,
+            "messages": [*state.get("messages", []), AIMessage(content=outcome)],
             "format_unchanged": unchanged,
             "format_revision": revision,
             "activity": _activity(state, "Reformatting report"),
@@ -646,9 +648,13 @@ class ApprovalNodes:
     """The human-in-the-loop review, reached through ``writer`` once a report has fully passed
     verification (and faithfulness scoring):
 
-    * ``approval`` interrupts the graph for one decision on the report ``writer`` presented,
-      binding it to that exact text: approve -> ``publishing``; reject -> ``classify_feedback``.
-    * ``classify_feedback`` asks an LLM (``feedback_router``) what the reviewer asked for:
+    * ``approval`` interrupts the graph until the reviewer answers the report ``writer``
+      presented. The normal answer is a free-text chat reply (``{"reply": ...}``), always handed
+      to ``classify_feedback``. An explicit ``{"approved": True}`` goes straight to
+      ``publishing``; an explicit ``{"approved": False, "feedback": ...}`` is classified but can
+      never be read as an approval.
+    * ``classify_feedback`` asks an LLM (``feedback_router``) what the reply means:
+      - ``approve``: the reply accepts the report as-is -> ``publishing``;
       - ``format`` (presentation only): back to ``writer``, which re-presents the same report in
         the requested format — no re-synthesis, no re-verification — then back to ``approval``;
       - ``scope`` (a change in what the report covers): back to ``clarify_with_user``, with the
@@ -658,6 +664,10 @@ class ApprovalNodes:
       Keeping the LLM call in its own node means a failed classification is retried on its
       own, never re-prompting the reviewer for a decision already given.
     * ``publishing`` writes the approved text to the permanent output location and ends the run.
+
+    Approvals always bind to the hash of the exact text ``writer`` presented. The reviewer's
+    replies and the agent's acknowledgements are appended to ``messages`` so the review reads as
+    part of the chat conversation.
     """
 
     def __init__(self, vfs, output_dir: str, feedback_router=None):
@@ -665,35 +675,40 @@ class ApprovalNodes:
         self.output_dir = output_dir
         self.feedback_router = feedback_router
 
+    @staticmethod
+    def _approval_for(state: GraphState, approved: bool) -> dict:
+        """The reviewer decides on the text writer presented, so the approval binds to it."""
+        from intelligence_collector.publication import approval_for
+
+        verification = VerificationResult.model_validate(state["verification"])
+        return approval_for(
+            hashlib.sha256(state.get("draft", "").encode()).hexdigest(),
+            verification.verification_id,
+            approved,
+            state.get("reviewer") or "local-user",
+        ).model_dump(mode="json")
+
     def approval(self, state: GraphState) -> GraphState:
         from langgraph.types import interrupt
 
-        from intelligence_collector.publication import approval_for
-
         decision = interrupt({"kind": "publication_approval", "run_id": state.get("run_id")})
-        verification = VerificationResult.model_validate(state["verification"])
-        # The reviewer decides on the text writer presented, so the approval binds to it.
-        approval = approval_for(
-            hashlib.sha256(state.get("draft", "").encode()).hexdigest(),
-            verification.verification_id,
-            bool(decision.get("approved")),
-            str(decision.get("actor") or "local-user"),
-        )
-        if approval.approved:
+        state = {**state, "reviewer": str(decision.get("actor") or "local-user")}
+        if decision.get("approved") is True:
             return {
                 **state,
-                "approval": approval.model_dump(mode="json"),
+                "approval": self._approval_for(state, True),
                 "current_action": "Reviewer approved — publishing",
                 "activity": _activity(state, "Reviewer approved the report"),
             }
-        # Rejected: classify_feedback decides where the feedback is addressed.
+        explicit_reject = decision.get("approved") is False
         return {
             **state,
-            "approval": approval.model_dump(mode="json"),
-            "human_feedback": str(decision.get("feedback") or "").strip(),
+            # A chat reply is undecided until classify_feedback reads it.
+            "approval": self._approval_for(state, False) if explicit_reject else None,
+            "human_feedback": str(decision.get("reply") or decision.get("feedback") or "").strip(),
             "feedback_route": "",
-            "current_action": "Reviewer rejected — classifying feedback",
-            "activity": _activity(state, "Reviewer rejected the report", "failure"),
+            "current_action": "Reading the reviewer's reply",
+            "activity": _activity(state, "Reviewer replied to the report"),
         }
 
     def publishing(self, state: GraphState) -> GraphState:
@@ -712,14 +727,16 @@ class ApprovalNodes:
         ref = self.vfs.write_json(
             run_id, "publication/record.json", record.model_dump(mode="json"), "publication_record",
         )
+        outcome = (
+            f"Published to {destination}" if record.published
+            else f"Publication failed: {record.error}"
+        )
         return {
             **state,
             "publication": record.model_dump(mode="json"),
             "stage": (Stage.PUBLISHED if record.published else Stage.AWAITING_APPROVAL).value,
-            "current_action": (
-                f"Published to {destination}" if record.published
-                else f"Publication failed: {record.error}"
-            ),
+            "current_action": outcome,
+            "messages": [*state.get("messages", []), AIMessage(content=outcome)],
             "activity": _activity(
                 state, "Publishing report", "success" if record.published else "failure"
             ),
@@ -727,7 +744,8 @@ class ApprovalNodes:
         }
 
     def classify_feedback(self, state: GraphState) -> GraphState:
-        """LLM step: route the reviewer's rejection feedback to a rewrite or a re-scope."""
+        """LLM step: read the reviewer's chat reply as an approval, a formatting request or a
+        scope change."""
         feedback = state.get("human_feedback", "")
         if self.feedback_router is not None and feedback:
             verdict = self.feedback_router.route(
@@ -735,9 +753,12 @@ class ApprovalNodes:
                 run_id=state.get("run_id", ""), thread_id=state.get("thread_id", ""),
             )
         else:
-            # No classifier configured, or the reviewer rejected without feedback: default to
-            # the cheaper format path rather than discarding the whole research plan.
-            verdict = FeedbackDecision(route="format", reason="No feedback to classify; defaulting to format.")
+            # No classifier configured, or no reply text: default to the cheaper format path
+            # rather than publishing unasked or discarding the whole research plan.
+            verdict = FeedbackDecision(route="format", reason="No reply to classify; defaulting to format.")
+        explicit_reject = (state.get("approval") or {}).get("approved") is False
+        if verdict.route == "approve" and explicit_reject:
+            verdict = FeedbackDecision(route="format", reason="An explicit rejection is never an approval.")
 
         history = [*state.get("bvf_history", []), {
             "attempt": state.get("recovery_attempt", 0),
@@ -753,9 +774,15 @@ class ApprovalNodes:
             "bvf_history": history,
             "recovery_budget": state.get("recovery_budget", DEFAULT_RECOVERY_BUDGET),
         }
+        # clarify_with_user records the reply itself on the scope path.
+        replied = [*state.get("messages", []), HumanMessage(content=feedback)] if feedback else list(
+            state.get("messages", []))
+        if verdict.route == "approve":
+            return {**state, **update, "messages": replied, "human_feedback": "",
+                    "approval": self._approval_for(state, True)}
         if verdict.route == "format":
             # writer consumes human_feedback and re-presents the report in the requested format.
-            return {**state, **update, "human_feedback": feedback}
+            return {**state, **update, "messages": replied, "human_feedback": feedback}
         # Scope change: the feedback becomes the next user turn of the scope conversation. The
         # new brief starts a fresh Build-Verify-Fix cycle, so the attempt/stall counters restart.
         return {

@@ -296,12 +296,13 @@ class PublicationRecord(Model):
 
 
 class FeedbackDecision(Model):
-    """Structured output of the human-rejection-feedback classifier (see
-    agents/feedback_router.py). Decides whether a reviewer's rejection only asks for a
-    formatting change ("format": the report writer edits the existing text) or asks for a change
-    in what the report covers ("scope": back to scope clarification, the brief and the planner)."""
+    """Structured output of the reviewer-reply classifier (see agents/feedback_router.py).
+    Decides whether the reviewer's chat reply approves the report ("approve": publish it), only
+    asks for a formatting change ("format": the writer re-presents the existing text) or asks for
+    a change in what the report covers ("scope": back to scope clarification, the brief and the
+    planner)."""
 
-    route: Literal["format", "scope"]
+    route: Literal["approve", "format", "scope"]
     reason: str = ""
 
 

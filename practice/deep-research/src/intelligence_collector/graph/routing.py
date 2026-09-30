@@ -15,8 +15,8 @@ PASSED, FIX, NEEDS_REVIEW = "passed", "fix", "needs_review"
 # Outcomes of route_after_approval; build.py maps these to PUBLISH or CLASSIFY_FEEDBACK.
 APPROVED, REJECTED = "approved", "rejected"
 
-# Outcomes of route_after_feedback; build.py maps these to WRITER or CLARIFY.
-TO_FORMAT, TO_SCOPE = "format", "scope"
+# Outcomes of route_after_feedback; build.py maps these to PUBLISH, WRITER or CLARIFY.
+TO_PUBLISH, TO_FORMAT, TO_SCOPE = "approve", "format", "scope"
 
 # ===== CONDITIONAL EDGE ROUTERS =====
 
@@ -43,14 +43,18 @@ def route_after_verify(state: GraphState) -> str:
 
 
 def route_after_approval(state: GraphState) -> str:
-    """Post-HITL-review routing: an explicit approval publishes; anything else is a rejection
-    and goes to the feedback classifier."""
+    """Post-HITL-review routing: an explicit approval publishes; a chat reply or a rejection
+    goes to the reply classifier."""
     return APPROVED if (state.get("approval") or {}).get("approved") else REJECTED
 
 
 def route_after_feedback(state: GraphState) -> str:
-    """Send classified reviewer feedback to the writer (format) or back to scoping (scope)."""
-    return TO_SCOPE if state.get("feedback_route") == "scope" else TO_FORMAT
+    """Send the classified reply to publishing (approve), the writer (format) or back to
+    scoping (scope)."""
+    route = state.get("feedback_route")
+    if route == "approve" and (state.get("approval") or {}).get("approved"):
+        return TO_PUBLISH
+    return TO_SCOPE if route == "scope" else TO_FORMAT
 
 
 def route_after_fix(state: GraphState) -> str:

@@ -200,22 +200,6 @@ def _render_details_content(st, snapshot):
     if current_action:
         st.write(f"Current action: {current_action}")
 
-    activity = list(snapshot.get("activity") or [])
-    if activity:
-        st.subheader("Activity")
-        for item in activity:
-            label = _record_value(item, "label", "Workflow operation")
-            status = _status_text(_record_value(item, "status", "unknown"))
-            agent = _record_value(item, "agent", "Workflow")
-            tool = _record_value(item, "tool")
-            duration = _record_value(item, "duration_ms")
-            details = [agent]
-            if tool:
-                details.append(f"tool: {tool}")
-            if duration is not None:
-                details.append(f"{duration} ms")
-            st.markdown(f"- **{status}** — {label} · {' · '.join(details)}")
-
     assessment = snapshot.get("progress_assessment")
     if assessment:
         st.subheader("Supervisor assessment")
@@ -437,6 +421,26 @@ def _render_agent_pipeline(st, placeholders, snapshot, vfs):
         _render_agent_row(st, placeholders[agent_key], label, agent_key, snapshot, vfs)
 
 
+def _render_activity_log(st, placeholder, activity):
+    """Chronological node log, redrawn into `placeholder` so it updates live while streaming."""
+    with placeholder.container():
+        if not activity:
+            st.caption("No activity yet.")
+            return
+        for item in activity:
+            label = _record_value(item, "label", "Workflow operation")
+            status = _status_text(_record_value(item, "status", "unknown"))
+            agent = _record_value(item, "agent", "Workflow")
+            tool = _record_value(item, "tool")
+            duration = _record_value(item, "duration_ms")
+            details = [agent]
+            if tool:
+                details.append(f"tool: {tool}")
+            if duration is not None:
+                details.append(f"{duration} ms")
+            st.markdown(f"- **{status}** — {label} · {' · '.join(details)}")
+
+
 def _render_graph_snapshot(st, snapshot):
     """Keep workflow internals available without competing with the chat."""
     with st.expander("Details", expanded=False):
@@ -446,22 +450,42 @@ def _render_graph_snapshot(st, snapshot):
     return verification
 
 
-def _render_transcript(st, snapshot):
-    messages = list(snapshot.get("messages") or [])
-    report = snapshot.get("report") or snapshot.get("latest_report") or snapshot.get("draft")
-    report_stage = snapshot.get("stage") in {"Awaiting Approval", "Published"}
-    last_ai = max(
-        (i for i, message in enumerate(messages) if getattr(message, "type", "") == "ai"),
-        default=-1,
+_REVIEW_PROMPT = (
+    "Reply **approve** to publish this report, or tell me what to change — a formatting request "
+    "is applied to this report directly; a change in what it covers restarts the research."
+)
+
+
+def _awaiting_review(snapshot) -> bool:
+    """Gated on the live stage, not just the (immutable) verification result: once published or
+    routed back into the pipeline, the chat must stop treating replies as a review."""
+    verification = _snapshot_verification(snapshot)
+    return (
+        snapshot.get("stage") == Stage.AWAITING_APPROVAL.value
+        and verification is not None
+        and can_request_approval(verification)
     )
-    for index, message in enumerate(messages):
+
+
+def _render_transcript(st, snapshot):
+    """The chat: the scope conversation and review replies, then the current report — which,
+    while awaiting review, asks the user to approve or request changes by replying."""
+    for message in list(snapshot.get("messages") or []):
         kind = getattr(message, "type", "")
         if kind not in {"human", "ai"}:
             continue
-        role = "user" if kind == "human" else "assistant"
-        content = report if report and report_stage and index == last_ai else message.content
-        with st.chat_message(role):
-            st.markdown(str(content))
+        with st.chat_message("user" if kind == "human" else "assistant"):
+            st.markdown(str(message.content))
+    report = snapshot.get("report") or snapshot.get("latest_report") or snapshot.get("draft")
+    if not report:
+        return
+    if _awaiting_review(snapshot):
+        with st.chat_message("assistant"):
+            st.markdown(report)
+            st.caption(_REVIEW_PROMPT)
+    elif snapshot.get("stage") == Stage.PUBLISHED.value:
+        with st.chat_message("assistant"):
+            st.markdown(report)
 
 
 _NODE_ACTIVITY = {
@@ -509,17 +533,94 @@ def _record_lifecycle(st, node: str, status: str):
 
 def _stream_graph_turn(st, graph, config, graph_input, placeholders, vfs_for_ui):
     """Drive one turn of the graph live: `graph_input` is either a fresh state dict (a new chat
-    request) or a `Command(resume=...)` continuing a thread paused at the human-in-the-loop
-    approval gate. Every step redraws the pipeline placeholders immediately. Returns the clean
-    final state dict — LangGraph's own `"__interrupt__"` marker (present only when this turn
-    paused at the approval gate) is stripped out, since its meaning is already captured by
-    `stage` staying "Awaiting Approval"."""
+    request) or a `Command(resume=...)` carrying the user's chat reply to a thread paused at the
+    human-in-the-loop review. Every step redraws the pipeline and activity-log placeholders
+    immediately. Returns the clean final state dict — LangGraph's own `"__interrupt__"` marker
+    (present only when this turn paused at the review) is stripped out, since its meaning is
+    already captured by `stage` staying "Awaiting Approval"."""
     result: dict = {}
     for chunk in graph.stream(graph_input, config, stream_mode="values"):
         result = {key: value for key, value in chunk.items() if key != "__interrupt__"}
         live_snapshot = {**result, "activity": list(st.session_state.activity)}
         _render_agent_pipeline(st, placeholders, live_snapshot, vfs_for_ui)
+        _render_activity_log(st, placeholders[_ACTIVITY_LOG], st.session_state.activity)
     return result
+
+
+_ACTIVITY_LOG = "__activity_log__"  # placeholders key of the activity log (not an agent row)
+
+_PROGRESS_BY_STAGE = {
+    "Scoping": "Waiting for your response",
+    Stage.AWAITING_APPROVAL.value: "Report ready — reply in the chat to approve or request changes",
+    Stage.NEEDS_REVIEW.value: "Needs human review",
+    Stage.PUBLISHED.value: "Published",
+}
+
+
+def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
+    """One chat message drives one graph turn: a new request (or scope answer) starts/continues
+    the research; while a report awaits review, the message is the reviewer's reply and resumes
+    the paused graph, whose feedback classifier reads it as approve / format / scope."""
+    tracer = _get_tracer(st)
+    run_id = st.session_state.scope_state["run_id"]
+    thread_id = st.session_state.scope_thread_id
+    st.session_state._execution_id = str(uuid4())
+    with st.status("Processing your reply" if reviewing else "Processing research request",
+                   expanded=False) as indicator:
+        def lifecycle(node, status):
+            item = _record_lifecycle(st, node, status)
+            indicator.update(label=item["label"], state="running")
+
+        st.session_state._lifecycle_callback = lifecycle
+        trace_input = {"review_reply": text} if reviewing else {"request": text}
+        # Every turn of one chat thread (request, clarifications, review replies, re-scoping)
+        # shares one Langfuse trace, keyed by the thread; "New thread" starts a new trace.
+        with tracer.execution(
+            run_id, thread_id, input=trace_input, trace_key=f"thread:{thread_id}",
+        ) as execution:
+            agent = _get_scope_agent(st, tracer)
+            if agent is None:
+                raise RuntimeError(
+                    "Reasoning-tier model is not configured. "
+                    "Set INTELLIGENCE_REASONING_MODEL and retry."
+                )
+            graph_input = (
+                Command(resume={"reply": text, "actor": "local-user"}) if reviewing
+                else {**st.session_state.scope_state, "request": text, "thread_id": thread_id}
+            )
+            config = {"configurable": {"thread_id": thread_id}}
+            graph = _get_scope_graph(st, agent, tracer)
+            try:
+                # stream_mode="values" yields the full accumulated state after each node, so
+                # every step is redrawn straight into the side panel for live progress. A turn
+                # that reaches a fully-passing report pauses at the human-in-the-loop review.
+                result = _stream_graph_turn(st, graph, config, graph_input, placeholders, vfs_for_ui)
+            finally:
+                st.session_state.pop("_lifecycle_callback", None)
+            execution.output = json.dumps({
+                "stage": result.get("stage"),
+                "scope_assessment": result.get("scope_assessment"),
+                "research_brief": result.get("scoped_request"),
+                "approval": result.get("approval"),
+                "feedback_route": result.get("feedback_route"),
+                "publication": result.get("publication"),
+                "faithfulness_score": result.get("faithfulness_score"),
+                "faithfulness_error": result.get("faithfulness_error"),
+                "messages": [
+                    {"role": getattr(message, "type", "message"),
+                     "content": getattr(message, "content", str(message))}
+                    for message in result.get("messages", [])
+                ],
+            }, ensure_ascii=False, indent=2, default=str)
+        indicator.update(label="Processing complete", state="complete", expanded=False)
+    result["activity"] = list(st.session_state.activity)
+    st.session_state.last_trace_id = execution.trace_id
+    result["trace_id"] = execution.trace_id
+    st.session_state.scope_state = result
+    st.session_state.stage = result.get("stage", "Scoping")
+    st.session_state.progress = _PROGRESS_BY_STAGE.get(
+        st.session_state.stage, "Scope clear; Planning started"
+    )
 
 
 def render():
@@ -528,6 +629,10 @@ def render():
         import streamlit as st
     except ImportError:
         return None
+    try:
+        st.set_page_config(page_title="Intelligence Collector", layout="wide")
+    except Exception:
+        pass  # already configured for this script run
     st.title("Intelligence Collector")
     st.session_state.setdefault("stage", "Scoping")
     st.session_state.setdefault("progress", "No research started")
@@ -539,196 +644,69 @@ def render():
     st.session_state.setdefault("scope_state", {
         "run_id": str(uuid4()), "thread_id": st.session_state.scope_thread_id,
     })
+    snapshot = st.session_state.scope_state
     st.caption(f"{st.session_state.stage} · {st.session_state.progress}")
-    clarification = existing_scope_state.get("scope_assessment", {}).get(
-        "question"
-    )
-    if st.session_state.stage == "Scoping" and clarification:
-        st.info("Waiting for your response")
-    _render_transcript(st, st.session_state.scope_state)
     vfs_for_ui = _get_vfs(st)
-    st.subheader("Pipeline")
-    placeholders = {agent_key: st.empty() for _, agent_key in _AGENT_ROWS}
-    _render_agent_pipeline(st, placeholders, st.session_state.scope_state, vfs_for_ui)
-    snapshot_verification = _render_graph_snapshot(st, st.session_state.scope_state)
-    current_stage = st.session_state.scope_state.get("stage")
-    if current_stage == Stage.NEEDS_REVIEW.value:
-        st.error("This run needs human review before it can be treated as verified or published.")
-        st.caption(
-            st.session_state.scope_state.get("current_action")
-            or st.session_state.scope_state.get("last_error")
-            or "Unresolved verification feedback is stored with the run."
-        )
-    elif current_stage == Stage.PUBLISHED.value:
-        publication = st.session_state.scope_state.get("publication") or {}
-        st.success(f"Published to {publication.get('destination', '(unknown destination)')}")
-    verification = snapshot_verification or st.session_state.get("verification")
-    # Gated on the live stage, not just the (immutable) verification result: once published or
-    # routed to a revision, this section must not keep offering another decision on a report
-    # that already moved on.
-    if (
-        verification is not None
-        and can_request_approval(verification)
-        and current_stage == Stage.AWAITING_APPROVAL.value
-    ):
-        st.subheader("Review and publish")
-        decision = st.radio("Publication decision", ["Approve", "Reject"], key="publication_decision")
+    chat_col, panel_col = st.columns([3, 2], gap="large")
 
-        def _resume_with_decision(resume_payload):
-            """Resume the graph paused at the publication-approval interrupt with the human's
-            decision (and, on reject, their feedback) and drive that turn to completion."""
-            try:
-                tracer = _get_tracer(st)
-                agent = _get_scope_agent(st, tracer)
-                if agent is None:
-                    raise RuntimeError(
-                        "Reasoning-tier model is not configured. "
-                        "Set INTELLIGENCE_REASONING_MODEL and retry."
-                    )
-                graph = _get_scope_graph(st, agent, tracer)
-                thread_id = st.session_state.scope_thread_id
-                run_id = st.session_state.scope_state.get("run_id", "")
-                config = {"configurable": {"thread_id": thread_id}}
-                with st.status("Processing decision", expanded=False):
-                    with tracer.execution(
-                        run_id, thread_id, input={"approval_decision": resume_payload},
-                    ) as execution:
-                        result = _stream_graph_turn(
-                            st, graph, config, Command(resume=resume_payload),
-                            placeholders, vfs_for_ui,
-                        )
-                        execution.output = json.dumps({
-                            "stage": result.get("stage"),
-                            "approval": result.get("approval"),
-                            "feedback_route": result.get("feedback_route"),
-                            "publication": result.get("publication"),
-                            "faithfulness_score": result.get("faithfulness_score"),
-                        }, ensure_ascii=False, indent=2, default=str)
-                result["activity"] = list(st.session_state.activity)
-                st.session_state.scope_state = result
-                st.session_state.stage = result.get("stage", st.session_state.stage)
-                if result.get("stage") == Stage.PUBLISHED.value:
-                    st.session_state.progress = "Published"
-                elif result.get("stage") == Stage.NEEDS_REVIEW.value:
-                    st.session_state.progress = "Needs human review"
-                elif result.get("stage") == Stage.AWAITING_APPROVAL.value:
-                    st.session_state.progress = "Publication failed; still awaiting a decision"
-                else:
-                    st.session_state.progress = "Reviewer feedback routed back into the pipeline"
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Recording the decision failed: {exc}")
+    # Side panel: the agent pipeline and the activity log, framed apart from the conversation.
+    with panel_col, st.container(border=True):
+        st.subheader("Pipeline")
+        placeholders = {agent_key: st.empty() for _, agent_key in _AGENT_ROWS}
+        _render_agent_pipeline(st, placeholders, snapshot, vfs_for_ui)
+        st.subheader("Activity log")
+        placeholders[_ACTIVITY_LOG] = st.empty()
+        _render_activity_log(st, placeholders[_ACTIVITY_LOG], list(snapshot.get("activity") or []))
+        _render_graph_snapshot(st, snapshot)
 
-        if decision == "Approve":
-            if st.button("Approve & publish"):
-                _resume_with_decision({"approved": True, "actor": "local-user"})
-        else:
-            feedback_text = st.text_area(
-                "Feedback — a formatting request edits the current report; a change to what "
-                "it covers goes back to scoping and re-plans the research",
-                key="rejection_feedback",
+    with chat_col:
+        clarification = existing_scope_state.get("scope_assessment", {}).get("question")
+        if st.session_state.stage == "Scoping" and clarification:
+            st.info("Waiting for your response")
+        _render_transcript(st, snapshot)
+        current_stage = snapshot.get("stage")
+        if current_stage == Stage.NEEDS_REVIEW.value:
+            st.error("This run needs human review before it can be treated as verified or published.")
+            st.caption(
+                snapshot.get("current_action")
+                or snapshot.get("last_error")
+                or "Unresolved verification feedback is stored with the run."
             )
-            feedback_stripped = feedback_text.strip()
-            if st.button("Send feedback", disabled=not feedback_stripped):
-                _resume_with_decision({
-                    "approved": False, "actor": "local-user", "feedback": feedback_stripped,
-                })
-            if not feedback_stripped:
-                st.caption("Enter feedback above before sending it back to the agent.")
-    # Wrapping chat_input in a container (instead of calling it at the script's top level)
-    # trades away its viewport-pinned/floating placement so the New Thread button can render
-    # in normal flow right below it.
-    with st.container():
-        text = st.chat_input("What should we research?")
-        if st.button("New thread", icon="➕"):
-            _start_new_thread(st)
-            st.rerun()
-    if text:
+        elif current_stage == Stage.PUBLISHED.value:
+            publication = snapshot.get("publication") or {}
+            st.success(f"Published to {publication.get('destination', '(unknown destination)')}")
+        reviewing = _awaiting_review(snapshot)
+        # Wrapping chat_input in a container (instead of calling it at the script's top level)
+        # trades away its viewport-pinned/floating placement so the New Thread button can render
+        # in normal flow right below it.
+        with st.container():
+            text = st.chat_input(
+                "Reply: approve, or what to change" if reviewing else "What should we research?"
+            )
+            if st.button("New thread", icon="➕"):
+                _start_new_thread(st)
+                st.rerun()
+        if not text:
+            return st
         text = normalize_text(text)
         try:
             decision = validate_request(text)
             if not decision.allowed:
                 st.error(decision.reason)
-                st.session_state.progress = "Request rejected; no research started"
+                if not reviewing:
+                    st.session_state.progress = "Request rejected; no research started"
                 return st
-            tracer = _get_tracer(st)
-            run_id = st.session_state.scope_state["run_id"]
-            thread_id = st.session_state.scope_thread_id
-            execution_id = str(uuid4())
-            st.session_state._execution_id = execution_id
-            with st.status("Processing research request", expanded=False) as indicator:
-                def lifecycle(node, status):
-                    item = _record_lifecycle(st, node, status)
-                    indicator.update(label=item["label"], state="running")
-
-                st.session_state._lifecycle_callback = lifecycle
-                with tracer.execution(
-                    run_id,
-                    thread_id,
-                    input={"request": text},
-                ) as execution:
-                    agent = _get_scope_agent(st, tracer)
-                    if agent is None:
-                        raise RuntimeError(
-                            "Reasoning-tier model is not configured. "
-                            "Set INTELLIGENCE_REASONING_MODEL and retry."
-                        )
-                    state = {
-                        **st.session_state.scope_state,
-                        "request": text,
-                        "thread_id": thread_id,
-                    }
-                    config = {"configurable": {"thread_id": thread_id}}
-                    graph = _get_scope_graph(st, agent, tracer)
-                    try:
-                        # stream_mode="values" yields the full accumulated state after each
-                        # node finishes (not just its delta), so every step can be redrawn
-                        # straight into the pipeline placeholders for live, node-by-node
-                        # progress instead of one static view after the whole run completes.
-                        # A turn that reaches a fully-passing report pauses here at the
-                        # human-in-the-loop approval gate (see the "Review and publish"
-                        # section above), rather than publishing automatically.
-                        result = _stream_graph_turn(
-                            st, graph, config, state, placeholders, vfs_for_ui,
-                        )
-                    finally:
-                        st.session_state.pop("_lifecycle_callback", None)
-                    execution.output = json.dumps({
-                        "stage": result.get("stage"),
-                        "need_clarification": result.get("scope_assessment", {}).get(
-                            "need_clarification"
-                        ),
-                        "scope_assessment": result.get("scope_assessment"),
-                        "research_brief": result.get("scoped_request"),
-                        "faithfulness_score": result.get("faithfulness_score"),
-                        "faithfulness_error": result.get("faithfulness_error"),
-                        "messages": [
-                            {"role": getattr(message, "type", "message"), "content": getattr(message, "content", str(message))}
-                            for message in result.get("messages", [])
-                        ],
-                    }, ensure_ascii=False, indent=2, default=str)
-                indicator.update(label="Processing complete", state="complete", expanded=False)
-                result["activity"] = list(st.session_state.activity)
-                st.session_state.last_trace_id = execution.trace_id
-                result["trace_id"] = execution.trace_id
-                st.session_state.scope_state = result
-                st.session_state.stage = result.get("stage", "Scoping")
-                if st.session_state.stage == "Scoping":
-                    st.session_state.progress = "Waiting for your response"
-                elif st.session_state.stage == Stage.AWAITING_APPROVAL.value:
-                    st.session_state.progress = "Report ready — review and publish below"
-                elif st.session_state.stage == Stage.NEEDS_REVIEW.value:
-                    st.session_state.progress = "Needs human review"
-                else:
-                    st.session_state.progress = "Scope clear; Planning started"
-                st.rerun()
+            _run_chat_turn(
+                st, text, reviewing=reviewing, placeholders=placeholders, vfs_for_ui=vfs_for_ui,
+            )
+            st.rerun()
         except GuardrailViolation as exc:
             if st.session_state.activity:
                 st.session_state.activity[-1]["status"] = "failure"
             st.error(f"Request blocked: {exc}")
         except Exception as exc:
-            # The try block above spans the whole turn (Scope through Verify), so name the node
-            # that was actually running when it failed instead of always blaming Scope.
+            # The turn spans many nodes (Scope through Publish), so name the node that was
+            # actually running when it failed instead of always blaming Scope.
             stage_label = _failure_stage_label(st.session_state.activity)
             if st.session_state.activity:
                 st.session_state.activity[-1]["status"] = "failure"

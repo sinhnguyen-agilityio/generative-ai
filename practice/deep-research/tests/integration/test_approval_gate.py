@@ -28,6 +28,7 @@ from intelligence_collector.graph.routing import (
     APPROVED,
     REJECTED,
     TO_FORMAT,
+    TO_PUBLISH,
     TO_SCOPE,
     route_after_approval,
     route_after_feedback,
@@ -206,6 +207,7 @@ def test_review_flow_graph_structure(stores, tmp_path):
     assert (Node.PUBLISH, "__end__") in edges
     assert (Node.APPROVE, Node.CLASSIFY_FEEDBACK) in edges
     assert (Node.CLASSIFY_FEEDBACK, Node.WRITER) in edges
+    assert (Node.CLASSIFY_FEEDBACK, Node.PUBLISH) in edges  # a chat reply read as an approval
     assert (Node.CLASSIFY_FEEDBACK, Node.STUB_SCOPE) in edges  # clarify_with_user when a scope agent is wired
     assert (Node.CLASSIFY_FEEDBACK, Node.SYNTHESIZE) not in edges  # formatting never re-synthesizes
 
@@ -215,6 +217,9 @@ def test_feedback_routing_outcomes():
     assert route_after_approval({"approval": {"approved": False}}) == REJECTED
     assert route_after_feedback({"feedback_route": "scope"}) == TO_SCOPE
     assert route_after_feedback({"feedback_route": "format"}) == TO_FORMAT
+    assert route_after_feedback({"feedback_route": "approve", "approval": {"approved": True}}) == TO_PUBLISH
+    # An "approve" route without a recorded approval never publishes.
+    assert route_after_feedback({"feedback_route": "approve", "approval": None}) == TO_FORMAT
 
 
 def test_reject_without_a_feedback_router_defaults_to_format(stores, tmp_path):
@@ -293,3 +298,64 @@ def test_reject_with_scope_route_goes_back_through_scoping_and_replans(stores, t
 
     assert result["stage"] == "Published"
     assert (tmp_path / "exports" / "planner-run.md").exists()
+
+
+def test_chat_reply_classified_as_approve_publishes(stores, tmp_path):
+    feedback_model = FakeFeedbackRouterModel([{"route": "approve", "reason": "Accepts as-is."}])
+    graph = _bvf_graph(
+        stores, FakeReportModel([GOOD]),
+        feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
+        output_dir=tmp_path / "exports",
+    )
+    config = {"configurable": {"thread_id": "approval-run"}}
+
+    graph.invoke(_initial_state(), config)
+    result = graph.invoke(Command(resume={"reply": "Looks good, publish it", "actor": "tester"}), config)
+
+    assert result["stage"] == "Published"
+    assert result["approval"]["approved"] is True
+    assert result["approval"]["actor"] == "tester"
+    assert (tmp_path / "exports" / "approval-run.md").read_text(encoding="utf-8") == GOOD
+    # The review reads as chat: the reviewer's reply, then the agent's outcome.
+    chat = [(m.type, m.content) for m in result["messages"]]
+    assert chat[-2] == ("human", "Looks good, publish it")
+    assert chat[-1][0] == "ai" and chat[-1][1].startswith("Published to")
+
+
+def test_chat_reply_classified_as_format_reformats_and_waits_again(stores, tmp_path):
+    feedback_model = FakeFeedbackRouterModel([{"route": "format", "reason": "Formatting."}])
+    graph = _bvf_graph(
+        stores, FakeReportModel([GOOD, BULLETED]),
+        feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
+        output_dir=tmp_path / "exports",
+    )
+    config = {"configurable": {"thread_id": "approval-run"}}
+
+    graph.invoke(_initial_state(), config)
+    paused_again = graph.invoke(Command(resume={"reply": "Use bullet points"}), config)
+
+    assert paused_again.get("__interrupt__")
+    assert paused_again["draft"] == BULLETED
+    assert paused_again["approval"] is None  # a chat reply is not a decision until classified
+    chat = [(m.type, m.content) for m in paused_again["messages"]]
+    assert chat[-2] == ("human", "Use bullet points")
+    assert chat[-1][0] == "ai" and "reformatted" in chat[-1][1]
+
+
+def test_explicit_rejection_is_never_classified_as_approval(stores, tmp_path):
+    feedback_model = FakeFeedbackRouterModel([{"route": "approve", "reason": "Sounds positive."}])
+    graph = _bvf_graph(
+        stores, FakeReportModel([GOOD, BULLETED]),
+        feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
+        output_dir=tmp_path / "exports",
+    )
+    config = {"configurable": {"thread_id": "approval-run"}}
+
+    graph.invoke(_initial_state(), config)
+    paused_again = graph.invoke(
+        Command(resume={"approved": False, "feedback": "Great, but use bullets"}), config,
+    )
+
+    assert paused_again["stage"] == "Awaiting Approval"
+    assert paused_again["feedback_route"] == "format"
+    assert not (tmp_path / "exports" / "approval-run.md").exists()

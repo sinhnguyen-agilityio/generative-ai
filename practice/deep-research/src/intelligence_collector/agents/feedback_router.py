@@ -1,5 +1,5 @@
-"""Classifies a human reviewer's rejection feedback (the HITL approval gate, see
-``graph/nodes.py::ApprovalNodes``) as a formatting-only change or a scope change.
+"""Classifies a human reviewer's chat reply (the HITL approval gate, see
+``graph/nodes.py::ApprovalNodes``) as an approval, a formatting-only change or a scope change.
 See ``FEEDBACK_ROUTER_PROMPT`` for the exact rule the model applies.
 """
 
@@ -25,7 +25,8 @@ class FeedbackRouter:
         run_id: str = "",
         thread_id: str = "",
     ) -> FeedbackDecision:
-        """Return `route="format"` (edit the existing text) or `route="scope"` (re-scope)."""
+        """Return `route="approve"` (publish), `"format"` (re-present the existing text) or
+        `"scope"` (re-scope)."""
         messages = FEEDBACK_ROUTER_TEMPLATE.format_messages(
             feedback=feedback, report=report[:MAX_REPORT_EXCERPT_CHARS],
         )

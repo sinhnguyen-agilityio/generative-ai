@@ -94,7 +94,11 @@ class Tracer:
         *,
         input: Any = None,
         execution_id: str | None = None,
+        trace_key: str | None = None,
     ) -> Iterator[TraceSpan]:
+        """One root span per execution (e.g. one chat turn). Executions that share a
+        `trace_key` land in the same Langfuse trace as sibling root spans; without one, every
+        execution gets its own trace."""
         execution_id = execution_id or str(uuid4())
         attributes = {"run_id": run_id, "thread_id": thread_id, "execution_id": execution_id}
         local = TraceSpan(
@@ -111,7 +115,7 @@ class Tracer:
 
         from langfuse import propagate_attributes
 
-        trace_id = self.client.create_trace_id(seed=f"{run_id}:{execution_id}")
+        trace_id = self.client.create_trace_id(seed=trace_key or f"{run_id}:{execution_id}")
         local.trace_id = trace_id
         try:
             with self.client.start_as_current_observation(

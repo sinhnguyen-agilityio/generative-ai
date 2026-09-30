@@ -23,6 +23,7 @@ from intelligence_collector.graph.routing import (
     PASSED,
     REJECTED,
     TO_FORMAT,
+    TO_PUBLISH,
     TO_SCOPE,
     route_after_approval,
     route_after_clarify,
@@ -69,9 +70,10 @@ def build_graph(
                                                                             -> synthesizing
                       --(budget exhausted / no progress)--> needs_review -> END
             writer (presents the report; applies a reviewer's formatting request) -> approval
-            approval (human-in-the-loop review) --(approve)--> publishing -> END
-                     --(reject)--> classify_feedback (LLM decides what the feedback asks for)
-            classify_feedback --(format)--> writer (reformat only: no re-synthesis, no re-verify)
+            approval (human-in-the-loop review) --(explicit approve)--> publishing -> END
+                     --(chat reply / reject)--> classify_feedback (LLM reads the reply)
+            classify_feedback --(approve)--> publishing -> END
+                              --(format)--> writer (reformat only: no re-synthesis, no re-verify)
                               --(scope)--> clarify_with_user -> brief -> planning
                                            (fresh plan, discards prior draft/verification)
 
@@ -180,6 +182,7 @@ def build_graph(
             Node.CLASSIFY_FEEDBACK,
             route_after_feedback,
             {
+                TO_PUBLISH: Node.PUBLISH,
                 TO_FORMAT: Node.WRITER,
                 # A scope change re-enters scoping (the stub scope node when no scope agent).
                 TO_SCOPE: Node.CLARIFY if scope_agent is not None else Node.STUB_SCOPE,

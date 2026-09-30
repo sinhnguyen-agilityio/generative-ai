@@ -106,7 +106,9 @@ def test_graph_snapshot_renders_verification_evidence_links_and_report():
     assert "SQLite provides documented transaction semantics" in text
 
 
-def test_review_and_publish_section_shown_while_awaiting_approval():
+def test_review_happens_in_the_chat_while_awaiting_approval():
+    """The report is posted in the chat with a prompt to reply; the chat input becomes the
+    review reply (an LLM reads it as approve / format / scope) -- no separate approve/reject form."""
     app = _app_with_snapshot({
         "run_id": "run-ui",
         "thread_id": "thread-ui",
@@ -115,8 +117,13 @@ def test_review_and_publish_section_shown_while_awaiting_approval():
         "report": "# Report",
     })
 
-    assert "Review and publish" in _visible_text(app)
-    assert any("Approve & publish" in b.label for b in app.button)
+    report_bubble = app.chat_message[-1]
+    assert report_bubble.name == "assistant"
+    assert report_bubble.markdown[0].value == "# Report"
+    assert "Reply **approve** to publish" in report_bubble.caption[0].value
+    assert app.chat_input[0].placeholder == "Reply: approve, or what to change"
+    assert not app.radio
+    assert not any(b.label in {"Approve & publish", "Send feedback"} for b in app.button)
 
 
 def test_review_and_publish_section_hidden_once_published():
@@ -136,8 +143,8 @@ def test_review_and_publish_section_hidden_once_published():
     })
 
     text = _visible_text(app)
-    assert "Review and publish" not in text
-    assert not any(b.label in {"Approve & publish", "Send feedback"} for b in app.button)
+    assert "Reply **approve** to publish" not in text
+    assert app.chat_input[0].placeholder == "What should we research?"
     assert "Published to exports/run-ui.md" in text
 
 
@@ -160,11 +167,8 @@ def test_unverified_snapshot_never_renders_verified_or_publication_controls():
     assert "verification: failed" in text
     assert "evidence_gap" in text
     assert "verified report" not in text
-    assert not app.radio
-    # "New thread" is always present; no publication-decision button for unverified content.
-    button_labels = [button.label for button in app.button]
-    assert "Approve & publish" not in button_labels
-    assert "Send feedback" not in button_labels
+    assert "reply **approve** to publish" not in text
+    assert app.chat_input[0].placeholder == "What should we research?"
 
 
 def test_ui_rejects_unsafe_input():
@@ -236,3 +240,40 @@ def test_chat_first_transcript_has_one_plain_assistant_message_and_collapsed_det
     assert app.expander[0].label == "Details"
     assert app.expander[0].proto.expanded is False
     assert "write_todos" not in app.chat_message[1].markdown[0].value
+
+
+def test_pipeline_and_activity_log_live_in_a_framed_side_panel():
+    app = _app_with_snapshot({
+        "run_id": "run-ui",
+        "thread_id": "thread-ui",
+        "stage": "Planning",
+        "messages": [HumanMessage(content="Compare databases")],
+        "activity": [{"id": "scope", "label": "Evaluating scope", "agent": "Scope Agent",
+                      "status": "success"}],
+    })
+
+    chat_col, panel_col = app.columns[0], app.columns[1]
+    panel_text = "\n".join(str(e.value) for e in list(panel_col.subheader) + list(panel_col.markdown))
+    assert "Pipeline" in panel_text and "Activity log" in panel_text
+    assert "Evaluating scope" in panel_text
+    assert len(chat_col.chat_message) == 1 and not panel_col.chat_message
+
+
+def test_chat_reply_while_awaiting_review_resumes_the_review(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "intelligence_collector.app._run_chat_turn",
+        lambda st, text, **kwargs: calls.append((text, kwargs["reviewing"])),
+    )
+    app = _app_with_snapshot({
+        "run_id": "run-ui",
+        "thread_id": "thread-ui",
+        "stage": "Awaiting Approval",
+        "verification": {"passed": True, "artifact_hash": "verified-hash", "checks": []},
+        "report": "# Report",
+    })
+
+    app.chat_input[0].set_value("Looks good, publish it").run()
+
+    assert not app.exception
+    assert calls == [("Looks good, publish it", True)]

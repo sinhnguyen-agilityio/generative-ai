@@ -1092,3 +1092,18 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   verified source matches the passing verification. Removed `reviewer_format_request` from graph
   state; added `verified_draft`/`format_revision`. Tests: `tests/integration/test_approval_gate.py`,
   `tests/integration/test_approval_binding.py`. Full suite: 224 passed, 2 skipped.
+- [X] T157 [US1] Chat-based review and a framed side panel (FR-026a): the Streamlit page is now two
+  columns -- the chat on the left, and a bordered panel on the right holding the Pipeline, a live
+  Activity log (moved out of Details) and Details. The approve/reject radio and feedback form are
+  gone: while a report awaits review it is posted in the chat with a reply prompt, and the chat
+  input resumes the paused graph with `{"reply": text}`. `FeedbackDecision.route` gained
+  `"approve"`; `classify_feedback` records the approval (bound to the presented text's hash) and
+  routes to `publishing`, and an explicit `{"approved": False}` is never read as an approval.
+  Review replies and the writer/publisher outcomes are appended to `messages`, so the review
+  reads as chat. Tests: `tests/integration/test_approval_gate.py`, `tests/ui/test_chat_progress.py`.
+  Full suite: 229 passed, 2 skipped.
+- [X] T158 One Langfuse trace per chat thread: `Tracer.execution` gained `trace_key`; the app passes
+  `thread:{thread_id}`, so every turn of a thread (request, clarifications, review replies and a
+  scope change that re-enters the Scope Agent) is its own root span in the same trace, and only
+  "New thread" starts a new one. Without a key, each execution keeps its own trace. Tests:
+  `tests/contract/test_observability_contract.py`. Full suite: 230 passed, 2 skipped.

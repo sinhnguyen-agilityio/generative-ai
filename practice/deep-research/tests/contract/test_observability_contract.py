@@ -64,6 +64,27 @@ def test_tracer_creates_root_thread_and_nested_spans(monkeypatch):
     assert client.flush_count == 1
 
 
+def test_executions_sharing_a_trace_key_land_in_one_trace(monkeypatch):
+    """One chat thread = one trace: each turn is its own root span inside the same trace."""
+    monkeypatch.setattr("langfuse.propagate_attributes", fake_propagation)
+    client = FakeLangfuseClient()
+    tracer = Tracer(client=client)
+
+    with tracer.execution("run", "thread", execution_id="turn-1", trace_key="thread:t1") as first:
+        pass
+    with tracer.execution("run", "thread", execution_id="turn-2", trace_key="thread:t1") as second:
+        pass
+    with tracer.execution("run", "thread", execution_id="turn-1", trace_key="thread:t2") as other:
+        pass
+
+    assert first.trace_id == second.trace_id == "trace:thread:t1"
+    assert other.trace_id == "trace:thread:t2"
+    roots = [r for r in client.records if r["name"] == "research.execution"]
+    assert [r["trace_context"]["trace_id"] for r in roots] == [
+        "trace:thread:t1", "trace:thread:t1", "trace:thread:t2",
+    ]
+
+
 def test_trace_payload_redacts_credential_shaped_fields(monkeypatch):
     monkeypatch.setattr("langfuse.propagate_attributes", fake_propagation)
     client = FakeLangfuseClient()
