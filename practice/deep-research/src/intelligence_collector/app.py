@@ -165,7 +165,7 @@ def _start_new_thread(st):
     st.session_state.activity = []
     st.session_state.stage = "Scoping"
     st.session_state.progress = "No research started"
-    for key in ("verification",):
+    for key in ("verification", "trace_parent_id"):
         st.session_state.pop(key, None)
 
 
@@ -577,9 +577,16 @@ def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
         st.session_state._lifecycle_callback = lifecycle
         trace_input = {"review_reply": text} if reviewing else {"request": text}
         # Every turn of one chat thread (request, clarifications, review replies, re-scoping)
-        # shares one Langfuse trace, keyed by the thread; "New thread" starts a new trace.
+        # shares one Langfuse trace, keyed by the thread, and nests under the thread's single
+        # `research.thread` root created on its first turn; "New thread" starts a new trace.
+        trace_key = f"thread:{thread_id}"
+        if "trace_parent_id" not in st.session_state:
+            st.session_state.trace_parent_id = tracer.thread_root(
+                run_id, thread_id, trace_key=trace_key, input=trace_input,
+            )
         with tracer.execution(
-            run_id, thread_id, input=trace_input, trace_key=f"thread:{thread_id}",
+            run_id, thread_id, input=trace_input, trace_key=trace_key,
+            parent_span_id=st.session_state.trace_parent_id,
         ) as execution:
             agent = _get_scope_agent(st, tracer)
             if agent is None:

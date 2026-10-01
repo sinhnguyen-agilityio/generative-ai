@@ -50,7 +50,7 @@ def test_scope_execution_has_root_nodes_model_events_callbacks_and_flush(monkeyp
 
     names = [record["name"] for record in client.records]
     assert names == [
-        "research.execution",
+        "research.turn",
         "graph.clarify_with_user",
         "model.validation.guardrail",
         "model.validation.scope",

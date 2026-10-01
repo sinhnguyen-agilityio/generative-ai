@@ -647,8 +647,9 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   list.
 - **FR-038**: Every live workflow execution MUST emit one complete Langfuse trace before it may be
   treated as successfully observed. Each execution trace MUST be grouped under the LangGraph
-  `thread_id`, correlated with `run_id`, and contain a root execution observation, child graph-node
-  spans, and nested LangChain model-generation observations including model identity,
+  `thread_id`, correlated with `run_id`, and contain a turn observation nested under the thread's
+  single root observation (all turns of one chat thread share one trace and one root), child
+  graph-node spans, and nested LangChain model-generation observations including model identity,
   attempts, fallback status, validated result or safe error metadata, and final stage. Missing or
   invalid tracing configuration MUST fail a live execution before any model call. Credentials and
   secret values MUST never appear in trace inputs, outputs, metadata, errors, or logs.

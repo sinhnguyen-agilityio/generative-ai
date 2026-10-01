@@ -9,6 +9,7 @@ from intelligence_collector.observability.tracing import Tracer
 class FakeObservation:
     def __init__(self, record):
         self.record = record
+        self.id = record["id"]
 
     def update(self, **values):
         self.record.setdefault("updates", []).append(values)
@@ -30,7 +31,11 @@ class FakeLangfuseClient:
 
     @contextmanager
     def start_as_current_observation(self, **values):
-        record = {**values, "parent": self.stack[-1]["name"] if self.stack else None}
+        record = {
+            **values,
+            "id": f"span-{len(self.records)}",
+            "parent": self.stack[-1]["name"] if self.stack else None,
+        }
         self.records.append(record)
         self.stack.append(record)
         try:
@@ -58,14 +63,14 @@ def test_tracer_creates_root_thread_and_nested_spans(monkeypatch):
         root.output = {"stage": "Scoping"}
 
     assert root.trace_id == "trace:run:turn-1"
-    assert client.records[0]["name"] == "research.execution"
+    assert client.records[0]["name"] == "research.turn"
     assert client.records[1]["name"] == "graph.scope"
-    assert client.records[1]["parent"] == "research.execution"
+    assert client.records[1]["parent"] == "research.turn"
     assert client.flush_count == 1
 
 
 def test_executions_sharing_a_trace_key_land_in_one_trace(monkeypatch):
-    """One chat thread = one trace: each turn is its own root span inside the same trace."""
+    """One chat thread = one trace: each turn shares the thread's trace ID."""
     monkeypatch.setattr("langfuse.propagate_attributes", fake_propagation)
     client = FakeLangfuseClient()
     tracer = Tracer(client=client)
@@ -79,10 +84,41 @@ def test_executions_sharing_a_trace_key_land_in_one_trace(monkeypatch):
 
     assert first.trace_id == second.trace_id == "trace:thread:t1"
     assert other.trace_id == "trace:thread:t2"
-    roots = [r for r in client.records if r["name"] == "research.execution"]
+    roots = [r for r in client.records if r["name"] == "research.turn"]
     assert [r["trace_context"]["trace_id"] for r in roots] == [
         "trace:thread:t1", "trace:thread:t1", "trace:thread:t2",
     ]
+
+
+def test_turns_of_a_thread_nest_under_one_thread_root(monkeypatch):
+    """The thread root is created once; every turn attaches to it via parent_span_id."""
+    monkeypatch.setattr("langfuse.propagate_attributes", fake_propagation)
+    client = FakeLangfuseClient()
+    tracer = Tracer(client=client)
+
+    parent_id = tracer.thread_root("run", "thread", trace_key="thread:t1", input={"request": "q"})
+    for turn in ("turn-1", "turn-2"):
+        with tracer.execution(
+            "run", "thread", execution_id=turn, trace_key="thread:t1", parent_span_id=parent_id,
+        ):
+            pass
+
+    root, *turns = client.records
+    assert root["name"] == "research.thread"
+    assert root["trace_context"] == {"trace_id": "trace:thread:t1"}
+    assert parent_id == root["id"]
+    assert [t["name"] for t in turns] == ["research.turn", "research.turn"]
+    assert all(
+        t["trace_context"] == {"trace_id": "trace:thread:t1", "parent_span_id": parent_id}
+        for t in turns
+    )
+
+
+def test_thread_root_is_local_only_when_tracing_is_off():
+    tracer = Tracer()
+
+    assert tracer.thread_root("run", "thread", trace_key="thread:t1") == ""
+    assert tracer.spans[0].name == "research.thread"
 
 
 def test_trace_payload_redacts_credential_shaped_fields(monkeypatch):

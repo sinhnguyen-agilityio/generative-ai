@@ -1140,3 +1140,10 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   them. Unclear replies default to `revise`. Tests: `tests/integration/test_approval_gate.py`,
   `tests/unit/test_report_writer_format.py`, `tests/unit/test_feedback_router.py`. Full suite: 194
   passed, 2 skipped.
+- [X] T162 Nest every turn of a chat thread under one Langfuse parent: `Tracer.thread_root` creates
+  the thread's single `research.thread` observation on its first turn (ended immediately, so a
+  restart never leaves an unexported parent) and returns its span ID; `Tracer.execution` gained
+  `parent_span_id` and its span is renamed `research.turn`. The app keeps the root ID in
+  `st.session_state.trace_parent_id` and "New thread" clears it. Tests:
+  `tests/contract/test_observability_contract.py`, `tests/integration/test_langfuse_tracing.py`.
+  Full suite: 196 passed, 2 skipped.

@@ -1,5 +1,6 @@
-"""Langfuse tracing: one root span per chat turn (all turns of a thread share one trace), nested
-node spans and scores, plus a local, credential-free record of every span for tests.
+"""Langfuse tracing: one trace per chat thread with a single ``research.thread`` root, one
+``research.turn`` span per chat turn beneath it, nested node spans and scores, plus a local,
+credential-free record of every span for tests.
 """
 
 from __future__ import annotations
@@ -97,6 +98,41 @@ class Tracer:
         """LangChain callbacks that report model calls to Langfuse (empty when tracing is off)."""
         return [self.callback_handler] if self.callback_handler is not None else []
 
+    def thread_root(self, run_id: str, thread_id: str, *, trace_key: str, input: Any = None) -> str:
+        """Create the single ``research.thread`` parent observation of a chat thread's trace and
+        return its span ID (empty when tracing is off). It ends immediately: it only groups the
+        thread's turns, which attach to it later through ``execution(parent_span_id=...)``, so a
+        restart can never leave an unexported parent behind."""
+        local = TraceSpan("research.thread", run_id, thread_id, {"run_id": run_id, "thread_id": thread_id})
+        self.spans.append(local)
+        if self.client is None:
+            return ""
+        local.trace_id = self.client.create_trace_id(seed=trace_key)
+        try:
+            with self._trace_attributes(thread_id, local.attributes):
+                with self.client.start_as_current_observation(
+                    as_type="agent",
+                    name=local.name,
+                    trace_context={"trace_id": local.trace_id},
+                    input=_text_payload(input),
+                    metadata=_safe(local.attributes),
+                ) as remote:
+                    return remote.id
+        finally:
+            self.flush()
+
+    @staticmethod
+    def _trace_attributes(thread_id: str, attributes: dict[str, Any]):
+        """Trace-level attributes shared by every observation of a thread's trace."""
+        from langfuse import propagate_attributes
+
+        return propagate_attributes(
+            session_id=thread_id,
+            trace_name="intelligence-collector",
+            metadata=_safe(attributes),
+            tags=["deep-research", "langgraph"],
+        )
+
     @contextmanager
     def execution(
         self,
@@ -106,14 +142,16 @@ class Tracer:
         input: Any = None,
         execution_id: str | None = None,
         trace_key: str | None = None,
+        parent_span_id: str | None = None,
     ) -> Iterator[TraceSpan]:
-        """One root span per execution (e.g. one chat turn). Executions that share a
-        `trace_key` land in the same Langfuse trace as sibling root spans; without one, every
-        execution gets its own trace."""
+        """One ``research.turn`` span per execution (e.g. one chat turn). Executions that share a
+        `trace_key` land in the same Langfuse trace; with a `parent_span_id` (from
+        ``thread_root``) they nest under that one parent instead of being sibling roots. Without a
+        `trace_key`, every execution gets its own trace."""
         execution_id = execution_id or str(uuid4())
         attributes = {"run_id": run_id, "thread_id": thread_id, "execution_id": execution_id}
         local = TraceSpan(
-            "research.execution",
+            "research.turn",
             run_id,
             thread_id,
             attributes,
@@ -124,24 +162,20 @@ class Tracer:
             yield local
             return
 
-        from langfuse import propagate_attributes
-
-        trace_id = self.client.create_trace_id(seed=trace_key or f"{run_id}:{execution_id}")
+        trace_id =self.client.create_trace_id(seed=trace_key or f"{run_id}:{execution_id}")
         local.trace_id = trace_id
+        trace_context = {"trace_id": trace_id}
+        if parent_span_id:
+            trace_context["parent_span_id"] = parent_span_id
         try:
             with self.client.start_as_current_observation(
                 as_type="agent",
                 name=local.name,
-                trace_context={"trace_id": trace_id},
+                trace_context=trace_context,
                 input=_text_payload(input),
                 metadata=_safe(attributes),
             ) as remote:
-                with propagate_attributes(
-                    session_id=thread_id,
-                    trace_name="intelligence-collector",
-                    metadata=_safe(attributes),
-                    tags=["deep-research", "langgraph"],
-                ):
+                with self._trace_attributes(thread_id, attributes):
                     try:
                         yield local
                     except GraphInterrupt:
