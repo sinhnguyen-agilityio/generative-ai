@@ -1140,10 +1140,18 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   them. Unclear replies default to `revise`. Tests: `tests/integration/test_approval_gate.py`,
   `tests/unit/test_report_writer_format.py`, `tests/unit/test_feedback_router.py`. Full suite: 194
   passed, 2 skipped.
-- [X] T162 Nest every turn of a chat thread under one Langfuse parent: `Tracer.thread_root` creates
-  the thread's single `research.thread` observation on its first turn (ended immediately, so a
-  restart never leaves an unexported parent) and returns its span ID; `Tracer.execution` gained
-  `parent_span_id` and its span is renamed `research.turn`. The app keeps the root ID in
-  `st.session_state.trace_parent_id` and "New thread" clears it. Tests:
+- [X] T162 Nest every turn of a chat thread under one Langfuse parent whose duration covers the
+  thread: `Tracer.start_thread` opens the thread's single `research.thread` observation on its
+  first turn (`start_observation`, kept open) and `Tracer.end_thread` ends it; the app ends it when
+  the thread reaches `Published` or `Needs review` and on "New thread", and a `weakref.finalize`
+  ends any root still open when the tracer is collected or the process exits. `Tracer.execution`
+  (span renamed `research.turn`) starts each turn as a direct child of the open root, so it is not
+  marked `as_root`, and copies the turn output onto the root. Tests:
   `tests/contract/test_observability_contract.py`, `tests/integration/test_langfuse_tracing.py`.
-  Full suite: 196 passed, 2 skipped.
+  Full suite: 197 passed, 2 skipped.
+- [X] T163 Fix a live-breaking bug with OpenAI models on the standard tier: OpenAI strict structured
+  outputs reject `DraftAssessment` (400 "Invalid schema for response_format ... Extra required key
+  'claim_evidence_ids'") because the unused free-form map `claim_evidence_ids: dict[str, list[str]]`
+  has no fixed properties. Removed the field. Added a contract test that every model-output schema
+  converts to an OpenAI strict JSON schema without free-form maps. Tests:
+  `tests/contract/test_structured_output_schemas.py`. Full suite: 206 passed, 2 skipped.

@@ -64,10 +64,12 @@ state under the thread ID and passed as `HumanMessage`/`AIMessage` turns. Invali
 is retried within bounds or recorded as an error.
 
 **Langfuse Trace Hierarchy**: A chat thread has one trace (ID seeded from `thread:{thread_id}`) with
-a single `research.thread` root `agent` observation, created on the thread's first turn and ended
-immediately. Each live Streamlit submission creates a `research.turn` observation attached to that
-root through `trace_context.parent_span_id` (the root's ID is kept in the session and cleared by
-"New thread"). Langfuse `session_id` equals the LangGraph `thread_id`, while
+a single `research.thread` root `agent` observation. The tracer opens it on the thread's first
+turn and keeps it open, so Langfuse timestamps the whole thread; it ends when the thread reaches
+`Published` or `Needs review`, on "New thread", or when the tracer is garbage-collected or the
+process exits. Each live Streamlit submission creates a `research.turn` observation as a direct
+child of that root (not via `trace_context`, which Langfuse would mark as a trace root), and the
+root's output follows the latest turn. Langfuse `session_id` equals the LangGraph `thread_id`, while
 `run_id` and a per-submission `execution_id` are propagated metadata. Every graph node creates a
 child span, LangChain's callback handler records nested model generations and token usage, and the
 router records structured validation/fallback metadata. The client flushes after every execution.

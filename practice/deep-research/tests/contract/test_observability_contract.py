@@ -7,12 +7,21 @@ from intelligence_collector.observability.tracing import Tracer
 
 
 class FakeObservation:
-    def __init__(self, record):
+    def __init__(self, record, client=None):
         self.record = record
+        self.client = client
         self.id = record["id"]
+        self.trace_id = record.get("trace_context", {}).get("trace_id", "")
 
     def update(self, **values):
         self.record.setdefault("updates", []).append(values)
+
+    def end(self):
+        self.record["ended"] = True
+
+    def start_as_current_observation(self, **values):
+        """A child observation of this one (as Langfuse's ``LangfuseSpan`` does)."""
+        return self.client.start_as_current_observation(_parent=self.record, **values)
 
 
 class FakeLangfuseClient:
@@ -29,17 +38,21 @@ class FakeLangfuseClient:
     def create_trace_id(*, seed):
         return f"trace:{seed}"
 
-    @contextmanager
-    def start_as_current_observation(self, **values):
-        record = {
-            **values,
-            "id": f"span-{len(self.records)}",
-            "parent": self.stack[-1]["name"] if self.stack else None,
-        }
+    def _record(self, values, parent):
+        record = {**values, "id": f"span-{len(self.records)}", "parent": parent and parent["name"]}
         self.records.append(record)
+        return record
+
+    def start_observation(self, **values):
+        """An observation that is not made current and stays open until ``end()``."""
+        return FakeObservation(self._record(values, None), self)
+
+    @contextmanager
+    def start_as_current_observation(self, _parent=None, **values):
+        record = self._record(values, _parent or (self.stack[-1] if self.stack else None))
         self.stack.append(record)
         try:
-            yield FakeObservation(record)
+            yield FakeObservation(record, self)
         finally:
             self.stack.pop()
 
@@ -90,35 +103,57 @@ def test_executions_sharing_a_trace_key_land_in_one_trace(monkeypatch):
     ]
 
 
-def test_turns_of_a_thread_nest_under_one_thread_root(monkeypatch):
-    """The thread root is created once; every turn attaches to it via parent_span_id."""
+def test_turns_of_a_thread_nest_under_one_open_thread_root(monkeypatch):
+    """The thread root is opened once, stays open across turns (so Langfuse times the whole
+    thread), parents every turn directly, and ends only on ``end_thread``."""
     monkeypatch.setattr("langfuse.propagate_attributes", fake_propagation)
     client = FakeLangfuseClient()
     tracer = Tracer(client=client)
 
-    parent_id = tracer.thread_root("run", "thread", trace_key="thread:t1", input={"request": "q"})
     for turn in ("turn-1", "turn-2"):
-        with tracer.execution(
-            "run", "thread", execution_id=turn, trace_key="thread:t1", parent_span_id=parent_id,
-        ):
-            pass
+        tracer.start_thread("run", "thread", trace_key="thread:t1", input={"request": "q"})
+        with tracer.execution("run", "thread", execution_id=turn, trace_key="thread:t1") as ex:
+            ex.output = {"stage": turn}
+        assert ex.trace_id == "trace:thread:t1"
 
     root, *turns = client.records
     assert root["name"] == "research.thread"
     assert root["trace_context"] == {"trace_id": "trace:thread:t1"}
-    assert parent_id == root["id"]
-    assert [t["name"] for t in turns] == ["research.turn", "research.turn"]
-    assert all(
-        t["trace_context"] == {"trace_id": "trace:thread:t1", "parent_span_id": parent_id}
-        for t in turns
-    )
+    assert "ended" not in root
+    assert [(t["name"], t["parent"]) for t in turns] == [
+        ("research.turn", "research.thread"), ("research.turn", "research.thread"),
+    ]
+    # A child turn must not carry trace_context: Langfuse would mark it as a trace root.
+    assert all("trace_context" not in t for t in turns)
+    assert '"turn-2"' in root["updates"][-1]["output"]
+
+    tracer.end_thread("thread")
+    tracer.end_thread("thread")  # idempotent
+    assert root["ended"] is True
+
+
+def test_open_thread_roots_are_ended_when_the_tracer_is_collected(monkeypatch):
+    import gc
+
+    monkeypatch.setattr("langfuse.propagate_attributes", fake_propagation)
+    client = FakeLangfuseClient()
+    tracer = Tracer(client=client)
+    tracer.start_thread("run", "thread", trace_key="thread:t1")
+
+    del tracer
+    gc.collect()
+
+    assert client.records[0]["ended"] is True
 
 
 def test_thread_root_is_local_only_when_tracing_is_off():
     tracer = Tracer()
 
-    assert tracer.thread_root("run", "thread", trace_key="thread:t1") == ""
-    assert tracer.spans[0].name == "research.thread"
+    tracer.start_thread("run", "thread", trace_key="thread:t1")
+    tracer.start_thread("run", "thread", trace_key="thread:t1")
+    tracer.end_thread("thread")
+
+    assert [s.name for s in tracer.spans] == ["research.thread"]
 
 
 def test_trace_payload_redacts_credential_shaped_fields(monkeypatch):

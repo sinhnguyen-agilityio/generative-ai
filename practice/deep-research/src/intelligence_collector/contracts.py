@@ -138,7 +138,6 @@ class DraftAssessment(Model):
     """Report writer output: the report as Markdown."""
 
     report_markdown: str = Field(min_length=1)
-    claim_evidence_ids: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class ArtifactRef(Model):

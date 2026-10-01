@@ -34,7 +34,8 @@ Every port failure is typed, includes retryability, and preserves already commit
 
 ## Langfuse trace contract
 
-Each chat thread has exactly one trace and one root `research.thread` observation. Each live graph
+Each chat thread has exactly one trace and one root `research.thread` observation, which stays
+open from the first turn until the thread finishes, so its duration spans the whole thread. Each live graph
 invocation creates one `research.turn` observation nested under that root. Its Langfuse session ID is
 the LangGraph `thread_id`; metadata includes `run_id` and a unique `execution_id`. Graph nodes are
 child spans named `graph.<node>`. LangChain model calls are nested generation observations, while

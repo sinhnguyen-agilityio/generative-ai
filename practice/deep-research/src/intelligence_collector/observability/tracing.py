@@ -1,6 +1,6 @@
-"""Langfuse tracing: one trace per chat thread with a single ``research.thread`` root, one
-``research.turn`` span per chat turn beneath it, nested node spans and scores, plus a local,
-credential-free record of every span for tests.
+"""Langfuse tracing: one trace per chat thread with a single ``research.thread`` root that stays
+open across the thread's turns, one ``research.turn`` span per chat turn beneath it, nested node
+spans and scores, plus a local, credential-free record of every span for tests.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import json
 from typing import Any, Iterator
 from uuid import uuid4
+import weakref
 
 from langgraph.errors import GraphInterrupt
 
@@ -40,6 +41,16 @@ def _text_payload(value: Any) -> str:
     return json.dumps(safe, ensure_ascii=False, indent=2, default=str)
 
 
+def _end_open_threads(threads: dict[str, Any], client: Any) -> None:
+    """End roots that were never closed, so their turns do not lose their parent in Langfuse."""
+    for root in threads.values():
+        if root is not None:
+            root.end()
+    threads.clear()
+    if client is not None:
+        client.flush()
+
+
 @dataclass
 class TraceSpan:
     """Local record of one span: what was sent to Langfuse, with credentials redacted."""
@@ -62,6 +73,10 @@ class Tracer:
         self.callback_handler = callback_handler
         self.spans: list[TraceSpan] = []
         self.scores: list[dict[str, Any]] = []
+        # Open ``research.thread`` roots by thread ID. Ended by ``end_thread``, or when the
+        # tracer is garbage-collected (e.g. an abandoned Streamlit session) or the process exits.
+        self._threads: dict[str, Any] = {}
+        weakref.finalize(self, _end_open_threads, self._threads, client)
 
     @classmethod
     def from_settings(cls, settings: LangfuseSettings):
@@ -98,27 +113,33 @@ class Tracer:
         """LangChain callbacks that report model calls to Langfuse (empty when tracing is off)."""
         return [self.callback_handler] if self.callback_handler is not None else []
 
-    def thread_root(self, run_id: str, thread_id: str, *, trace_key: str, input: Any = None) -> str:
-        """Create the single ``research.thread`` parent observation of a chat thread's trace and
-        return its span ID (empty when tracing is off). It ends immediately: it only groups the
-        thread's turns, which attach to it later through ``execution(parent_span_id=...)``, so a
-        restart can never leave an unexported parent behind."""
-        local = TraceSpan("research.thread", run_id, thread_id, {"run_id": run_id, "thread_id": thread_id})
+    def start_thread(self, run_id: str, thread_id: str, *, trace_key: str, input: Any = None) -> None:
+        """Open the chat thread's single ``research.thread`` root observation. Later calls for the
+        same thread are no-ops. The root stays open across turns, so Langfuse timestamps it from
+        the first turn to ``end_thread``; every ``execution`` of the thread nests under it."""
+        if thread_id in self._threads:
+            return
+        attributes = {"run_id": run_id, "thread_id": thread_id}
+        local = TraceSpan("research.thread", run_id, thread_id, attributes)
         self.spans.append(local)
         if self.client is None:
-            return ""
+            self._threads[thread_id] = None  # local-only: remember the thread is open
+            return
         local.trace_id = self.client.create_trace_id(seed=trace_key)
-        try:
-            with self._trace_attributes(thread_id, local.attributes):
-                with self.client.start_as_current_observation(
-                    as_type="agent",
-                    name=local.name,
-                    trace_context={"trace_id": local.trace_id},
-                    input=_text_payload(input),
-                    metadata=_safe(local.attributes),
-                ) as remote:
-                    return remote.id
-        finally:
+        with self._trace_attributes(thread_id, attributes):
+            self._threads[thread_id] = self.client.start_observation(
+                as_type="agent",
+                name=local.name,
+                trace_context={"trace_id": local.trace_id},
+                input=_text_payload(input),
+                metadata=_safe(attributes),
+            )
+
+    def end_thread(self, thread_id: str) -> None:
+        """End the thread's root observation (if open) and send it to Langfuse."""
+        root = self._threads.pop(thread_id, None)
+        if root is not None:
+            root.end()
             self.flush()
 
     @staticmethod
@@ -142,12 +163,11 @@ class Tracer:
         input: Any = None,
         execution_id: str | None = None,
         trace_key: str | None = None,
-        parent_span_id: str | None = None,
     ) -> Iterator[TraceSpan]:
-        """One ``research.turn`` span per execution (e.g. one chat turn). Executions that share a
-        `trace_key` land in the same Langfuse trace; with a `parent_span_id` (from
-        ``thread_root``) they nest under that one parent instead of being sibling roots. Without a
-        `trace_key`, every execution gets its own trace."""
+        """One ``research.turn`` span per execution (e.g. one chat turn). While the thread's root
+        is open (``start_thread``) the turn is its child, and the root's output follows the latest
+        turn. Otherwise executions that share a `trace_key` land in the same trace as sibling
+        roots, and without a key every execution gets its own trace."""
         execution_id = execution_id or str(uuid4())
         attributes = {"run_id": run_id, "thread_id": thread_id, "execution_id": execution_id}
         local = TraceSpan(
@@ -162,19 +182,27 @@ class Tracer:
             yield local
             return
 
-        trace_id =self.client.create_trace_id(seed=trace_key or f"{run_id}:{execution_id}")
-        local.trace_id = trace_id
-        trace_context = {"trace_id": trace_id}
-        if parent_span_id:
-            trace_context["parent_span_id"] = parent_span_id
-        try:
-            with self.client.start_as_current_observation(
+        root = self._threads.get(thread_id)
+        if root is not None:
+            # A real child of the open root; `trace_context` would mark the turn as a trace root.
+            local.trace_id = root.trace_id
+            observation = root.start_as_current_observation(
                 as_type="agent",
                 name=local.name,
-                trace_context=trace_context,
                 input=_text_payload(input),
                 metadata=_safe(attributes),
-            ) as remote:
+            )
+        else:
+            local.trace_id = self.client.create_trace_id(seed=trace_key or f"{run_id}:{execution_id}")
+            observation = self.client.start_as_current_observation(
+                as_type="agent",
+                name=local.name,
+                trace_context={"trace_id": local.trace_id},
+                input=_text_payload(input),
+                metadata=_safe(attributes),
+            )
+        try:
+            with observation as remote:
                 with self._trace_attributes(thread_id, attributes):
                     try:
                         yield local
@@ -188,7 +216,10 @@ class Tracer:
                         remote.update(level="ERROR", status_message=local.error)
                         raise
                     finally:
-                        remote.update(output=_text_payload(local.output), metadata=_safe(local.attributes))
+                        output = _text_payload(local.output)
+                        remote.update(output=output, metadata=_safe(local.attributes))
+                        if root is not None:
+                            root.update(output=output)
         finally:
             self.flush()
 

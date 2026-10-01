@@ -159,13 +159,15 @@ def _get_vfs(st):
 
 def _start_new_thread(st):
     """Reset conversation-scoped state only; cached model/graph/tracer connections stay put."""
+    if "tracer" in st.session_state and "scope_thread_id" in st.session_state:
+        st.session_state.tracer.end_thread(st.session_state.scope_thread_id)
     new_thread_id = str(uuid4())
     st.session_state.scope_thread_id = new_thread_id
     st.session_state.scope_state = {"run_id": str(uuid4()), "thread_id": new_thread_id}
     st.session_state.activity = []
     st.session_state.stage = "Scoping"
     st.session_state.progress = "No research started"
-    for key in ("verification", "trace_parent_id"):
+    for key in ("verification",):
         st.session_state.pop(key, None)
 
 
@@ -559,6 +561,10 @@ _PROGRESS_BY_STAGE = {
 }
 
 
+# A thread in one of these stages is finished, so its Langfuse `research.thread` root is ended.
+_THREAD_DONE_STAGES = {Stage.PUBLISHED.value, Stage.NEEDS_REVIEW.value}
+
+
 def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
     """One chat message drives one graph turn: a new request (or scope answer) starts/continues
     the research; while a report awaits review, the message is the reviewer's reply and resumes
@@ -578,15 +584,12 @@ def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
         trace_input = {"review_reply": text} if reviewing else {"request": text}
         # Every turn of one chat thread (request, clarifications, review replies, re-scoping)
         # shares one Langfuse trace, keyed by the thread, and nests under the thread's single
-        # `research.thread` root created on its first turn; "New thread" starts a new trace.
+        # `research.thread` root, opened on its first turn and ended once the thread finishes
+        # (or on "New thread"), so Langfuse times the whole thread.
         trace_key = f"thread:{thread_id}"
-        if "trace_parent_id" not in st.session_state:
-            st.session_state.trace_parent_id = tracer.thread_root(
-                run_id, thread_id, trace_key=trace_key, input=trace_input,
-            )
+        tracer.start_thread(run_id, thread_id, trace_key=trace_key, input=trace_input)
         with tracer.execution(
             run_id, thread_id, input=trace_input, trace_key=trace_key,
-            parent_span_id=st.session_state.trace_parent_id,
         ) as execution:
             agent = _get_scope_agent(st, tracer)
             if agent is None:
@@ -623,6 +626,8 @@ def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
                 ],
             }, ensure_ascii=False, indent=2, default=str)
         indicator.update(label="Processing complete", state="complete", expanded=False)
+    if result.get("stage") in _THREAD_DONE_STAGES:
+        tracer.end_thread(thread_id)
     result["activity"] = list(st.session_state.activity)
     result["trace_id"] = execution.trace_id
     st.session_state.scope_state = result

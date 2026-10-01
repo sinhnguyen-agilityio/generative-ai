@@ -12,8 +12,9 @@ Artifacts are written under `.data/vfs/<run_id>/`; checkpoints and vector index 
 Permanent output is under `exports/` and is written only after approval bound to the verified report
 hash. Live app executions require Langfuse credentials configured through environment variables.
 Each chat thread has one Langfuse trace (session ID = the durable `thread_id`) with a single
-`research.thread` root created on its first turn. Every submission adds one `research.turn` span
-under that root, which nests LangGraph node spans plus LangChain model generations. The trace
+`research.thread` root that is opened on its first turn and ended when the thread is published,
+needs review, or "New thread" is clicked, so its duration covers the whole thread. Every
+submission adds one `research.turn` span under that root, which nests LangGraph node spans plus LangChain model generations. The trace
 metadata correlates the durable `run_id`, per-submission `execution_id`, prompt version, role, model
 attempt, structured-output validation, fallback, and safe error details. Export is flushed before the
 execution completes; credential-shaped fields are redacted. Ragas evaluation uses
