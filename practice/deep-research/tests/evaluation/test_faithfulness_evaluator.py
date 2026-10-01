@@ -53,8 +53,8 @@ def test_openai_judge_llm_uses_an_async_openai_client(monkeypatch):
         def __init__(self, api_key):
             captured["api_key"] = api_key
 
-    def fake_llm_factory(model, provider, client):
-        captured.update(model=model, provider=provider, client=client)
+    def fake_llm_factory(model, provider, client, **kwargs):
+        captured.update(model=model, provider=provider, client=client, **kwargs)
         return "judge-llm"
 
     monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
@@ -65,6 +65,7 @@ def test_openai_judge_llm_uses_an_async_openai_client(monkeypatch):
     assert captured["model"] == "gpt-4.1-mini"
     assert captured["provider"] == "openai"
     assert isinstance(captured["client"], FakeAsyncOpenAI)
+    assert captured["max_tokens"] == evaluation.JUDGE_MAX_TOKENS
 
 
 def test_make_faithfulness_evaluator_propagates_judge_llm_failures(monkeypatch):
@@ -95,10 +96,11 @@ def test_google_judge_llm_patches_the_client_for_async_use(monkeypatch):
         return "patched-client"
 
     class FakeInstructorLLM:
-        def __init__(self, client, model, provider):
+        def __init__(self, client, model, provider, max_tokens):
             captured["instructor_llm_client"] = client
             captured["model"] = model
             captured["provider"] = provider
+            captured["max_tokens"] = max_tokens
 
         def __eq__(self, other):
             return isinstance(other, FakeInstructorLLM)
@@ -116,3 +118,106 @@ def test_google_judge_llm_patches_the_client_for_async_use(monkeypatch):
     assert captured["model"] == "gemini-3.7-flash"
     assert captured["provider"] == "google"
     assert captured["instructor_llm_client"] == "patched-client"
+    assert captured["max_tokens"] == evaluation.JUDGE_MAX_TOKENS
+
+
+REPORT = """# HTTP 429
+
+Intro sentence.
+
+## Scope
+
+Covers HTTP status codes.
+
+## Meaning
+
+429 means too many requests [S1].
+
+## Retry-After
+
+Servers may send Retry-After [S2].
+
+## Limitations
+
+No vendor data.
+
+## Sources
+
+- [S1] RFC 6585 - https://example.org
+"""
+
+
+def test_report_sections_drop_scope_limitations_and_sources():
+    sections = evaluation.report_sections(REPORT)
+
+    assert [s.splitlines()[0] for s in sections] == ["# HTTP 429", "## Meaning", "## Retry-After"]
+    assert not any("RFC 6585 - https" in s or "No vendor data" in s for s in sections)
+
+
+class _Verdict:
+    def __init__(self, verdict):
+        self.verdict = verdict
+
+
+class _Verdicts:
+    def __init__(self, statements):
+        self.statements = statements
+
+
+def test_score_is_computed_per_section_and_in_nli_batches(monkeypatch):
+    """Statements come from each scored section separately and are judged in batches of at most
+    NLI_BATCH_SIZE; the score is supported / all statements across every batch."""
+    import asyncio
+
+    calls = {"sections": [], "batches": []}
+
+    class FakeFaithfulness:
+        def __init__(self, llm):
+            pass
+
+        async def _create_statements(self, question, section):
+            calls["sections"].append(section.splitlines()[0])
+            # 5 statements per section; the "Retry-After" section's are unsupported.
+            return [f"{section.splitlines()[0]} #{i}" for i in range(5)]
+
+        async def _create_verdicts(self, statements, context):
+            calls["batches"].append(len(statements))
+            return _Verdicts([_Verdict(0 if "Retry-After" in s else 1) for s in statements])
+
+    monkeypatch.setattr("ragas.metrics.collections.Faithfulness", FakeFaithfulness)
+    monkeypatch.setitem(evaluation._JUDGE_LLMS, "openai", lambda model, key: "llm")
+    monkeypatch.setattr(evaluation, "NLI_BATCH_SIZE", 4)
+
+    score = asyncio.run(evaluation._score_report_faithfulness_async(
+        "q", REPORT, ["ctx"], model="m", api_key="k",
+    ))
+
+    assert sorted(calls["sections"]) == ["# HTTP 429", "## Meaning", "## Retry-After"]
+    assert calls["batches"] == [4, 4, 4, 3]
+    assert score == 10 / 15
+
+
+def test_score_is_none_when_no_statements_are_extracted(monkeypatch):
+    import asyncio
+
+    class FakeFaithfulness:
+        def __init__(self, llm):
+            pass
+
+        async def _create_statements(self, question, section):
+            return []
+
+    monkeypatch.setattr("ragas.metrics.collections.Faithfulness", FakeFaithfulness)
+    monkeypatch.setitem(evaluation._JUDGE_LLMS, "openai", lambda model, key: "llm")
+
+    assert asyncio.run(evaluation._score_report_faithfulness_async(
+        "q", REPORT, ["ctx"], model="m", api_key="k",
+    )) is None
+
+
+def test_ragas_faithfulness_still_exposes_the_two_steps_we_call():
+    """Guards the ragas upgrade path: the batched scorer calls these private steps directly."""
+    from ragas.metrics.collections import Faithfulness
+
+    assert callable(Faithfulness._create_statements)
+    assert callable(Faithfulness._create_verdicts)

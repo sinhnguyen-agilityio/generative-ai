@@ -1155,3 +1155,11 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   has no fixed properties. Removed the field. Added a contract test that every model-output schema
   converts to an OpenAI strict JSON schema without free-form maps. Tests:
   `tests/contract/test_structured_output_schemas.py`. Full suite: 206 passed, 2 skipped.
+- [X] T164 Fix truncated RAGAS Faithfulness scoring (`faithfulness_error: "The output is incomplete
+  due to a max_tokens length limit."`): RAGAS's judge defaults to 1024 output tokens, and
+  `Faithfulness.ascore` extracts and then judges every statement of the whole report in single
+  calls. `observability/evaluation.py` now sets `JUDGE_MAX_TOKENS=4096` on both judge providers,
+  scores only body sections (`report_sections` drops `## Scope`, `## Limitations`, `## Sources`),
+  extracts statements per section and judges them in NLI batches of `NLI_BATCH_SIZE=12`, running
+  up to `JUDGE_CONCURRENCY=4` calls at once; the score is supported / all statements (FR-039).
+  Tests: `tests/evaluation/test_faithfulness_evaluator.py`. Full suite: 210 passed, 2 skipped.

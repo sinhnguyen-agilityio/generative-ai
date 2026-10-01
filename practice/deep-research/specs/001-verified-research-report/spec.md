@@ -657,9 +657,12 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   model observations MUST contain the complete rendered instructions and conversation supplied to
   the model plus the validated response serialized as JSON text. Hashes, IDs, and
   dispatch statuses MAY remain metadata but MUST NOT replace semantic input or output content.
-- **FR-039**: Once a draft passes verification (FR-016c), the system MUST score the whole report's
-  RAGAS Faithfulness against the excerpt
-  text of every source the report actually cites, using an LLM judge, and record the resulting
+- **FR-039**: Once a draft passes verification (FR-016c), the system MUST score the report's RAGAS
+  Faithfulness against the excerpt text of every source the report actually cites, using an LLM
+  judge. Every body section is scored; `## Scope`, `## Limitations` and `## Sources` are excluded
+  because they make no evidence-backed claims. The score is supported statements divided by all
+  statements, judged per section and in bounded batches so no judge call is truncated by its
+  output-token limit. The system MUST then record the resulting
   score (or, on judge failure, the error) as a durable per-run artifact. This score is
   observational: a missing, low, or failed score MUST NOT alter verification's pass/fail
   determination, the workflow stage, or publication eligibility (`can_request_approval` remains

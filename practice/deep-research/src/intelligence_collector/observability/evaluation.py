@@ -5,11 +5,39 @@ verification or publication.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Callable
 
 from intelligence_collector.observability._ragas_compat import ensure_ragas_importable
 
 ensure_ragas_importable()
+
+# Output cap per judge call. RAGAS defaults to 1024, which a whole report's statement list or
+# verdicts overflow ("The output is incomplete due to a max_tokens length limit").
+JUDGE_MAX_TOKENS = 4096
+# Statements judged per NLI call; each verdict carries a reason, so this bounds the output size.
+NLI_BATCH_SIZE = 12
+# Judge calls in flight at once (statement extraction and NLI batches share the limit).
+JUDGE_CONCURRENCY = 4
+# Sections that make no evidence-backed claims (report guidelines exempt them from citations).
+UNSCORED_SECTIONS = {"scope", "limitations", "sources"}
+_HEADING = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+
+
+def report_sections(report: str) -> list[str]:
+    """Split a Markdown report into its ``## `` sections (text before the first one included) and
+    drop the ones in ``UNSCORED_SECTIONS``, which only restate the scope, disclose gaps, or list
+    sources and so have nothing to be faithful to."""
+    starts = [match.start() for match in _HEADING.finditer(report)]
+    chunks = [report[a:b] for a, b in zip([0, *starts], [*starts, len(report)])]
+    sections = []
+    for chunk in chunks:
+        heading = _HEADING.match(chunk)
+        if heading and heading.group(1).strip().lower() in UNSCORED_SECTIONS:
+            continue
+        if chunk.strip():
+            sections.append(chunk.strip())
+    return sections
 
 
 def faithfulness_score(answer: str, contexts: list[str]) -> float:
@@ -39,7 +67,7 @@ def _google_judge_llm(model: str, api_key: str):
 
     client = genai.Client(api_key=api_key)
     patched = instructor.from_genai(client, use_async=True)
-    return InstructorLLM(client=patched, model=model, provider="google")
+    return InstructorLLM(client=patched, model=model, provider="google", max_tokens=JUDGE_MAX_TOKENS)
 
 
 def _openai_judge_llm(model: str, api_key: str):
@@ -48,7 +76,9 @@ def _openai_judge_llm(model: str, api_key: str):
     from openai import AsyncOpenAI
     from ragas.llms import llm_factory
 
-    return llm_factory(model, provider="openai", client=AsyncOpenAI(api_key=api_key))
+    return llm_factory(
+        model, provider="openai", client=AsyncOpenAI(api_key=api_key), max_tokens=JUDGE_MAX_TOKENS,
+    )
 
 
 _JUDGE_LLMS = {"openai": _openai_judge_llm, "google_genai": _google_judge_llm}
@@ -57,21 +87,45 @@ _JUDGE_LLMS = {"openai": _openai_judge_llm, "google_genai": _google_judge_llm}
 async def _score_report_faithfulness_async(
     question: str, report: str, contexts: list[str], *, model: str, api_key: str,
     provider: str = "openai",
-) -> float:
+) -> float | None:
+    """RAGAS Faithfulness over the report's scored sections: supported statements / all
+    statements. Same two steps as ``Faithfulness.ascore`` (extract statements, then NLI verdicts
+    against the contexts), but per section and in NLI batches, so no single judge call has to
+    emit a whole report's worth of output. ``None`` when no statements were extracted."""
     from ragas.metrics.collections import Faithfulness
 
     scorer = Faithfulness(llm=_JUDGE_LLMS[provider](model, api_key))
-    result = await scorer.ascore(
-        user_input=question, response=report, retrieved_contexts=contexts
-    )
-    return float(result.value)
+    context = "\n".join(contexts)
+    limit = asyncio.Semaphore(JUDGE_CONCURRENCY)
+
+    # `_create_statements` / `_create_verdicts` are the two steps `Faithfulness.ascore` runs on
+    # the whole response (ragas 0.4.x); calling them directly lets each call stay small.
+    async def statements_of(section: str) -> list[str]:
+        async with limit:
+            return await scorer._create_statements(question, section)
+
+    async def verdicts_of(batch: list[str]) -> list[int]:
+        async with limit:
+            result = await scorer._create_verdicts(batch, context)
+        return [1 if item.verdict else 0 for item in result.statements]
+
+    per_section = await asyncio.gather(*(statements_of(s) for s in report_sections(report)))
+    statements = [statement for found in per_section for statement in found]
+    if not statements:
+        return None
+    batches = [statements[i:i + NLI_BATCH_SIZE] for i in range(0, len(statements), NLI_BATCH_SIZE)]
+    verdicts = [v for batch in await asyncio.gather(*(verdicts_of(b) for b in batches)) for v in batch]
+    if not verdicts:
+        return None
+    return sum(verdicts) / len(verdicts)
 
 
 def make_faithfulness_evaluator(
     *, model: str, api_key: str, provider: str = "openai",
 ) -> FaithfulnessEvaluator:
-    """Return a ``(question, report, contexts) -> score`` callable that scores an entire
-    report's RAGAS Faithfulness with the given judge model: ``provider`` is ``"openai"``
+    """Return a ``(question, report, contexts) -> score`` callable that scores a report's RAGAS
+    Faithfulness (its body sections; see ``report_sections``) with the given judge model:
+    ``provider`` is ``"openai"``
     (e.g. ``gpt-4.1-mini``, the default) or ``"google_genai"`` (e.g. ``gemini-3.8-flash``).
 
     ``contexts`` should be the excerpt text of every source the report actually cites (see
