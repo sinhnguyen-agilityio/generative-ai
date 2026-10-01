@@ -1163,3 +1163,17 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   extracts statements per section and judges them in NLI batches of `NLI_BATCH_SIZE=12`, running
   up to `JUDGE_CONCURRENCY=4` calls at once; the score is supported / all statements (FR-039).
   Tests: `tests/evaluation/test_faithfulness_evaluator.py`. Full suite: 210 passed, 2 skipped.
+- [X] T165 [US1] Add RAGAS Context Precision and Response Relevancy (FR-039d/e/f), informational
+  like Faithfulness. `synthesizing` persists the per-question ranked source ids the writer saw
+  (`writer_evidence`, `synthesis/retrieval.v<n>.json`). `observability/evaluation.py` adds
+  `make_context_precision_evaluator` (`ContextPrecisionWithoutReference` per research question on
+  those excerpts in rank order, mean over questions, per-question details) and
+  `make_response_relevancy_evaluator` (`AnswerRelevancy` of the report body vs. the brief, the
+  vector index's LangChain embeddings adapted to `BaseRagasEmbedding`); both score the body only
+  (`report_body`). `evaluating_faithfulness` is renamed `evaluating_quality` and runs every metric
+  in `INTELLIGENCE_EVAL_METRICS` (default all), recording each failure separately and writing
+  `verification/quality.<verification_id>.json`; scores render together in the UI and become
+  Langfuse trace scores (`context_precision`, `response_relevancy`). `chroma_vector_index`
+  exposes `default_embeddings` so the app builds one embeddings client for both. Tests:
+  `tests/evaluation/test_faithfulness_evaluator.py`, `tests/integration/test_bvf_loop.py`,
+  `tests/unit/test_env_config.py`. Full suite: 219 passed, 2 skipped.

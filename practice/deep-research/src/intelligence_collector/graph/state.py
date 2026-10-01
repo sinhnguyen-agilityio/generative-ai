@@ -34,8 +34,15 @@ class GraphState(TypedDict, total=False):
     previous_draft: str
     verification: dict | None
     verification_history: list[dict]
+    # RAGAS quality scores of the final report (informational; see BVFNodes.evaluating_quality)
+    writer_evidence: list[dict]  # per-question ranked source ids the latest draft was written from
     faithfulness_score: float | None
     faithfulness_error: str
+    context_precision_score: float | None
+    context_precision_error: str
+    context_precision_details: list[dict]
+    response_relevancy_score: float | None
+    response_relevancy_error: str
     recovery_attempt: int
     recovery_budget: int
     progress_fingerprint: str

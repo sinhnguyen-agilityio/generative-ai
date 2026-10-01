@@ -46,6 +46,24 @@ def _bounded_int(name: str, default: int, maximum: int) -> int:
     return value
 
 
+EVAL_METRICS = ("faithfulness", "context_precision", "response_relevancy")
+
+
+def _eval_metrics() -> tuple[str, ...]:
+    """``INTELLIGENCE_EVAL_METRICS``: comma-separated subset of ``EVAL_METRICS`` (default: all;
+    empty: none). Raises ``ValueError`` for an unknown metric name."""
+    raw = os.getenv("INTELLIGENCE_EVAL_METRICS")
+    if raw is None:
+        return EVAL_METRICS
+    names = tuple(dict.fromkeys(n.strip().lower() for n in raw.split(",") if n.strip()))
+    unknown = [n for n in names if n not in EVAL_METRICS]
+    if unknown:
+        raise ValueError(
+            f"INTELLIGENCE_EVAL_METRICS has unknown metric(s) {unknown}; use {list(EVAL_METRICS)}"
+        )
+    return names
+
+
 def _json_string_list(name: str, default: list[str]) -> list[str]:
     raw = os.getenv(name)
     if raw is None:
@@ -63,7 +81,7 @@ def load_local_env() -> None:
 
 @dataclass(frozen=True)
 class Settings:
-    """Storage paths, research limits, report guidelines and the faithfulness judge, read from
+    """Storage paths, research limits, report guidelines and the RAGAS judge, read from
     ``INTELLIGENCE_*`` environment variables.
     """
 
@@ -82,6 +100,8 @@ class Settings:
     recovery_attempts: int = 2
     faithfulness_model: str = "gpt-4.1-mini"
     faithfulness_provider: str = "openai"
+    # RAGAS metrics scored on the final report (judge = the faithfulness model above).
+    eval_metrics: tuple[str, ...] = EVAL_METRICS
     report_guidelines: list[str] = field(
         default_factory=lambda: list(DEFAULT_REPORT_GUIDELINES))
 
@@ -123,6 +143,7 @@ class Settings:
             faithfulness_provider=os.getenv(
                 "INTELLIGENCE_FAITHFULNESS_PROVIDER", cls.faithfulness_provider
             ),
+            eval_metrics=_eval_metrics(),
         )
 
 

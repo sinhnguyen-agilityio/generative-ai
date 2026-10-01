@@ -20,6 +20,14 @@ attempt, structured-output validation, fallback, and safe error details. Export 
 execution completes; credential-shaped fields are redacted. Ragas evaluation uses
 the deterministic local faithfulness baseline and does not publish a report.
 
+A report that passes verification is scored (informational only) by the RAGAS judge
+`INTELLIGENCE_FAITHFULNESS_MODEL`: Faithfulness, Context Precision (per research question, on the
+ranked evidence the writer saw) and Response Relevancy (report body vs. the research brief, using
+the vector index's embeddings). `INTELLIGENCE_EVAL_METRICS` picks the metrics (comma-separated;
+default all, empty for none). Scores appear in the UI and as Langfuse trace scores, and are saved
+to `verification/quality.<verification_id>.json`; the writer's ranking for each draft is saved to
+`synthesis/retrieval.v<n>.json`.
+
 Run the full local acceptance validation with `uv run pytest -q`; it should pass with only the live
 MCP test skipped unless explicitly enabled. The controlled suite covers scope, todos-before-retrieval,
 VFS evidence, synthesis, verification, recovery, resume, and approval binding.

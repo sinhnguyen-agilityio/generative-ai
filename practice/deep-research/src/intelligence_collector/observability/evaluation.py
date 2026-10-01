@@ -1,5 +1,5 @@
-"""RAGAS Faithfulness scoring of the final report. Observability only: a score never gates
-verification or publication.
+"""RAGAS scoring of the final report: Faithfulness, Context Precision and Response Relevancy.
+Observability only: a score never gates verification or publication.
 """
 
 from __future__ import annotations
@@ -38,6 +38,11 @@ def report_sections(report: str) -> list[str]:
         if chunk.strip():
             sections.append(chunk.strip())
     return sections
+
+
+def report_body(report: str) -> str:
+    """The report's scored sections (see ``report_sections``) joined back into one text."""
+    return "\n\n".join(report_sections(report))
 
 
 def faithfulness_score(answer: str, contexts: list[str]) -> float:
@@ -148,5 +153,126 @@ def make_faithfulness_evaluator(
                 question, report, contexts, model=model, api_key=api_key, provider=provider,
             )
         )
+
+    return evaluate
+
+
+# ===== CONTEXT PRECISION =====
+
+# One research question's retrieval as the report writer saw it: {"question": str,
+# "contexts": [excerpt, ...]} with the excerpts in retrieval rank order.
+ContextPrecisionEvaluator = Callable[[list[dict], str], "dict | None"]
+
+
+async def _score_context_precision_async(
+    questions: list[dict], report: str, *, model: str, api_key: str, provider: str = "openai",
+) -> dict:
+    """RAGAS Context Precision (without reference) per research question: one judge verdict per
+    retrieved context ("was it useful for this report?"), then rank-weighted average precision.
+    The run score is the mean over questions."""
+    from ragas.metrics.collections import ContextPrecisionWithoutReference
+
+    scorer = ContextPrecisionWithoutReference(llm=_JUDGE_LLMS[provider](model, api_key))
+    limit = asyncio.Semaphore(JUDGE_CONCURRENCY)
+
+    async def score(item: dict) -> float:
+        async with limit:
+            result = await scorer.ascore(
+                user_input=item["question"], response=report, retrieved_contexts=item["contexts"],
+            )
+        return float(result.value)
+
+    scores = await asyncio.gather(*(score(item) for item in questions))
+    return {
+        "score": sum(scores) / len(scores),
+        "per_question": [
+            {"question": item["question"], "contexts": len(item["contexts"]), "score": value}
+            for item, value in zip(questions, scores)
+        ],
+    }
+
+
+def make_context_precision_evaluator(
+    *, model: str, api_key: str, provider: str = "openai",
+) -> ContextPrecisionEvaluator:
+    """Return a ``(questions, report) -> {"score", "per_question"}`` callable scoring whether the
+    retrieval ranked the sources that the report needed at the top. ``questions`` is the writer's
+    per-question ranked evidence (see ``BVFNodes.synthesizing``). Returns ``None`` when there is
+    nothing to score; raises on a judge-LLM failure. Informational only."""
+    if provider not in _JUDGE_LLMS:
+        raise ValueError(f"Unsupported judge provider {provider!r}; use one of {sorted(_JUDGE_LLMS)}")
+
+    def evaluate(questions: list[dict], report: str) -> dict | None:
+        """Score one report's retrieval; ``None`` when there is nothing to score."""
+        body = report_body(report)
+        scored = [item for item in questions if item.get("question") and item.get("contexts")]
+        if not body or not scored:
+            return None
+        return asyncio.run(_score_context_precision_async(
+            scored, body, model=model, api_key=api_key, provider=provider,
+        ))
+
+    return evaluate
+
+
+# ===== RESPONSE RELEVANCY =====
+
+ResponseRelevancyEvaluator = Callable[[str, str], "float | None"]
+
+
+def _ragas_embeddings(embeddings):
+    """Adapt a LangChain ``Embeddings`` (the one the vector index uses) to RAGAS's modern
+    embedding interface, which collections metrics require."""
+    from ragas.embeddings.base import BaseRagasEmbedding
+
+    class LangChainEmbedding(BaseRagasEmbedding):
+        def embed_text(self, text, **kwargs):
+            return embeddings.embed_query(text)
+
+        async def aembed_text(self, text, **kwargs):
+            return await embeddings.aembed_query(text)
+
+        def embed_texts(self, texts, **kwargs):
+            return embeddings.embed_documents(list(texts))
+
+        async def aembed_texts(self, texts, **kwargs):
+            return await embeddings.aembed_documents(list(texts))
+
+    return LangChainEmbedding()
+
+
+async def _score_response_relevancy_async(
+    question: str, report: str, *, model: str, api_key: str, provider: str, embeddings,
+) -> float:
+    """RAGAS Response Relevancy: the judge writes questions the report answers; the score is
+    their mean cosine similarity to the research question (0 if the report is noncommittal)."""
+    from ragas.metrics.collections import AnswerRelevancy
+
+    scorer = AnswerRelevancy(
+        llm=_JUDGE_LLMS[provider](model, api_key), embeddings=_ragas_embeddings(embeddings),
+    )
+    result = await scorer.ascore(user_input=question, response=report)
+    return float(result.value)
+
+
+def make_response_relevancy_evaluator(
+    *, model: str, api_key: str, embeddings, provider: str = "openai",
+) -> ResponseRelevancyEvaluator:
+    """Return a ``(question, report) -> score`` callable scoring how directly the report body
+    addresses the research question. ``embeddings`` is a LangChain ``Embeddings``. Scoring the
+    body only matters here: a ``## Limitations`` section disclosing gaps could otherwise get the
+    whole report judged noncommittal (score 0). Returns ``None`` when there is nothing to score;
+    raises on a judge or embedding failure. Informational only."""
+    if provider not in _JUDGE_LLMS:
+        raise ValueError(f"Unsupported judge provider {provider!r}; use one of {sorted(_JUDGE_LLMS)}")
+
+    def evaluate(question: str, report: str) -> float | None:
+        """Score one report; ``None`` when there is nothing to score."""
+        body = report_body(report)
+        if not body or not question.strip():
+            return None
+        return asyncio.run(_score_response_relevancy_async(
+            question, body, model=model, api_key=api_key, provider=provider, embeddings=embeddings,
+        ))
 
     return evaluate

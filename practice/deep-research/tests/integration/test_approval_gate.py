@@ -1,5 +1,5 @@
 """Integration tests for the human-in-the-loop review, reached once a report has fully passed
-verification: evaluating_faithfulness -> approval (HITL).
+verification: evaluating_quality -> approval (HITL).
 
 * Approve goes to ``publishing``, which writes the verified report to ``output_dir`` and ends.
 * A reply goes to ``classify_feedback``, whose feedback-router LLM chooses ``revise`` (back to
@@ -210,7 +210,7 @@ def test_review_flow_graph_structure(stores, tmp_path):
     graph = _bvf_graph(stores, FakeReportModel([GOOD]), output_dir=tmp_path / "exports")
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
 
-    assert (Node.EVALUATE_FAITHFULNESS, Node.APPROVE) in edges
+    assert (Node.EVALUATE_QUALITY, Node.APPROVE) in edges
     assert (Node.APPROVE, Node.PUBLISH) in edges
     assert (Node.PUBLISH, "__end__") in edges
     assert (Node.APPROVE, Node.CLASSIFY_FEEDBACK) in edges

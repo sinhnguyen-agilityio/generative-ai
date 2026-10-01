@@ -13,7 +13,11 @@ from langgraph.errors import GraphInterrupt
 from intelligence_collector.graph.state import GraphState
 
 # State fields exported to Langfuse as trace scores: {state key: score name}.
-SCORE_FIELDS = {"faithfulness_score": "faithfulness"}
+SCORE_FIELDS = {
+    "faithfulness_score": "faithfulness",
+    "context_precision_score": "context_precision",
+    "response_relevancy_score": "response_relevancy",
+}
 
 NodeFn = Callable[[GraphState], GraphState]
 Lifecycle = Callable[[str, str], None]
@@ -46,10 +50,14 @@ def _trace_output(result: GraphState) -> str:
         "scope_assessment": result.get("scope_assessment"),
         "research_brief": result.get("scoped_request"),
         "todos": result.get("todos"),
-        # Present only on the faithfulness node, so its result is readable in the trace itself.
+        # Present only on the quality node, so its results are readable in the trace itself.
         **{
             key: result[key]
-            for key in ("faithfulness_score", "faithfulness_error")
+            for key in (
+                "faithfulness_score", "faithfulness_error",
+                "context_precision_score", "context_precision_error", "context_precision_details",
+                "response_relevancy_score", "response_relevancy_error",
+            )
             if result.get(key) not in (None, "")
         },
     })

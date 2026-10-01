@@ -48,7 +48,8 @@ def _passing_judge() -> FakeAcceptanceModel:
 
 def _run(stores, report_model, *, research_model=None, budget=3, run_id="bvf",
          report_judge=None, report_guidelines=(),
-         faithfulness_evaluator=None):
+         faithfulness_evaluator=None, context_precision_evaluator=None,
+         response_relevancy_evaluator=None):
     vfs, index = stores
     researcher = ResearchAgent(
         ModelRouter(research_model or FakeResearchModel()),
@@ -63,6 +64,8 @@ def _run(stores, report_model, *, research_model=None, budget=3, run_id="bvf",
         report_guidelines=report_guidelines,
         recovery_budget=budget,
         faithfulness_evaluator=faithfulness_evaluator,
+        context_precision_evaluator=context_precision_evaluator,
+        response_relevancy_evaluator=response_relevancy_evaluator,
     )
     todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
     return build_graph(research_nodes=nodes).invoke({
@@ -321,10 +324,10 @@ def test_faithfulness_score_is_recorded_only_once_verification_passes(stores):
     assert result["faithfulness_score"] == 0.95
     assert result["faithfulness_error"] == ""
     verification_id = result["verification"]["verification_id"]
-    persisted = json.loads(vfs.read("bvf", f"verification/faithfulness.{verification_id}.json"))
-    assert persisted["score"] == 0.95
+    persisted = json.loads(vfs.read("bvf", f"verification/quality.{verification_id}.json"))
+    assert persisted["faithfulness_score"] == 0.95
     assert persisted["question"] == BRIEF["research_question"]
-    assert persisted["context_count"] == 1
+    assert persisted["faithfulness_context_count"] == 1
 
 
 def test_faithfulness_evaluator_failure_is_recorded_but_never_blocks_approval(stores):
@@ -337,3 +340,66 @@ def test_faithfulness_evaluator_failure_is_recorded_but_never_blocks_approval(st
     assert result["verification"]["passed"] is True
     assert result["faithfulness_score"] is None
     assert "rate limited" in result["faithfulness_error"]
+
+
+def test_context_precision_scores_the_ranked_evidence_the_final_draft_was_written_from(stores):
+    vfs, _ = stores
+    calls = []
+
+    def evaluator(questions, report):
+        calls.append((questions, report))
+        return {"score": 0.8, "per_question": [{"question": QUESTION, "contexts": 1, "score": 0.8}]}
+
+    result = _run(stores, FakeReportModel([GOOD]), context_precision_evaluator=evaluator)
+
+    assert result["stage"] == "Awaiting Approval"
+    assert len(calls) == 1
+    questions, report = calls[0]
+    assert report == GOOD
+    # The per-question ranking the writer saw, resolved to excerpt text in rank order.
+    assert questions == [{
+        "question": QUESTION, "contexts": ["A cache stores reusable data for later access."],
+    }]
+    assert result["writer_evidence"] == [
+        {"todo_id": "todo-1", "question": QUESTION, "source_ids": ["S1"]},
+    ]
+    assert json.loads(vfs.read("bvf", "synthesis/retrieval.v1.json")) == result["writer_evidence"]
+    assert result["context_precision_score"] == 0.8
+    assert result["context_precision_details"][0]["score"] == 0.8
+    # Only the configured metrics run; the others stay empty.
+    assert result["faithfulness_score"] is None and result["response_relevancy_score"] is None
+
+
+def test_response_relevancy_scores_the_report_against_the_research_question(stores):
+    vfs, _ = stores
+    calls = []
+
+    def evaluator(question, report):
+        calls.append((question, report))
+        return 0.72
+
+    result = _run(stores, FakeReportModel([GOOD]), response_relevancy_evaluator=evaluator)
+
+    assert calls == [(BRIEF["research_question"], GOOD)]
+    assert result["response_relevancy_score"] == 0.72
+    verification_id = result["verification"]["verification_id"]
+    persisted = json.loads(vfs.read("bvf", f"verification/quality.{verification_id}.json"))
+    assert persisted["response_relevancy_score"] == 0.72
+
+
+def test_one_failing_metric_never_drops_the_others_or_blocks_approval(stores):
+    def failing(*args):
+        raise RuntimeError("judge LLM rate limited")
+
+    result = _run(
+        stores, FakeReportModel([GOOD]),
+        faithfulness_evaluator=lambda q, r, c: 0.9,
+        context_precision_evaluator=failing,
+        response_relevancy_evaluator=lambda q, r: 0.7,
+    )
+
+    assert result["stage"] == "Awaiting Approval"
+    assert result["faithfulness_score"] == 0.9
+    assert result["response_relevancy_score"] == 0.7
+    assert result["context_precision_score"] is None
+    assert "rate limited" in result["context_precision_error"]

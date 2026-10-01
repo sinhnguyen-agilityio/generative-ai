@@ -41,7 +41,9 @@ def _where(run_id: str | None, todo_id: str | None) -> dict | None:
     return clauses[0] if len(clauses) == 1 else {"$and": clauses}
 
 
-def _default_embeddings(model: str, provider: str) -> Embeddings:
+def default_embeddings(model: str, provider: str) -> Embeddings:
+    """The LangChain embeddings for `provider` ("openai" or Google Gemini otherwise); shared by
+    the vector index and the RAGAS Response Relevancy metric."""
     if provider == "openai":
         from langchain_openai import OpenAIEmbeddings  # lazy: only needed for this provider
 
@@ -67,7 +69,7 @@ class ChromaVectorIndex:
         import chromadb  # lazy: keeps the dependency edge local to this adapter
 
         Path(path).mkdir(parents=True, exist_ok=True)
-        self._embeddings = embeddings or _default_embeddings(model, provider)
+        self._embeddings = embeddings or default_embeddings(model, provider)
         self._collection = chromadb.PersistentClient(path=str(path)).get_or_create_collection(
             collection_name
         )

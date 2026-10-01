@@ -62,7 +62,7 @@ def build_graph(
             START -> clarify_with_user --(needs clarification)--> END
                                        \\-> write_research_brief -> planning
                   -> researching -> research_complete -> synthesizing -> verifying
-            verifying --(all checks pass)--> evaluating_faithfulness -> approval (with_approval) | END
+            verifying --(all checks pass)--> evaluating_quality -> approval (with_approval) | END
                       --(failed, budget left)--> fixing (reflect) -> synthesizing (rewrite)
                       --(budget exhausted / no progress)--> needs_review -> END
             approval (human-in-the-loop review) --(explicit approve)--> publishing -> END
@@ -136,21 +136,21 @@ def build_graph(
     bvf = research_nodes.bvf
     add_node(Node.SYNTHESIZE, bvf.synthesizing)
     add_node(Node.VERIFY, bvf.verifying)
-    add_node(Node.EVALUATE_FAITHFULNESS, bvf.evaluating_faithfulness)
+    add_node(Node.EVALUATE_QUALITY, bvf.evaluating_quality)
     add_node(Node.FIX, bvf.fixing)
     add_node(Node.NEEDS_REVIEW, bvf.needs_review)
 
     graph.add_edge(Node.SYNTHESIZE, Node.VERIFY)
     passed_target = Node.APPROVE if with_approval else END
-    # RAGAS Faithfulness (evaluating_faithfulness) runs only on this PASSED edge — once, on the
+    # RAGAS quality scoring (evaluating_quality) runs only on this PASSED edge — once, on the
     # final report that actually left the BVF loop — never on a draft that gets fixed and
     # reverified.
     graph.add_conditional_edges(
         Node.VERIFY,
         route_after_verify,
-        {PASSED: Node.EVALUATE_FAITHFULNESS, FIX: Node.FIX, NEEDS_REVIEW: Node.NEEDS_REVIEW},
+        {PASSED: Node.EVALUATE_QUALITY, FIX: Node.FIX, NEEDS_REVIEW: Node.NEEDS_REVIEW},
     )
-    graph.add_edge(Node.EVALUATE_FAITHFULNESS, passed_target)
+    graph.add_edge(Node.EVALUATE_QUALITY, passed_target)
     # The fix is always a rewrite from the same evidence.
     graph.add_edge(Node.FIX, Node.SYNTHESIZE)
     graph.add_edge(Node.NEEDS_REVIEW, END)

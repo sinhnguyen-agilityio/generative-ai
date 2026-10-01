@@ -667,13 +667,25 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   observational: a missing, low, or failed score MUST NOT alter verification's pass/fail
   determination, the workflow stage, or publication eligibility (`can_request_approval` remains
   keyed only to `VerificationResult.passed`).
-- **FR-039a**: The faithfulness score, when present, MUST be displayed to the user alongside the
-  report.
-- **FR-039b**: The faithfulness score MUST also be inspectable in Langfuse: attached to the
-  execution trace as a numeric score named `faithfulness`, and included (with any error) in the
-  `graph.evaluating_faithfulness` span output and the execution trace output.
+- **FR-039a**: The quality scores (FR-039, FR-039d, FR-039e), when present, MUST be displayed to
+  the user alongside the report.
+- **FR-039b**: The quality scores MUST also be inspectable in Langfuse: attached to the execution
+  trace as numeric scores named `faithfulness`, `context_precision` and `response_relevancy`, and
+  included (with any error) in the `graph.evaluating_quality` span output and the execution trace
+  output.
 - **FR-039c**: The human-approval pause (`GraphInterrupt`) MUST NOT be reported to Langfuse as an
   error; its span is marked paused with the status "Paused: waiting for a human decision".
+- **FR-039d**: Alongside FR-039, the system MUST score RAGAS Context Precision (without reference)
+  of the final report: for each research question, the source excerpts the writer was given for
+  the final draft, in their retrieval rank order, are judged for usefulness to the report body;
+  the run score is the mean of the per-question rank-weighted average precision, and the
+  per-question scores MUST be recorded. The ranked evidence behind every draft MUST be persisted.
+- **FR-039e**: Alongside FR-039, the system MUST score RAGAS Response Relevancy of the final report
+  body against the research brief's question, using the same embedding model as the vector index.
+- **FR-039f**: FR-039, FR-039d and FR-039e share FR-039's rules: scored once on the report that
+  passed verification, body sections only, informational only, each metric's failure recorded
+  without affecting the others, and every score/error persisted in one per-run artifact. The
+  metrics to run MUST be configurable (`INTELLIGENCE_EVAL_METRICS`, default all three).
 
 ### Key Entities *(include if feature involves data)*
 

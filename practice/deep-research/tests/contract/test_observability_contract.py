@@ -234,7 +234,7 @@ def test_node_wrapper_exports_faithfulness_as_score_and_span_output(monkeypatch)
     client = FakeLangfuseClient()
     tracer = Tracer(client=client)
     node = node_wrapper(
-        "evaluating_faithfulness",
+        "evaluating_quality",
         lambda state: {**state, "faithfulness_score": 0.9, "faithfulness_error": ""},
         tracer,
     )

@@ -21,10 +21,14 @@ from intelligence_collector.guardrails import GuardrailViolation, normalize_text
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import Node, ResearchNodes
 from intelligence_collector.models.factory import ModelFactory
-from intelligence_collector.observability.evaluation import make_faithfulness_evaluator
+from intelligence_collector.observability.evaluation import (
+    make_context_precision_evaluator,
+    make_faithfulness_evaluator,
+    make_response_relevancy_evaluator,
+)
 from intelligence_collector.observability.tracing import Tracer
 from intelligence_collector.publication import can_request_approval
-from intelligence_collector.storage.chroma_vector_index import ChromaVectorIndex
+from intelligence_collector.storage.chroma_vector_index import ChromaVectorIndex, default_embeddings
 from intelligence_collector.storage.vfs import VFS
 from intelligence_collector.tools.mcp import TavilyMCP
 
@@ -78,6 +82,28 @@ def _open_checkpoint_connection(checkpoint_path: str):
         ) from exc
 
 
+def _quality_evaluators(settings, embeddings) -> dict:
+    """RAGAS evaluators for the metrics in ``INTELLIGENCE_EVAL_METRICS``, keyed by their
+    ``ResearchNodes`` argument. The judge (default OpenAI gpt-4.1-mini) is independent of the
+    app's reasoning/standard tier models; every metric is off when its provider's key is unset.
+    Response Relevancy reuses the vector index's embeddings."""
+    judge_key_env = "GOOGLE_API_KEY" if settings.faithfulness_provider == "google_genai" else "OPENAI_API_KEY"
+    api_key = os.getenv(judge_key_env, "").strip()
+    if not api_key:
+        return {}
+    judge = {"model": settings.faithfulness_model, "api_key": api_key,
+             "provider": settings.faithfulness_provider}
+    factories = {
+        "faithfulness": ("faithfulness_evaluator",
+                         lambda: make_faithfulness_evaluator(**judge)),
+        "context_precision": ("context_precision_evaluator",
+                              lambda: make_context_precision_evaluator(**judge)),
+        "response_relevancy": ("response_relevancy_evaluator",
+                               lambda: make_response_relevancy_evaluator(**judge, embeddings=embeddings)),
+    }
+    return {factories[m][0]: factories[m][1]() for m in settings.eval_metrics}
+
+
 def _get_scope_graph(st, agent, tracer):
     if "scope_graph" in st.session_state:
         return st.session_state.scope_graph
@@ -101,27 +127,13 @@ def _get_scope_graph(st, agent, tracer):
             max_search_calls=settings.max_search_calls,
             max_sources=settings.max_sources_per_task,
         )
-        faithfulness_evaluator = None
-        # RAGAS Faithfulness judge is independent of the app's own reasoning/standard tier
-        # models (default OpenAI gpt-4.1-mini), disabled entirely when its provider's key is unset.
-        judge_key_env = "GOOGLE_API_KEY" if settings.faithfulness_provider == "google_genai" else "OPENAI_API_KEY"
-        judge_api_key = os.getenv(judge_key_env, "").strip()
-        if judge_api_key:
-            faithfulness_evaluator = make_faithfulness_evaluator(
-                model=settings.faithfulness_model,
-                api_key=judge_api_key,
-                provider=settings.faithfulness_provider,
-            )
+        embeddings = default_embeddings(settings.embedding_model, settings.embedding_provider)
         research_nodes = ResearchNodes(
             vfs,
             # Real semantic retrieval: Gemini embeddings, persisted locally via Chroma. Used to
             # narrow the Build/Fix prompt to each question's most relevant sources; Verify always
             # re-reads the full evidence independently, so this never affects what gets checked.
-            ChromaVectorIndex(
-                settings.chroma_path,
-                model=settings.embedding_model,
-                provider=settings.embedding_provider,
-            ),
+            ChromaVectorIndex(settings.chroma_path, embeddings=embeddings),
             researcher,
             # Sole Verify gate (LLM-as-judge, no deterministic pre-check); shares the
             # scope/planner reasoning-tier model.
@@ -130,7 +142,7 @@ def _get_scope_graph(st, agent, tracer):
             max_concurrent_researchers=settings.max_concurrent_researchers,
             recovery_budget=settings.recovery_attempts,
             evidence_top_k=settings.evidence_top_k,
-            faithfulness_evaluator=faithfulness_evaluator,
+            **_quality_evaluators(settings, embeddings),
         )
     graph = build_graph(
         scope_agent=agent,
@@ -169,6 +181,34 @@ def _start_new_thread(st):
     st.session_state.progress = "No research started"
     for key in ("verification",):
         st.session_state.pop(key, None)
+
+
+_QUALITY_METRICS = (
+    ("faithfulness", "Faithfulness"),
+    ("context_precision", "Context precision"),
+    ("response_relevancy", "Response relevancy"),
+)
+
+
+def _render_quality_scores(st, snapshot):
+    """RAGAS scores of the final report side by side; informational, never a gate."""
+    present = [
+        (key, label) for key, label in _QUALITY_METRICS
+        if snapshot.get(f"{key}_score") is not None or snapshot.get(f"{key}_error")
+    ]
+    if not present:
+        return
+    st.subheader("Report quality (RAGAS)")
+    for column, (key, label) in zip(st.columns(len(present)), present):
+        score = snapshot.get(f"{key}_score")
+        with column:
+            if score is not None:
+                st.metric(label, f"{score:.0%}")
+            else:
+                st.caption(f"{label} unavailable: {snapshot.get(key + '_error')}")
+    faithfulness = snapshot.get("faithfulness_score")
+    if faithfulness is not None and faithfulness < 0.9:
+        st.warning("Below the 90% faithfulness target.")
 
 
 def _record_value(record, key, default=None):
@@ -252,16 +292,7 @@ def _render_details_content(st, snapshot):
         if verification.checks:
             st.write("Checks: " + ", ".join(verification.checks))
 
-    faithfulness_score = snapshot.get("faithfulness_score")
-    faithfulness_error = snapshot.get("faithfulness_error")
-    if faithfulness_score is not None or faithfulness_error:
-        st.subheader("Faithfulness (RAGAS)")
-        if faithfulness_score is not None:
-            st.metric("Faithfulness score", f"{faithfulness_score:.0%}")
-            if faithfulness_score < 0.9:
-                st.warning("Below the 90% faithfulness target.")
-        if faithfulness_error:
-            st.caption(f"Faithfulness scoring unavailable: {faithfulness_error}")
+    _render_quality_scores(st, snapshot)
 
     evidence = list(snapshot.get("evidence") or [])
     if evidence:
@@ -502,7 +533,7 @@ _NODE_ACTIVITY = {
     Node.ASSESS_RESEARCH: ("Assessing research completeness", "Research Supervisor", "think_tool"),
     Node.SYNTHESIZE: ("Synthesizing report", "Report Writer", None),
     Node.VERIFY: ("Verifying report with LLM judge", "Verifier", "report_judge"),
-    Node.EVALUATE_FAITHFULNESS: ("Scoring RAGAS Faithfulness", "Verifier", None),
+    Node.EVALUATE_QUALITY: ("Scoring RAGAS report quality", "Verifier", None),
     Node.FIX: ("Reflecting on verification failures", "Fix Planner", None),
     Node.NEEDS_REVIEW: ("Escalating for review", "Verifier", None),
     Node.APPROVE: ("Waiting for publication decision", "Publisher", None),
@@ -619,6 +650,10 @@ def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
                 "publication": result.get("publication"),
                 "faithfulness_score": result.get("faithfulness_score"),
                 "faithfulness_error": result.get("faithfulness_error"),
+                "context_precision_score": result.get("context_precision_score"),
+                "context_precision_error": result.get("context_precision_error"),
+                "response_relevancy_score": result.get("response_relevancy_score"),
+                "response_relevancy_error": result.get("response_relevancy_error"),
                 "messages": [
                     {"role": getattr(message, "type", "message"),
                      "content": getattr(message, "content", str(message))}

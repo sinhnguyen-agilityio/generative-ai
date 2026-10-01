@@ -221,3 +221,105 @@ def test_ragas_faithfulness_still_exposes_the_two_steps_we_call():
 
     assert callable(Faithfulness._create_statements)
     assert callable(Faithfulness._create_verdicts)
+
+
+# ===== CONTEXT PRECISION / RESPONSE RELEVANCY =====
+
+
+def test_context_precision_evaluator_returns_none_without_ranked_contexts():
+    evaluate = evaluation.make_context_precision_evaluator(model="m", api_key="k")
+
+    assert evaluate([], REPORT) is None
+    assert evaluate([{"question": "q", "contexts": []}], REPORT) is None
+    assert evaluate([{"question": "q", "contexts": ["c"]}], "") is None
+
+
+def test_context_precision_scores_each_question_on_its_ranked_contexts(monkeypatch):
+    """Each question is scored on its own contexts, in rank order, against the report body;
+    the run score is the mean over questions."""
+    seen = []
+
+    class FakeContextPrecision:
+        def __init__(self, llm):
+            pass
+
+        async def ascore(self, user_input, response, retrieved_contexts):
+            seen.append((user_input, response, retrieved_contexts))
+
+            class Result:
+                value = {"q1": 1.0, "q2": 0.5}[user_input]
+            return Result()
+
+    monkeypatch.setattr("ragas.metrics.collections.ContextPrecisionWithoutReference",
+                        FakeContextPrecision)
+    monkeypatch.setitem(evaluation._JUDGE_LLMS, "openai", lambda model, key: "llm")
+    evaluate = evaluation.make_context_precision_evaluator(model="m", api_key="k")
+
+    result = evaluate([
+        {"question": "q1", "contexts": ["top", "second"]},
+        {"question": "q2", "contexts": ["only"]},
+        {"question": "q3", "contexts": []},  # nothing retrieved: skipped
+    ], REPORT)
+
+    assert result["score"] == 0.75
+    assert [(d["question"], d["contexts"], d["score"]) for d in result["per_question"]] == [
+        ("q1", 2, 1.0), ("q2", 1, 0.5),
+    ]
+    assert sorted(user for user, _, _ in seen) == ["q1", "q2"]
+    assert dict((u, c) for u, _, c in seen)["q1"] == ["top", "second"]  # rank order kept
+    assert all("RFC 6585 - https" not in response for _, response, _ in seen)  # body only
+
+
+def test_response_relevancy_scores_the_body_with_adapted_embeddings(monkeypatch):
+    seen = {}
+
+    class FakeLangChainEmbeddings:
+        async def aembed_query(self, text):
+            return [1.0, 0.0]
+
+        async def aembed_documents(self, texts):
+            return [[1.0, 0.0] for _ in texts]
+
+    class FakeAnswerRelevancy:
+        def __init__(self, llm, embeddings):
+            seen["embeddings"] = embeddings
+
+        async def ascore(self, user_input, response):
+            seen.update(question=user_input, response=response)
+            seen["vector"] = await self_embeddings().aembed_text(user_input)
+
+            class Result:
+                value = 0.66
+            return Result()
+
+    def self_embeddings():
+        return seen["embeddings"]
+
+    monkeypatch.setattr("ragas.metrics.collections.AnswerRelevancy", FakeAnswerRelevancy)
+    monkeypatch.setitem(evaluation._JUDGE_LLMS, "openai", lambda model, key: "llm")
+    evaluate = evaluation.make_response_relevancy_evaluator(
+        model="m", api_key="k", embeddings=FakeLangChainEmbeddings(),
+    )
+
+    assert evaluate("What does HTTP 429 mean?", REPORT) == 0.66
+    assert seen["question"] == "What does HTTP 429 mean?"
+    assert "No vendor data" not in seen["response"]  # Limitations excluded
+    assert seen["vector"] == [1.0, 0.0]  # LangChain embeddings reached through the adapter
+
+
+def test_response_relevancy_returns_none_for_an_empty_report():
+    evaluate = evaluation.make_response_relevancy_evaluator(
+        model="m", api_key="k", embeddings=object(),
+    )
+
+    assert evaluate("q", "") is None
+
+
+def test_ragas_exposes_the_metric_classes_we_build():
+    """Guards the ragas upgrade path for the new metrics."""
+    from ragas.embeddings.base import BaseRagasEmbedding
+    from ragas.metrics.collections import AnswerRelevancy, ContextPrecisionWithoutReference
+
+    assert callable(ContextPrecisionWithoutReference.ascore)
+    assert callable(AnswerRelevancy.ascore)
+    assert isinstance(evaluation._ragas_embeddings(object()), BaseRagasEmbedding)

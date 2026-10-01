@@ -63,3 +63,22 @@ def test_report_guidelines_rejects_non_string_array(monkeypatch):
 
     with pytest.raises(ValueError, match="INTELLIGENCE_REPORT_GUIDELINES"):
         Settings.from_env()
+
+
+def test_eval_metrics_default_to_all_and_accept_a_subset(monkeypatch):
+    import pytest
+
+    from intelligence_collector.config import EVAL_METRICS
+
+    monkeypatch.delenv("INTELLIGENCE_EVAL_METRICS", raising=False)
+    assert Settings.from_env().eval_metrics == EVAL_METRICS
+
+    monkeypatch.setenv("INTELLIGENCE_EVAL_METRICS", " Faithfulness , context_precision ")
+    assert Settings.from_env().eval_metrics == ("faithfulness", "context_precision")
+
+    monkeypatch.setenv("INTELLIGENCE_EVAL_METRICS", "")
+    assert Settings.from_env().eval_metrics == ()
+
+    monkeypatch.setenv("INTELLIGENCE_EVAL_METRICS", "faithfulness,bleu")
+    with pytest.raises(ValueError, match="bleu"):
+        Settings.from_env()

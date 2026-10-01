@@ -39,7 +39,11 @@ from intelligence_collector.contracts import (
     VerificationResult,
 )
 from intelligence_collector.graph.state import GraphState
-from intelligence_collector.observability.evaluation import FaithfulnessEvaluator
+from intelligence_collector.observability.evaluation import (
+    ContextPrecisionEvaluator,
+    FaithfulnessEvaluator,
+    ResponseRelevancyEvaluator,
+)
 from intelligence_collector.source_verification import (
     cited_source_excerpts,
     failure_fingerprint,
@@ -65,7 +69,7 @@ class Node:
     # Build-Verify-Fix loop
     SYNTHESIZE = "synthesizing"
     VERIFY = "verifying"
-    EVALUATE_FAITHFULNESS = "evaluating_faithfulness"
+    EVALUATE_QUALITY = "evaluating_quality"
     FIX = "fixing"
     NEEDS_REVIEW = "needs_review"
     # Human review and publication
@@ -187,6 +191,8 @@ class ResearchNodes:
         recovery_budget: int = DEFAULT_RECOVERY_BUDGET,
         evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
         faithfulness_evaluator: FaithfulnessEvaluator | None = None,
+        context_precision_evaluator: ContextPrecisionEvaluator | None = None,
+        response_relevancy_evaluator: ResponseRelevancyEvaluator | None = None,
     ):
         self.vfs = vfs
         self.index = index
@@ -205,6 +211,8 @@ class ResearchNodes:
             recovery_budget=recovery_budget,
             evidence_top_k=evidence_top_k,
             faithfulness_evaluator=faithfulness_evaluator,
+            context_precision_evaluator=context_precision_evaluator,
+            response_relevancy_evaluator=response_relevancy_evaluator,
         )
 
     def researching(self, state):
@@ -301,6 +309,8 @@ class BVFNodes:
         recovery_budget: int,
         evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
         faithfulness_evaluator: FaithfulnessEvaluator | None = None,
+        context_precision_evaluator: ContextPrecisionEvaluator | None = None,
+        response_relevancy_evaluator: ResponseRelevancyEvaluator | None = None,
     ):
         self.vfs = vfs
         self.index = index
@@ -310,9 +320,11 @@ class BVFNodes:
         self.recovery_budget = recovery_budget
         self.evidence_top_k = evidence_top_k
         self.faithfulness_evaluator = faithfulness_evaluator
+        self.context_precision_evaluator = context_precision_evaluator
+        self.response_relevancy_evaluator = response_relevancy_evaluator
 
     def _catalog(self, state):
-        """Full, unfiltered catalog — used by Verify and faithfulness scoring, never narrowed."""
+        """Full, unfiltered catalog — used by Verify and quality scoring, never narrowed."""
         return load_catalog(self.vfs, state["run_id"], state.get("evidence", []))
 
     def synthesizing(self, state):
@@ -353,6 +365,15 @@ class BVFNodes:
         )
         version = state.get("recovery_attempt", 0) + 1
         ref = persist_report(self.vfs, state["run_id"], report, version)
+        # The ranked evidence this draft was written from, per research question: what Context
+        # Precision scores if this draft becomes the final report.
+        writer_evidence = [
+            {"todo_id": bundle.todo_id, "question": bundle.question, "source_ids": bundle.source_ids}
+            for bundle in catalog.bundles
+        ]
+        ranking_ref = self.vfs.write_json(
+            state["run_id"], f"synthesis/retrieval.v{version}.json", writer_evidence, "retrieval",
+        )
         return {
             **state,
             "stage": Stage.VERIFYING.value,
@@ -365,7 +386,12 @@ class BVFNodes:
             "activity": _activity(state, "Synthesizing report"),
             "previous_draft": state.get("draft", ""),
             "draft": report,
-            "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
+            "writer_evidence": writer_evidence,
+            "artifacts": [
+                *state.get("artifacts", []),
+                ref.model_dump(mode="json"),
+                ranking_ref.model_dump(mode="json"),
+            ],
             "verification": None,  # a changed artifact never inherits a previous verification
         }
 
@@ -421,47 +447,85 @@ class BVFNodes:
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }
 
-    def evaluating_faithfulness(self, state):
-        """RAGAS Faithfulness over the final report only.
+    def evaluating_quality(self, state):
+        """RAGAS quality scores of the final report: Faithfulness, Context Precision and Response
+        Relevancy.
 
         Reached from ``verifying`` exactly once, via the graph edge added only on the PASSED
         route (see ``build.py``) — never as part of a build/verify/fix attempt, so a report
         that fails and gets rewritten is never scored along the way, only the one draft that
         actually left the BVF loop. Observability only, per research.md's "Observability and
-        evaluation" decision: a judge-LLM failure here is recorded, not raised, and never
-        re-enters the loop.
+        evaluation" decision: each metric runs only when its evaluator is configured, and a
+        judge-LLM failure is recorded for that metric alone, never raised, and never re-enters
+        the loop.
         """
-        faithfulness_score = None
-        faithfulness_error = ""
-        refs = []
-        if self.faithfulness_evaluator is not None:
-            catalog = self._catalog(state)
-            brief = ResearchBrief.model_validate(state["scoped_request"])
-            draft = state.get("draft", "")
-            contexts = cited_source_excerpts(draft, catalog)
-            verification_id = (state.get("verification") or {}).get("verification_id", "")
+        update: dict = {
+            "faithfulness_score": None, "faithfulness_error": "",
+            "context_precision_score": None, "context_precision_error": "",
+            "context_precision_details": [],
+            "response_relevancy_score": None, "response_relevancy_error": "",
+        }
+        evaluators = (
+            self.faithfulness_evaluator,
+            self.context_precision_evaluator,
+            self.response_relevancy_evaluator,
+        )
+        if all(evaluator is None for evaluator in evaluators):
+            return {**state, **update}
+
+        catalog = self._catalog(state)
+        question = ResearchBrief.model_validate(state["scoped_request"]).research_question
+        draft = state.get("draft", "")
+        record: dict = {"question": question}
+
+        def run(metric: str, evaluate):
+            """Run one metric; a failure is recorded under ``<metric>_error``, never raised."""
             try:
-                faithfulness_score = self.faithfulness_evaluator(
-                    brief.research_question, draft, contexts
-                )
+                return evaluate()
             except Exception as exc:
-                faithfulness_error = str(exc)
-            refs.append(self.vfs.write_json(
-                state["run_id"],
-                f"verification/faithfulness.{verification_id}.json",
+                update[f"{metric}_error"] = str(exc)
+                return None
+
+        if self.faithfulness_evaluator is not None:
+            contexts = cited_source_excerpts(draft, catalog)
+            record["faithfulness_context_count"] = len(contexts)
+            update["faithfulness_score"] = run(
+                "faithfulness", lambda: self.faithfulness_evaluator(question, draft, contexts),
+            )
+        if self.context_precision_evaluator is not None:
+            ranked = [
                 {
-                    "score": faithfulness_score,
-                    "error": faithfulness_error,
-                    "question": brief.research_question,
-                    "context_count": len(contexts),
-                },
-                "faithfulness",
-            ))
+                    "question": item["question"],
+                    "contexts": [
+                        catalog.sources[sid].excerpt
+                        for sid in item["source_ids"]
+                        if sid in catalog.sources and catalog.sources[sid].excerpt
+                    ],
+                }
+                for item in state.get("writer_evidence", [])
+            ]
+            result = run(
+                "context_precision", lambda: self.context_precision_evaluator(ranked, draft),
+            )
+            if result is not None:
+                update["context_precision_score"] = result["score"]
+                update["context_precision_details"] = result["per_question"]
+        if self.response_relevancy_evaluator is not None:
+            update["response_relevancy_score"] = run(
+                "response_relevancy", lambda: self.response_relevancy_evaluator(question, draft),
+            )
+
+        verification_id = (state.get("verification") or {}).get("verification_id", "")
+        ref = self.vfs.write_json(
+            state["run_id"],
+            f"verification/quality.{verification_id}.json",
+            {**record, **update},
+            "quality",
+        )
         return {
             **state,
-            "artifacts": [*state.get("artifacts", []), *(r.model_dump(mode="json") for r in refs)],
-            "faithfulness_score": faithfulness_score,
-            "faithfulness_error": faithfulness_error,
+            **update,
+            "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }
 
     def fixing(self, state):
