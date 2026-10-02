@@ -66,7 +66,9 @@ class GraphState(TypedDict, total=False):
     verifier_attempt: int
     verifier_error: str
     draft_version: int
-    plan_repair_instruction: str
+    research_status: str
+    research_limitations: list[str]
+    result_incomplete: bool
     research_verifier_attempt: int
     # Publication
     approval: dict | None

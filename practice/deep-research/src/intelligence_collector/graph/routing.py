@@ -43,10 +43,6 @@ def route_after_verify(state: GraphState) -> str:
     issue = state.get("verification_issue", "draft_defect")
     if issue == "verifier_failure":
         return Node.RETRY_VERIFIER if state.get("verifier_attempt", 0) < 2 else NEEDS_REVIEW
-    if issue in {"evidence_gap", "plan_gap"}:
-        if state.get("research_gap_attempt", 0) >= state.get("research_gap_budget", 2):
-            return NEEDS_REVIEW
-        return Node.REPLAN if issue == "plan_gap" else Node.PREPARE_GAP_RESEARCH
     budget = state.get("recovery_budget", DEFAULT_RECOVERY_BUDGET)
     if state.get("recovery_attempt", 0) >= budget:
         return NEEDS_REVIEW
@@ -61,10 +57,8 @@ def route_after_research(state: GraphState) -> str:
                 else Node.NEEDS_REVIEW)
     if (state.get("progress_assessment") or {}).get("ready_for_synthesis"):
         return Node.SYNTHESIZE
-    if state.get("research_gap_attempt", 0) >= state.get("research_gap_budget", 2):
-        return Node.NEEDS_REVIEW
-    if state.get("verification_issue") == "plan_gap":
-        return Node.REPLAN
+    if state.get("research_gap_attempt", 0) >= min(state.get("research_gap_budget", 1), 1):
+        return Node.SYNTHESIZE
     return Node.PREPARE_GAP_RESEARCH
 
 

@@ -16,6 +16,7 @@ MAX_REQUEST_SUMMARY_LENGTH = 500
 TERMINAL_STATUSES = {
     WorkflowStatus.PUBLISHED,
     WorkflowStatus.EXPORTED_INCOMPLETE,
+    WorkflowStatus.INCOMPLETE,
     WorkflowStatus.CANCELLED,
 }
 

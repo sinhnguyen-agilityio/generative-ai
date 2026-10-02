@@ -29,6 +29,7 @@ class Stage(str, Enum):
     PUBLISHED = "Published"
     FAILED = "Failed"
     NEEDS_REVIEW = "NEEDS_REVIEW"
+    INCOMPLETE = "Incomplete"
 
 
 class WorkflowStatus(str, Enum):
@@ -45,6 +46,7 @@ class WorkflowStatus(str, Enum):
     WAITING_FOR_RECOVERY = "waiting_for_recovery"
     PUBLISHED = "published"
     EXPORTED_INCOMPLETE = "exported_incomplete"
+    INCOMPLETE = "incomplete"
     CANCELLED = "cancelled"
     FAILED = "failed"
 
@@ -287,12 +289,28 @@ class ResearchEvidenceCheck(Model):
     missing_evidence: str = ""
 
 
-class ResearchEvidenceVerdict(Model):
-    """Independent semantic assessment of question coverage and plan completeness."""
+class ResearchReadiness(str, Enum):
+    READY = "READY"
+    PARTIAL = "PARTIAL"
+    INSUFFICIENT = "INSUFFICIENT"
 
+
+class ResearchEvidenceVerdict(Model):
+    """Enough evidence for the user's goal, not perfection of every planned question."""
+
+    status: ResearchReadiness
     questions: list[ResearchEvidenceCheck] = Field(min_length=1)
-    plan_complete: bool
-    missing_plan_topics: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_readiness(self):
+        if self.status != ResearchReadiness.READY and not any(text.strip() for text in self.limitations):
+            raise ValueError("Partial or insufficient research requires explicit limitations")
+        if self.status == ResearchReadiness.INSUFFICIENT and not any(
+            not check.sufficient and check.missing_evidence.strip() for check in self.questions
+        ):
+            raise ValueError("Insufficient research requires a targeted gap instruction")
+        return self
 
 
 class DraftAssessment(Model):
@@ -377,17 +395,11 @@ class ReportJudgeCriterion(Model):
     criterion: str = Field(min_length=1)
     met: bool
     justification: str = Field(min_length=1)
-    issue_type: Literal["draft_defect", "evidence_gap", "plan_gap"] = "draft_defect"
-    affected_todo_ids: list[str] = Field(default_factory=list)
-    research_instruction: str = ""
+    issue_type: Literal["draft_defect", "evidence_gap"] = "draft_defect"
 
 
 class ReportJudgeVerdict(Model):
-    """LLM-as-judge verdict for the whole report (see ``agents/report_judge.py``): goal
-    achievement, per-question coverage, fair representation of the evidence, uncertainty
-    disclosure, plain language, and safe content. This is the sole gate for the Verify step of
-    Build-Verify-Fix — there is no separate deterministic citation/grounding script.
-    """
+    """Semantic verdict; structural citation and reviewer checks are appended separately."""
 
     results: list[ReportJudgeCriterion] = Field(min_length=1)
 
@@ -422,12 +434,3 @@ class FeedbackDecision(Model):
 
     route: Literal["approve", "revise", "scope"]
     reason: str = ""
-
-
-class ProgressAssessment(Model):
-    """Supervisor check of whether research is ready for synthesis."""
-
-    completed_todos: list[str] = Field(default_factory=list)
-    blockers: list[str] = Field(default_factory=list)
-    ready_for_synthesis: bool = False
-    next_action: str = ""

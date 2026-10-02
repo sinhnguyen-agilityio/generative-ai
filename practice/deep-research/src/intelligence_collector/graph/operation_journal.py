@@ -30,7 +30,7 @@ class OperationJournal:
         payload = json.dumps(self.encode(state), sort_keys=True, default=str)
         digest = hashlib.sha256((self.context + REPORT_WRITER_PROMPT + REVIEWER_BLOCK + payload)
                                 .encode()).hexdigest()
-        return f"operations/v1/{name}/{digest}.json"
+        return f"operations/v2/{name}/{digest}.json"
 
     def read(self, name, state):
         try:

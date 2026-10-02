@@ -54,11 +54,12 @@ def restore_research(vfs, run_id: str, todo: ResearchTodo):
     return todo, [ref], chunks
 
 
-def _write_failure(vfs, run_id: str, todo: ResearchTodo, message: str):
+def _write_failure(vfs, run_id: str, todo: ResearchTodo, message: str, *, technical=True):
     return vfs.write_json(
         run_id,
         f"{research_prefix(todo)}/outcome.json",
-        {"status": "failed", "question": todo.research_question, "error": message},
+        {"status": "failed", "question": todo.research_question, "error": message,
+         "failure_kind": "technical" if technical else "no_evidence"},
         "research_outcome",
         task_id=todo.todo_id,
     )
@@ -98,7 +99,7 @@ def persist_research(
     if not sources or outcome.findings is None:
         todo.status = TodoStatus.FAILED
         reason = "; ".join(outcome.errors) or "Research returned no sources"
-        return todo, [_write_failure(vfs, run_id, todo, reason)], []
+        return todo, [_write_failure(vfs, run_id, todo, reason, technical=bool(outcome.errors))], []
 
     urls = registry if registry is not None else UrlRegistry.load(vfs, run_id)
     refs, chunks, evidence_sources = [], [], []

@@ -3,7 +3,7 @@
 Reviewer revisions now travel through `prepare_revision` before synthesis. This clears the
 old verification, approval and quality scores. The writer sees the reviewed draft and active
 requests; verification explicitly judges request satisfaction as well as factual support,
-the research goal and per-question coverage. Missing or duplicated judge criteria are a
+the research goal within the available evidence and honest limitation disclosure. Missing or duplicated judge criteria are a
 verifier error, not a failed report and never a pass.
 
 Explicit English word limits are checked in Python. The count uses whitespace-separated
@@ -31,6 +31,22 @@ At `NEEDS_REVIEW`, choose one of these explicit actions:
 
 Only an explicit human approval bound to the exact passing draft can publish it.
 Quality scores remain informational and do not bypass approval.
+
+## Simple research readiness
+
+`READY` answers the main goal; `PARTIAL` contains useful supported answers but is
+incomplete; `INSUFFICIENT` lacks the main evidence. Only the last status triggers
+one automatic targeted research attempt. Optional gaps and index counts do not
+block synthesis. Assessment errors remain technical failures, not content gaps.
+
+After the attempt, missing evidence produces a verified, labeled **Incomplete**
+answer. This is a terminal state with a downloadable incomplete artifact, not a
+publication. It skips approval and paid optional quality metrics. A new request
+requires a new thread. Full verified answers still require human approval.
+
+Automatic replanning and the `think_tool`/supervisor assessment wrapper have been
+removed. Legacy pending `replan` checkpoints are mapped to bounded gap research
+on explicit restore/continue; consumed attempt counters are never reset by migration.
 
 ## Crash boundaries and compatibility
 

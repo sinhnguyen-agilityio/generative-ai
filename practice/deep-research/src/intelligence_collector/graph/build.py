@@ -36,7 +36,6 @@ from intelligence_collector.graph.routing import (
     route_after_research,
 )
 from intelligence_collector.graph.state import GraphState
-from intelligence_collector.contracts import ResearchBrief
 from intelligence_collector.graph.operation_journal import OperationJournal
 
 __all__ = ["build_graph", "node_wrapper"]
@@ -71,7 +70,9 @@ def build_graph(
                                        <--(validated human reply)--/
                                        \\-> write_research_brief -> planning
                   -> researching -> research_complete -> synthesizing -> verifying
-            verifying --(all checks pass)--> evaluating_quality -> approval (with_approval) | END
+            verifying --(all checks pass)--> evaluating_quality
+                          -> approval (complete, with_approval) | END (complete)
+                          -> finish_incomplete -> END (partial/insufficient)
                       --(failed, budget left)--> fixing (reflect) -> synthesizing (rewrite)
                       --(budget exhausted / no progress)--> needs_review
                           -> await_recovery (interrupt) -> apply_recovery_decision
@@ -155,7 +156,6 @@ def build_graph(
         Node.SYNTHESIZE: Node.SYNTHESIZE,
         Node.PREPARE_GAP_RESEARCH: Node.PREPARE_GAP_RESEARCH,
         Node.NEEDS_REVIEW: Node.NEEDS_REVIEW,
-        Node.REPLAN: Node.REPLAN if scope_agent is not None else Node.NEEDS_REVIEW,
         Node.RETRY_RESEARCH_ASSESSMENT: Node.RETRY_RESEARCH_ASSESSMENT})
     add_node(Node.RETRY_RESEARCH_ASSESSMENT, lambda state: state)
     graph.add_edge(Node.RETRY_RESEARCH_ASSESSMENT, Node.ASSESS_RESEARCH)
@@ -176,37 +176,8 @@ def build_graph(
     add_node(Node.RETRY_VERIFIER, lambda state: state)
     graph.add_edge(Node.RETRY_VERIFIER, Node.VERIFY)
 
-    def replan(state):
-        if scope_agent is None:
-            raise ValueError("Plan repair requires a configured Planner Agent")
-        repair_brief = ResearchBrief(research_question=
-            "Plan ONLY the missing topics below. Do not repeat existing questions: " +
-            repr([todo["research_question"] for todo in state.get("todos", [])]) +
-            "\nMissing topics: " + state.get("plan_repair_instruction", ""))
-        result = planner.planning({**state, "scoped_request": repair_brief.model_dump(mode="json")})
-        existing = list(state.get("todos", []))
-        questions = {todo["research_question"].strip().casefold() for todo in existing}
-        additions = []
-        ids = {todo["todo_id"] for todo in existing}
-        for todo in result["todos"]:
-            if todo["research_question"].strip().casefold() in questions:
-                continue
-            if todo["todo_id"] in ids:
-                from uuid import uuid4
-                todo = {**todo, "todo_id": str(uuid4())}
-            ids.add(todo["todo_id"])
-            questions.add(todo["research_question"].strip().casefold())
-            additions.append(todo)
-        result.update(todos=[*existing, *additions], scoped_request=state["scoped_request"])
-        (vfs or research_nodes.vfs).write_json(state["run_id"], "planning/active_todos.json",
-                                              result["todos"], "todos")
-        if not additions:
-            result.update(verification_issue="plan_gap", last_error="Planner added no missing topics")
-        return {**result, "research_gap_attempt": state.get("research_gap_attempt", 0) + 1,
-                "approval": None, "publication": None}
-
-    add_node(Node.REPLAN, replan)
-    graph.add_edge(Node.REPLAN, Node.RESEARCH)
+    add_node(Node.FINISH_INCOMPLETE, bvf.finish_incomplete)
+    graph.add_edge(Node.FINISH_INCOMPLETE, END)
 
     graph.add_edge(Node.SYNTHESIZE, Node.VERIFY)
     passed_target = Node.APPROVE if with_approval else END
@@ -217,11 +188,11 @@ def build_graph(
         Node.VERIFY,
         route_after_verify,
         {PASSED: Node.EVALUATE_QUALITY, FIX: Node.FIX, NEEDS_REVIEW: Node.NEEDS_REVIEW,
-         Node.PREPARE_GAP_RESEARCH: Node.PREPARE_GAP_RESEARCH,
-         Node.REPLAN: Node.REPLAN if scope_agent is not None else Node.NEEDS_REVIEW,
          Node.RETRY_VERIFIER: Node.RETRY_VERIFIER},
     )
-    graph.add_edge(Node.EVALUATE_QUALITY, passed_target)
+    graph.add_conditional_edges(Node.EVALUATE_QUALITY,
+                                lambda state: Node.FINISH_INCOMPLETE if state.get("result_incomplete") else passed_target,
+                                [Node.FINISH_INCOMPLETE, passed_target])
     # Draft defects rewrite existing evidence; evidence and plan gaps use their own loop.
     graph.add_edge(Node.FIX, Node.SYNTHESIZE)
     graph.add_edge(Node.NEEDS_REVIEW, Node.AWAIT_RECOVERY)

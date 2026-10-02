@@ -3,15 +3,16 @@
 The workflow requested after the original September specification supersedes its
 LLM-only verification and no-research-in-BVF decisions. The current contract is:
 
-- Verify combines semantic goal/question/request/evidence checks with deterministic
+- Verify combines semantic goal/request/evidence checks with deterministic
   citation-ID, Sources-URL and requested-format checks. Structural checks do not
   prove factual truth. Verifier errors/truncation never become a passing verdict.
-- Evidence gaps reopen only affected todos with a new attempt. Plan repair adds
-  missing questions without replacing completed todos. Re-scoping archives old
+- Missing core evidence reopens only affected todos with a new attempt. Automatic
+  replanning has been removed. Re-scoping archives old
   evidence but excludes it from the active report catalog; source IDs remain stable.
-- Research gap and plan repair share one bounded run allowance (default two), before
-  and after synthesis. This deliberately bounds total research cost rather than
-  granting a fresh allowance every time the graph re-enters research. Report repair
+- Research assessment returns READY, PARTIAL or INSUFFICIENT. Optional gaps do not
+  block a supported answer. Only INSUFFICIENT gets one automatic targeted attempt
+  before synthesis. If still insufficient, or PARTIAL, synthesize an honest incomplete
+  answer, verify it, then end without approval/publication. Report repair
   has a separate configured allowance (default three); stalled repairs can stop early.
 - A conditional approval is a revision. Only a typed explicit approval or an exact
   unconditional approval phrase may authorize publication. Publication remains

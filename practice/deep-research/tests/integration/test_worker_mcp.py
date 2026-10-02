@@ -362,6 +362,3 @@ def test_failing_sub_agent_does_not_cancel_siblings(stores):
     assert results == {"Works": TodoStatus.COMPLETED, "Breaks": TodoStatus.FAILED}
     outcome = json.loads(vfs.read("mixed", f"research/{broken.todo_id}/outcome.json"))
     assert "Research sub-agent failed" in outcome["error"]
-    assessment = supervisor.assess([ok, broken], ["artifact"], ["chunk"])
-    assert assessment.ready_for_synthesis is False
-    assert assessment.blockers == ["Task not completed (failed): Breaks"]

@@ -16,9 +16,8 @@ from intelligence_collector.agents.worker import already_researched, failed_outc
 from intelligence_collector.agents.worker import restore_research
 from intelligence_collector.agents.worker import research_prefix
 from intelligence_collector.contracts import ResearchFindings
-from intelligence_collector.contracts import ProgressAssessment, ResearchTodo, TodoStatus
+from intelligence_collector.contracts import ResearchTodo, TodoStatus
 from intelligence_collector.tools.mcp import redact_mcp_error
-from intelligence_collector.tools.think_tool import think_tool
 from intelligence_collector.tools.url_tracking import UrlClaims, UrlRegistry
 
 DEFAULT_MAX_CONCURRENT_RESEARCHERS = 3
@@ -144,8 +143,3 @@ class ResearchSupervisor:
             )
         except Exception as exc:
             return failed_outcome(todo, f"Research sub-agent failed: {redact_mcp_error(exc)}")
-
-    def assess(self, todos, artifacts, index_refs) -> ProgressAssessment:
-        """Decide whether research is complete enough to synthesize (see ``tools/think_tool.py``).
-        """
-        return think_tool(todos, len(artifacts), len(index_refs))

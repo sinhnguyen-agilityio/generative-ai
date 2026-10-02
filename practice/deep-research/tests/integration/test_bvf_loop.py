@@ -176,7 +176,7 @@ def test_missing_evidence_is_fixed_by_rewriting_never_by_new_research(stores):
 
     result = _run(stores, model, research_model=research, report_judge=judge)
 
-    assert result["stage"] == "Awaiting Approval", result["verification"]["repair_details"]
+    assert result["stage"] == "Incomplete", result["verification"]["repair_details"]
     assert len(result["todos"]) == 1  # no gap-research task was added
     assert model.prompts("reflect")  # every failure is reflected on before the rewrite
     fix_prompt = model.prompts("write")[1]

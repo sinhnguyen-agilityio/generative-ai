@@ -156,6 +156,8 @@ class ReportWriter:
         revision: RevisionContext | None = None,
         reviewer_requests: list[str] = (),
         reviewed_report: str = "",
+        research_status: str = "READY",
+        research_limitations: list[str] = (),
         guidelines: list[str] = (),
         run_id: str = "",
         thread_id: str = "",
@@ -170,6 +172,15 @@ class ReportWriter:
         shown up front so the first draft already follows what the judge will enforce.
         """
         blocks = []
+        blocks.append(
+            "Research readiness: " + research_status + ".\n" +
+            "Answer only what the stored evidence supports. If readiness is PARTIAL or "
+            "INSUFFICIENT, explicitly label the answer INCOMPLETE, state what could not be "
+            "verified and why, and never guess the main answer. Lack of evidence is not "
+            "evidence of absence. Do not claim new research was performed. A short honest "
+            "answer is preferred to an exhaustive report. Keep a Sources section even when "
+            "no sources are available; say none in that case.\nKnown limitations: " +
+            json.dumps(list(research_limitations)))
         if revision is not None:
             blocks.append(REVISION_BLOCK.format(
                 attempt=revision.attempt,

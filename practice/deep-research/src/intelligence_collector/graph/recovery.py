@@ -60,6 +60,22 @@ class WorkflowRecoveryService:
         self.inspect(thread_id)
         checkpoint = self.graph.get_state(self._config(thread_id))
         state = normalize_checkpoint(dict(checkpoint.values))
+        exhausted_gap = ("prepare_gap_research" in checkpoint.next and
+                         state.get("research_gap_attempt", 0) >= state["research_gap_budget"])
+        if "replan" in checkpoint.next or exhausted_gap:
+            # Redirect obsolete plan repair or exhausted legacy gap work without replaying
+            # START or resetting the consumed research allowance.
+            todos = state.get("todos", [])
+            if not todos:
+                raise InvalidRecoveryOperation("Legacy replan checkpoint needs an explicit rescope")
+            instruction = dict(checkpoint.values).get("plan_repair_instruction") or "Find evidence for the core research goal"
+            state.update(verification=None, approval=None, publication=None,
+                         research_status="INSUFFICIENT", result_incomplete=True,
+                         research_limitations=[instruction], verification_issue="evidence_gap",
+                         research_gaps=[{"todo_id": todos[0]["todo_id"], "instruction": instruction}],
+                         progress_assessment={"ready_for_synthesis": False})
+            self.graph.update_state(self._config(thread_id), state, as_node="research_complete")
+            return self._clean_result(self.graph.invoke(None, self._config(thread_id)))
         # Older workflows ended at these human-waiting states. Bridge them through
         # existing graph edges rather than restarting scoping or bypassing approval.
         if not checkpoint.next and not self._interrupts(checkpoint):
@@ -166,6 +182,7 @@ class WorkflowRecoveryService:
         interrupts = self._interrupts(checkpoint)
         stage = str(values.get("stage") or record.current_stage)
         terminal_status = {"Published": WorkflowStatus.PUBLISHED,
+                           "Incomplete": WorkflowStatus.INCOMPLETE,
                            "Cancelled": WorkflowStatus.CANCELLED,
                            "Exported Incomplete": WorkflowStatus.EXPORTED_INCOMPLETE}.get(stage)
         waiting_status = {"NEEDS_REVIEW": WorkflowStatus.WAITING_FOR_RECOVERY,
@@ -203,6 +220,11 @@ class WorkflowRecoveryService:
             raise InvalidRecoveryOperation(
                 "Checkpoint has no pending graph node to continue"
             )
+        values = self.graph.get_state(self._config(snapshot.thread_id)).values
+        exhausted_gap = ("prepare_gap_research" in snapshot.next_nodes and
+                         values.get("research_gap_attempt", 0) >= min(values.get("research_gap_budget", 1), 1))
+        if "replan" in snapshot.next_nodes or exhausted_gap:
+            return self.load_state(thread_id)
         result = self.graph.invoke(None, self._config(snapshot.thread_id))
         return self._clean_result(result)
 

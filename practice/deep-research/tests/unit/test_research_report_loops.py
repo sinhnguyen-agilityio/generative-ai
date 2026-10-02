@@ -50,8 +50,8 @@ def test_latest_attempt_resolves_gap_without_changing_source_citations(tmp_path)
 
 
 @pytest.mark.parametrize("issue,expected", [
-    ("draft_defect", "fix"), ("evidence_gap", Node.PREPARE_GAP_RESEARCH),
-    ("plan_gap", Node.REPLAN), ("verifier_failure", Node.RETRY_VERIFIER),
+    ("draft_defect", "fix"), ("evidence_gap", "fix"),
+    ("plan_gap", "fix"), ("verifier_failure", Node.RETRY_VERIFIER),
 ])
 def test_report_routes_failures_to_the_appropriate_loop(issue, expected):
     assert route_after_verify({"verification_issue": issue}) == expected
@@ -60,18 +60,13 @@ def test_report_routes_failures_to_the_appropriate_loop(issue, expected):
 def test_research_and_verifier_budgets_are_independent():
     assert route_after_verify({"verification_issue": "verifier_failure", "verifier_attempt": 2,
                                "recovery_attempt": 0}) == "needs_review"
-    assert route_after_research({"research_gap_attempt": 2, "research_gap_budget": 2}) == Node.NEEDS_REVIEW
+    assert route_after_research({"research_gap_attempt": 2, "research_gap_budget": 2}) == Node.SYNTHESIZE
     assert route_after_research({"progress_assessment": {"ready_for_synthesis": True}}) == Node.SYNTHESIZE
 
 
-def test_missing_evidence_blocks_synthesis_before_report_is_written(tmp_path):
-    from intelligence_collector.contracts import ProgressAssessment
-    class Supervisor:
-        def assess(self, *args):
-            return ProgressAssessment(ready_for_synthesis=True)
+def test_optional_gaps_allow_partial_synthesis(tmp_path):
     nodes = object.__new__(ResearchNodes)
     nodes.vfs = VFS(tmp_path)
-    nodes.supervisor = Supervisor()
     nodes.research_assessor = None
     todo = ResearchTodo(todo_id="a", research_question="Question A", status=TodoStatus.COMPLETED)
     nodes.vfs.write_json("run", _evidence_path(todo), {
@@ -79,9 +74,9 @@ def test_missing_evidence_blocks_synthesis_before_report_is_written(tmp_path):
         "sufficient": False, "unresolved_gaps": ["Missing latency measurement"],
     }, "evidence_bundle")
     result = nodes.research_complete({"run_id": "run", "todos": [todo.model_dump()]})
-    assert not result["progress_assessment"]["ready_for_synthesis"]
-    assert result["research_gaps"][0]["todo_id"] == "a"
-    assert route_after_research(result) == Node.PREPARE_GAP_RESEARCH
+    assert result["progress_assessment"]["ready_for_synthesis"]
+    assert result["research_status"] == "PARTIAL"
+    assert route_after_research(result) == Node.SYNTHESIZE
 
 
 def test_semantic_research_judge_rejects_omitted_questions():
@@ -90,7 +85,7 @@ def test_semantic_research_judge_rejects_omitted_questions():
     class Router:
         def invoke_messages(self, *args, **kwargs):
             return ResearchEvidenceVerdict(questions=[
-                {"todo_id": "a", "sufficient": True}], plan_complete=True)
+                {"todo_id": "a", "sufficient": True}], status="READY")
     todos = [ResearchTodo(todo_id=ident, research_question="Question " + ident) for ident in ["a", "b"]]
     with pytest.raises(ValueError, match="every todo exactly once"):
         ResearchEvidenceJudge(Router()).assess("Brief", todos, "Evidence")
@@ -113,7 +108,8 @@ def test_graph_repairs_evidence_gap_before_first_synthesis(stores):
             return ResearchEvidenceVerdict(questions=[{
                 "todo_id": "a", "sufficient": self.calls > 1,
                 "missing_evidence": "Find the missing measurement" if self.calls == 1 else "",
-            }], plan_complete=True)
+            }], status="READY" if self.calls > 1 else "INSUFFICIENT",
+                limitations=[] if self.calls > 1 else ["Missing measurement"])
 
     vfs, index = stores
     researcher = ResearchAgent(ModelRouter(FakeResearchModel()), lambda: ControlledMCP([

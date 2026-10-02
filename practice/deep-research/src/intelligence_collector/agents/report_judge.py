@@ -81,11 +81,12 @@ class ReportJudge:
             report=report,
         )
         messages[0].content += (
-            "\nFor each failed criterion classify issue_type: draft_defect when existing evidence "
-            "can support a corrected report; evidence_gap when required evidence is missing; "
-            "plan_gap when the plan omitted required research. Evidence gaps MUST name "
-            "affected_todo_ids from the evidence question ids and give a research_instruction. "
-            "Unsupported incidental claims removable from the draft are draft defects."
+            "\nUse draft_defect for claims that can be removed, corrected or narrowed using "
+            "existing evidence. Use evidence_gap only when the main requested answer cannot "
+            "be supported; explain what remains unverified. Never require automatic replanning. "
+            "An honestly labeled incomplete answer can pass if it states supported facts and "
+            "discloses unavailable answers. Do not fail solely because all planned topics are "
+            "not answered. Still reject fabricated claims or false statements of completeness."
         )
         verdict = self.router.invoke_messages(
             "verify",

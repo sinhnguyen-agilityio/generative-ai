@@ -15,7 +15,6 @@ from intelligence_collector.graph.routing import PASSED, route_after_verify
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.publication import can_request_approval
 from intelligence_collector.storage.vfs import VFS
-from intelligence_collector.tools.think_tool import think_tool
 
 
 class SequencedModel:
@@ -98,14 +97,12 @@ def test_failed_todo_write_cannot_traverse_to_research(tmp_path):
     assert not (tmp_path / "todo-failure" / "research").exists()
 
 
-def test_incomplete_research_cannot_traverse_to_synthesis():
-    todos = [ResearchTodo(research_question="Investigate database behavior")]
+def test_insufficient_research_gets_only_one_automatic_retry():
+    from intelligence_collector.graph.routing import route_after_research
+    from intelligence_collector.graph.nodes import Node
 
-    assessment = think_tool(todos, artifact_count=0, index_count=0)
-
-    assert assessment.ready_for_synthesis is False
-    assert assessment.next_action == "continue research"
-    assert todos[0].status == TodoStatus.PLANNED
+    assert route_after_research({"research_status": "INSUFFICIENT"}) == Node.PREPARE_GAP_RESEARCH
+    assert route_after_research({"research_status": "INSUFFICIENT", "research_gap_attempt": 1}) == Node.SYNTHESIZE
 
 
 def test_unverified_result_cannot_traverse_to_approval_or_publication():
@@ -131,6 +128,7 @@ def test_workflow_stage_contract_distinguishes_all_guarded_states():
         Stage.PUBLISHED,
         Stage.FAILED,
         Stage.NEEDS_REVIEW,
+        Stage.INCOMPLETE,
     } == set(Stage)
 
 

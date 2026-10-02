@@ -509,6 +509,7 @@ def _awaiting_review(snapshot) -> bool:
     verification = _snapshot_verification(snapshot)
     return (
         snapshot.get("stage") == Stage.AWAITING_APPROVAL.value
+        and not snapshot.get("result_incomplete")
         and verification is not None
         and can_request_approval(verification)
     )
@@ -554,7 +555,7 @@ _NODE_ACTIVITY = {
     Node.WRITE_BRIEF: ("Generating research brief", "Scope Agent", None),
     Node.PLAN: ("Calling write_todos", "Planner", "write_todos"),
     Node.RESEARCH: ("Delegating research to sub-agents", "Research Supervisor", "tavily_search"),
-    Node.ASSESS_RESEARCH: ("Assessing research completeness", "Research Supervisor", "think_tool"),
+    Node.ASSESS_RESEARCH: ("Assessing evidence for the research goal", "Research Evidence Judge", "assessment"),
     Node.SYNTHESIZE: ("Synthesizing report", "Report Writer", None),
     Node.VERIFY: ("Verifying report with LLM judge", "Verifier", "report_judge"),
     Node.EVALUATE_QUALITY: ("Scoring RAGAS report quality", "Verifier", None),
@@ -618,7 +619,7 @@ _PROGRESS_BY_STAGE = {
 
 
 # A published thread is finished. Clarification, approval and recovery states are durable pauses.
-_THREAD_DONE_STAGES = {Stage.PUBLISHED.value, "Cancelled", "Exported Incomplete"}
+_THREAD_DONE_STAGES = {Stage.PUBLISHED.value, Stage.INCOMPLETE.value, "Cancelled", "Exported Incomplete"}
 
 
 def _run_chat_turn(st, text, *, reviewing, clarifying=False, placeholders, vfs_for_ui):
@@ -846,7 +847,8 @@ def render():
         recovering = _awaiting_recovery(snapshot)
         if pending:
             st.info("This checkpoint has unfinished work. Use Continue unfinished run to resume it.")
-        if current_stage == "Exported Incomplete":
+        if current_stage in {"Exported Incomplete", Stage.INCOMPLETE.value}:
+            st.warning("Incomplete answer — not a published report. Some requested information could not be verified.")
             try:
                 st.download_button("Download incomplete report",
                                    vfs_for_ui.read(snapshot["run_id"], "reports/incomplete.md"),
