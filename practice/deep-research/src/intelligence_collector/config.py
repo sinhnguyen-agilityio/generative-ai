@@ -89,7 +89,6 @@ class Settings:
     vfs_root: str = ".data/vfs"
     checkpoint_path: str = ".data/checkpoints.sqlite3"
     run_registry_path: str = ".data/run_registry.sqlite3"
-    vector_path: str = ".data/vector-index.json"
     chroma_path: str = ".data/chroma"
     embedding_model: str = "gemini-embedding-2"
     embedding_provider: str = "google_genai"
@@ -123,7 +122,6 @@ class Settings:
             checkpoint_path=checkpoint_path,
             run_registry_path=os.getenv(
                 "INTELLIGENCE_RUN_REGISTRY_PATH", registry_default),
-            vector_path=os.getenv("INTELLIGENCE_VECTOR_PATH", cls.vector_path),
             chroma_path=os.getenv("INTELLIGENCE_CHROMA_PATH", cls.chroma_path),
             embedding_model=os.getenv(
                 "INTELLIGENCE_EMBEDDING_MODEL", cls.embedding_model),

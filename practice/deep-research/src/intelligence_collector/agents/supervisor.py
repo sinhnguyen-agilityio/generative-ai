@@ -21,11 +21,6 @@ DEFAULT_MAX_CONCURRENT_RESEARCHERS = 3
 MAX_CONCURRENT_RESEARCHERS = 5
 
 
-def assess(todos, artifacts, indexes) -> ProgressAssessment:
-    """ResearchComplete gate: every todo completed, artifacts persisted, data indexed."""
-    return think_tool(todos, len(artifacts), len(indexes))
-
-
 class ResearchSupervisor:
     """Delegates research questions to parallel sub-agents (bounded concurrency), skips todos
     already researched, and persists each outcome.
@@ -122,4 +117,4 @@ class ResearchSupervisor:
     def assess(self, todos, artifacts, index_refs) -> ProgressAssessment:
         """Decide whether research is complete enough to synthesize (see ``tools/think_tool.py``).
         """
-        return assess(todos, artifacts, index_refs)
+        return think_tool(todos, len(artifacts), len(index_refs))

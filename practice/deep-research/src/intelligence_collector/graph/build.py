@@ -37,6 +37,7 @@ from intelligence_collector.graph.routing import (
 )
 from intelligence_collector.graph.state import GraphState
 from intelligence_collector.contracts import ResearchBrief
+from intelligence_collector.graph.operation_journal import OperationJournal
 
 __all__ = ["build_graph", "node_wrapper"]
 
@@ -95,18 +96,18 @@ def build_graph(
     """
     graph = StateGraph(GraphState)
 
+    bvf = getattr(research_nodes, "bvf", None)
+    writer = getattr(bvf, "writer", None)
+    journal_context = repr((getattr(bvf, "report_guidelines", None),
+                            getattr(bvf, "evidence_top_k", None),
+                            getattr(getattr(writer, "router", None), "model_name", None)))
+    journal = OperationJournal(vfs, journal_context) if vfs is not None else None
+
     def add_node(name: str, fn) -> None:
         """Register a node wrapped with tracing and lifecycle notifications."""
-        from intelligence_collector.graph.operation_journal import OperationJournal
-
-        bvf = getattr(research_nodes, "bvf", None)
-        writer = getattr(bvf, "writer", None)
-        context = repr((getattr(bvf, "report_guidelines", None),
-                        getattr(bvf, "evidence_top_k", None),
-                        getattr(getattr(writer, "router", None), "model_name", None)))
-        journal = OperationJournal(vfs, context) if vfs is not None else None
         graph.add_node(name, node_wrapper(
-            name, fn, tracer, lifecycle, run_registry, journal))
+            name, fn, tracer, lifecycle, run_registry,
+            journal if name == Node.SYNTHESIZE else None))
 
     # ===== SCOPE AND PLANNING =====
 

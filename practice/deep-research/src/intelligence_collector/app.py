@@ -717,18 +717,17 @@ def _adopt_recovered_state(st, state):
         st.session_state.stage, "Recovered checkpoint; continuation available")
 
 
-def _pending_checkpoint(st, snapshot):
+def _inspect_checkpoint(st, snapshot):
     if "scope_graph" not in st.session_state or "run_registry" not in st.session_state:
-        return False
+        return None
     service = WorkflowRecoveryService(st.session_state.scope_graph, st.session_state.run_registry)
     try:
-        checkpoint = service.inspect(snapshot.get("thread_id", ""))
+        return service.inspect(snapshot.get("thread_id", ""))
     except Exception:
-        return False
-    return bool(checkpoint.next_nodes and not checkpoint.has_interrupt and not checkpoint.terminal)
+        return None
 
 
-def _render_recovery_controls(st, snapshot):
+def _render_recovery_controls(st, snapshot, checkpoint=None):
     """Discovery is local and cheap; construct agents only on an explicit recovery action."""
     settings = Settings.from_env()
     if Path(settings.checkpoint_path).is_file():
@@ -772,19 +771,14 @@ def _render_recovery_controls(st, snapshot):
                 st.rerun()
             except Exception as exc:
                 st.error(f"Recovery failed: {exc}")
-    elif snapshot.get("run_id") and "scope_graph" in st.session_state and "run_registry" in st.session_state:
+    elif checkpoint is not None and checkpoint.next_nodes and not checkpoint.has_interrupt:
         service = WorkflowRecoveryService(st.session_state.scope_graph, st.session_state.run_registry)
-        try:
-            checkpoint = service.inspect(snapshot["thread_id"])
-        except Exception:
-            return  # A newly-created chat thread does not have a checkpoint yet.
-        if checkpoint.next_nodes and not checkpoint.has_interrupt:
-            if st.button("Continue unfinished run"):
-                try:
-                    _adopt_recovered_state(st, service.continue_run(snapshot["thread_id"]))
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Continuation failed: {exc}")
+        if st.button("Continue unfinished run"):
+            try:
+                _adopt_recovered_state(st, service.continue_run(snapshot["thread_id"]))
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Continuation failed: {exc}")
 
 
 def render():
@@ -810,6 +804,9 @@ def render():
         "run_id": str(uuid4()), "thread_id": st.session_state.scope_thread_id,
     })
     snapshot = st.session_state.scope_state
+    checkpoint = _inspect_checkpoint(st, snapshot)
+    pending = bool(checkpoint is not None and checkpoint.next_nodes
+                   and not checkpoint.has_interrupt and not checkpoint.terminal)
     st.caption(f"{st.session_state.stage} · {st.session_state.progress}")
     vfs_for_ui = _get_vfs(st)
     chat_col, panel_col = st.columns([3, 2], gap="large")
@@ -825,7 +822,7 @@ def render():
         _render_graph_snapshot(st, snapshot)
 
     with chat_col:
-        _render_recovery_controls(st, snapshot)
+        _render_recovery_controls(st, snapshot, checkpoint)
         clarification = existing_scope_state.get("scope_assessment", {}).get("question")
         if st.session_state.stage == "Scoping" and clarification:
             st.info("Waiting for your response")
@@ -844,7 +841,6 @@ def render():
         reviewing = _awaiting_review(snapshot)
         clarifying = _awaiting_clarification(snapshot)
         recovering = _awaiting_recovery(snapshot)
-        pending = _pending_checkpoint(st, snapshot)
         if pending:
             st.info("This checkpoint has unfinished work. Use Continue unfinished run to resume it.")
         if current_stage == "Exported Incomplete":
