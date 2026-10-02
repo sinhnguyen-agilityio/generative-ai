@@ -64,6 +64,13 @@ class WorkflowRecoveryService:
         # existing graph edges rather than restarting scoping or bypassing approval.
         if not checkpoint.next and not self._interrupts(checkpoint):
             stage = state.get("stage")
+            if stage == "Awaiting Approval":
+                # Legacy ended approval checkpoints have no resumable human interrupt.
+                # Invalidate stale authority and enter the controlled recovery path.
+                state.update(stage="NEEDS_REVIEW", approval=None, verification=None,
+                             verification_issue="publication_failure",
+                             last_error="Legacy approval checkpoint requires re-verification")
+                stage = "NEEDS_REVIEW"
             node = ("needs_review" if stage == "NEEDS_REVIEW" else
                     "clarify_with_user" if stage == "Scoping" and
                     (state.get("scope_assessment") or {}).get("need_clarification") else None)

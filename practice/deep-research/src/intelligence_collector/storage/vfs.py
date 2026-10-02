@@ -73,6 +73,14 @@ class VFS:
         data = content.encode() if isinstance(content, str) else content
         target = self._safe(run_id, relative)
         target.parent.mkdir(parents=True, exist_ok=True)
+        # Retain immutable revisions while keeping legacy .v1 paths as latest aliases.
+        if ".v1." in target.name and target.exists():
+            previous = target.read_bytes()
+            digest = hashlib.sha256(previous).hexdigest()
+            archive = target.with_name(target.name.replace(".v1.", f".{digest}."))
+            if not archive.exists():
+                self.write(run_id, str(archive.relative_to(self.root / run_id)), previous, kind,
+                           task_id=task_id)
         fd, temporary = tempfile.mkstemp(dir=target.parent, prefix=".tmp-")
         try:
             with os.fdopen(fd, "wb") as handle:

@@ -119,6 +119,9 @@ def _get_scope_graph(st, agent, tracer):
     research_nodes = None
     tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
     tavily_url = os.getenv("TAVILY_MCP_URL", "").strip()
+    if not (tavily_key and tavily_url):
+        st.warning("Research is disabled: configure TAVILY_API_KEY and TAVILY_MCP_URL. "
+                   "This run can only clarify the request and prepare a plan.")
     if tavily_key and tavily_url:
         researcher = ResearchAgent(
             st.session_state.model_routers.standard,
@@ -139,7 +142,7 @@ def _get_scope_graph(st, agent, tracer):
             # re-reads the full evidence independently, so this never affects what gets checked.
             ChromaVectorIndex(settings.chroma_path, embeddings=embeddings),
             researcher,
-            # Sole Verify gate (LLM-as-judge, no deterministic pre-check); shares the
+            # Semantic verification complements deterministic citation/request checks; shares the
             # scope/planner reasoning-tier model.
             report_judge=ReportJudge(agent.router),
             research_assessor=ResearchEvidenceJudge(agent.router),

@@ -16,3 +16,4 @@ htmlcov/
 .vscode/
 .idea/
 *.log
+.tmp/

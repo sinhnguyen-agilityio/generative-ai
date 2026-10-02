@@ -5,8 +5,7 @@ URL a stable ``S<n>`` id, which is what reports cite (``[S1]``). Also records th
 unresolved evidence gaps (disclosed by the writer), and fingerprints a verification failure so the Build-Verify-Fix loop can
 tell when a fix made no progress.
 
-(The module name predates the LLM judge: the deterministic report checks that once lived here were
-replaced by ``agents/report_judge.py``.)
+Structural citation checks complement, but never replace, ``agents/report_judge.py``.
 """
 
 from __future__ import annotations
@@ -137,7 +136,7 @@ def evidence_task_ids(evidence_refs: list[dict]) -> list[str]:
     return list(dict.fromkeys(ref["task_id"] for ref in evidence_refs if ref.get("task_id")))
 
 
-def load_catalog(vfs, run_id: str, evidence_refs: list[dict]) -> SourceCatalog:
+def load_catalog(vfs, run_id: str, evidence_refs: list[dict], *, active_todo_ids=None) -> SourceCatalog:
     """Read the evidence bundles referenced by graph state (in research order)."""
     bundles = []
     seen = set()
@@ -171,7 +170,36 @@ def load_catalog(vfs, run_id: str, evidence_refs: list[dict]) -> SourceCatalog:
         bundle.source_ids = [by_url[_normalize_url(merged.sources[sid].url)]
                              for sid in bundle.source_ids]
     merged.sources = historic.sources
+    if active_todo_ids is not None:
+        active = set(active_todo_ids)
+        merged.bundles = [bundle for bundle in merged.bundles if bundle.todo_id in active]
+        used = {sid for bundle in merged.bundles for sid in bundle.source_ids}
+        merged.sources = {sid: source for sid, source in historic.sources.items() if sid in used}
     return merged
+
+
+def citation_errors(report: str, catalog: SourceCatalog) -> list[str]:
+    """Structural guard only: semantic support still requires the independent judge."""
+    errors = []
+    cited = set(_cited_ids(report))
+    unknown = cited - catalog.sources.keys()
+    if unknown:
+        errors.append("Unknown source ids: " + ", ".join(sorted(unknown)))
+    sections = re.split(r"(?im)^#{1,6}\s+Sources\s*:?\s*$", report, maxsplit=1)
+    if len(sections) != 2:
+        return [*errors, "Missing Sources section"]
+    entries = {}
+    for line in sections[1].splitlines():
+        ids = _cited_ids(line)
+        urls = re.findall(r"https?://[^\s<>\)\]]+", line)
+        for sid in ids:
+            entries.setdefault(sid, []).extend(urls)
+    for sid in cited & catalog.sources.keys():
+        urls = entries.get(sid, [])
+        expected = _normalize_url(catalog.sources[sid].url)
+        if not urls or any(_normalize_url(url) != expected for url in urls):
+            errors.append(f"Missing or mismatched Sources URL for [{sid}]")
+    return errors
 
 
 def save_catalog_state(vfs, run_id: str, evidence_refs: list[dict]):

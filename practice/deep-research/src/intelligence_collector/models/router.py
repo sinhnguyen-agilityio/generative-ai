@@ -133,7 +133,7 @@ class ModelRouter:
             try:
                 result = self._parse(role, chain.invoke(messages, config=config), schema)
             except Exception as exc:
-                transient = _is_transient(exc)
+                transient = _is_transient(exc) or getattr(exc, "status_code", None) in {401, 403, 404}
                 errors.append(redact_text(exc))
                 # The raw error text is withheld from the trace: it can echo model output.
                 message = (

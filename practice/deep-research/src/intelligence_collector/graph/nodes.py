@@ -412,7 +412,8 @@ class ResearchNodes:
                     (state.get("scoped_request") or {}).get(
                         "research_question", ""), todos,
                     format_evidence(load_catalog(
-                        self.vfs, state["run_id"], state.get("evidence", []))),
+                        self.vfs, state["run_id"], state.get("evidence", []),
+                        active_todo_ids=[todo.todo_id for todo in todos])),
                     run_id=state["run_id"], thread_id=state.get(
                         "thread_id", ""),
                 )
@@ -515,7 +516,9 @@ class BVFNodes:
 
     def _catalog(self, state):
         """Full, unfiltered catalog — used by Verify and quality scoring, never narrowed."""
-        return load_catalog(self.vfs, state["run_id"], state.get("evidence", []))
+        return load_catalog(self.vfs, state["run_id"], state.get("evidence", []),
+                            active_todo_ids=[todo["todo_id"] for todo in state["todos"]]
+                            if "todos" in state else None)
 
     def synthesizing(self, state):
         """Build the first draft, a Fix revision applying every lesson learned so far, or a
@@ -590,9 +593,10 @@ class BVFNodes:
         }
 
     def verifying(self, state):
-        """LLM-as-judge is the sole Verify gate: one reasoning-tier call (no search/scrape tools)
-        re-reads the report against the gathered evidence and decides whether it is factually
-        faithful and follows the configured report guidelines — see ``agents/report_judge.py``."""
+        """Combine independent semantic judging with structural citation/request checks.
+
+        Verification errors never count as either a passing or a failed report verdict.
+        """
         catalog = self._catalog(state)
         brief = ResearchBrief.model_validate(state["scoped_request"])
         criteria = build_report_judge_criteria(self.report_guidelines)
@@ -625,6 +629,13 @@ class BVFNodes:
                     "verifier_error": str(exc), "last_error": "Report verifier unavailable",
                     "verifier_attempt": state.get("verifier_attempt", 0) + 1}
         verdict.results.extend(reviewer_format_checks(report, requests))
+        from intelligence_collector.source_verification import citation_errors
+        from intelligence_collector.contracts import ReportJudgeCriterion
+
+        for error in citation_errors(report, catalog):
+            verdict.results.append(ReportJudgeCriterion(
+                criterion="Citation integrity: " + error, met=False,
+                justification=error, issue_type="draft_defect"))
         failed_items = [item for item in verdict.results if not item.met]
         issue = "draft_defect"
         plan_instructions = []
@@ -823,7 +834,7 @@ class BVFNodes:
         verification = state.get("verification") or {}
         attempts = state.get("recovery_attempt", 0)
         reason = state.get("last_error") if state.get("verification_issue") in {
-            "verifier_failure", "research_verifier_failure"} else (
+            "verifier_failure", "research_verifier_failure", "publication_failure"} else (
             "research gap budget exhausted" if state.get("research_gap_attempt", 0) >=
             state.get("research_gap_budget", 2) else
             "no progress after reflection" if state.get("stall_count", 0) >= MAX_STALLED_ATTEMPTS
@@ -918,6 +929,9 @@ class ApprovalNodes:
 
         decision = interrupt(
             {"kind": "publication_approval", "run_id": state.get("run_id")})
+        from intelligence_collector.contracts import ApprovalResumeDecision
+
+        decision = ApprovalResumeDecision.model_validate(decision).model_dump(mode="json")
         state = {
             **state, "reviewer": str(decision.get("actor") or "local-user")}
         if decision.get("approved") is True:
@@ -961,7 +975,11 @@ class ApprovalNodes:
         return {
             **state,
             "publication": record.model_dump(mode="json"),
-            "stage": (Stage.PUBLISHED if record.published else Stage.AWAITING_APPROVAL).value,
+            "stage": (Stage.PUBLISHED if record.published else Stage.NEEDS_REVIEW).value,
+            "approval": state.get("approval") if record.published else None,
+            "verification": state.get("verification") if record.published else None,
+            "last_error": "" if record.published else outcome,
+            "verification_issue": "" if record.published else "publication_failure",
             "current_action": outcome,
             "messages": [*state.get("messages", []), AIMessage(content=outcome)],
             "activity": _activity(
@@ -986,9 +1004,12 @@ class ApprovalNodes:
                 route="revise", reason="No reply to classify; defaulting to revise.")
         explicit_reject = (state.get("approval") or {}
                            ).get("approved") is False
-        if verdict.route == "approve" and explicit_reject:
+        explicit_accept = feedback.strip().casefold().rstrip(".! ") in {
+            "approve", "approved", "i approve", "i agree", "đồng ý", "phê duyệt",
+            "looks good, publish it"}
+        if verdict.route == "approve" and (explicit_reject or not explicit_accept):
             verdict = FeedbackDecision(
-                route="revise", reason="An explicit rejection is never an approval.")
+                route="revise", reason="Publication requires an explicit, unconditional approval.")
 
         history = [*state.get("bvf_history", []), {
             "attempt": state.get("recovery_attempt", 0),

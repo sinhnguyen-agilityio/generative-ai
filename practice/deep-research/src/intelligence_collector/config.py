@@ -98,7 +98,7 @@ class Settings:
     # Distinct pages one research sub-agent keeps for its todo, across all of its searches.
     max_sources_per_task: int = 5
     max_concurrent_researchers: int = 3
-    recovery_attempts: int = 2
+    recovery_attempts: int = 3
     faithfulness_model: str = "gpt-4.1-mini"
     faithfulness_provider: str = "openai"
     # RAGAS metrics scored on the final report (judge = the faithfulness model above).
@@ -220,7 +220,7 @@ class RoleModelSettings:
             # -- a larger structured-output schema (e.g. more judge criteria) makes that trace
             # longer, so a low provider default becomes more likely to be hit.
             reasoning_kwargs=cls._json_object(
-                "INTELLIGENCE_REASONING_KWARGS", '{"reasoning_effort":"high","max_tokens":8000}'
+                "INTELLIGENCE_REASONING_KWARGS", '{"reasoning_effort":"low","max_tokens":4096}'
             ),
             standard_kwargs=cls._json_object(
                 "INTELLIGENCE_STANDARD_KWARGS", "{}"),

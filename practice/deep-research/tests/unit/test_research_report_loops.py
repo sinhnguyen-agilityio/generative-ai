@@ -118,7 +118,7 @@ def test_graph_repairs_evidence_gap_before_first_synthesis(stores):
     vfs, index = stores
     researcher = ResearchAgent(ModelRouter(FakeResearchModel()), lambda: ControlledMCP([
         {"url": "https://example.test/data", "content": "Measured research evidence"}]))
-    writer = FakeReportModel(["# Report\nEvidence [S1]"])
+    writer = FakeReportModel(["# Report\nEvidence [S1]\n\n## Sources\n- [S1] https://example.test/data"])
     assessor = Assessor()
     nodes = ResearchNodes(vfs, index, researcher, research_assessor=assessor,
                           report_writer=ReportWriter(ModelRouter(writer)),

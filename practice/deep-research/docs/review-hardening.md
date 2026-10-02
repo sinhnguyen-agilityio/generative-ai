@@ -1,0 +1,34 @@
+# Workflow review hardening
+
+The workflow requested after the original September specification supersedes its
+LLM-only verification and no-research-in-BVF decisions. The current contract is:
+
+- Verify combines semantic goal/question/request/evidence checks with deterministic
+  citation-ID, Sources-URL and requested-format checks. Structural checks do not
+  prove factual truth. Verifier errors/truncation never become a passing verdict.
+- Evidence gaps reopen only affected todos with a new attempt. Plan repair adds
+  missing questions without replacing completed todos. Re-scoping archives old
+  evidence but excludes it from the active report catalog; source IDs remain stable.
+- Research gap and plan repair share one bounded run allowance (default two), before
+  and after synthesis. This deliberately bounds total research cost rather than
+  granting a fresh allowance every time the graph re-enters research. Report repair
+  has a separate configured allowance (default three); stalled repairs can stop early.
+- A conditional approval is a revision. Only a typed explicit approval or an exact
+  unconditional approval phrase may authorize publication. Publication remains
+  bound to the verified artifact hash and verification ID.
+- Failed publication invalidates approval/verification and enters the recovery
+  interrupt. Legacy ended approval checkpoints enter this same safe recovery path.
+  Retry/revise must verify and obtain new approval; export is explicitly incomplete.
+- Successful research outcomes are saved as each worker finishes, before indexing.
+  An indexing failure can replay the saved outcome without paying for research again;
+  sibling persistence continues. Returned graph results remain in plan order.
+- Legacy `.v1` artifact paths remain compatible latest aliases; overwritten content
+  is retained in a content-addressed immutable sibling revision.
+- Missing Tavily configuration is visibly scope/plan-only, not a finished report.
+
+Per-call output caps remain provider token ceilings, not report word-count criteria.
+Reasoning defaults are low effort with a 4096-token provider ceiling; role caps still
+apply. No fixed dollar guarantee is claimed and no paid API calls are required by tests.
+
+Windows long-path failures still require a reproducing platform trace before a path
+layout migration. Prefer a short configured data root on affected installations.

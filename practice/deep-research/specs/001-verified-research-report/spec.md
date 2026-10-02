@@ -773,3 +773,11 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - The project-mandated local Python, Streamlit, LangGraph, `write_todos`, and MCP constraints are
   accepted dependencies; this specification defines observable behavior rather than their internal
   design.
+# Implementation clarification — 2026-10-02
+
+The later user-approved recovery and semantic-verification workflow supersedes the
+September LLM-only/no-research-in-BVF clarifications below. The authoritative updated
+contract, including structural citation checks, bounded gap research, incremental
+plan repair and explicit recovery after failed publication, is documented in
+`docs/review-hardening.md`. Explicit human approval remains mandatory; quality scores
+never authorize publication.

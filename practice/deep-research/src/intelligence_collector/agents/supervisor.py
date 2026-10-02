@@ -1,17 +1,21 @@
 """Research Supervisor: delegate planned research questions to research sub-agents.
 
 One sub-agent per planned todo, up to ``max_concurrent_researchers`` running at once. Sub-agents
-only search and compress, so they run in parallel; VFS and vector-index writes happen afterwards
-in plan order on the calling thread.
+only search and compress, so they run in parallel; VFS and vector-index writes happen as each
+outcome completes on the calling thread.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+from dataclasses import asdict
 
 from intelligence_collector.agents.researcher import ResearchAgent, ResearchOutcome
 from intelligence_collector.agents.worker import already_researched, failed_outcome, persist_research
 from intelligence_collector.agents.worker import restore_research
+from intelligence_collector.agents.worker import research_prefix
+from intelligence_collector.contracts import ResearchFindings
 from intelligence_collector.contracts import ProgressAssessment, ResearchTodo, TodoStatus
 from intelligence_collector.tools.mcp import redact_mcp_error
 from intelligence_collector.tools.think_tool import think_tool
@@ -60,14 +64,12 @@ class ResearchSupervisor:
                 else:
                     results.append((todo, [], []))
             else:
-                results.append(persist_research(
-                    self.vfs, self.index, run_id, todo, outcomes[todo.todo_id], registry
-                ))
+                results.append(outcomes[todo.todo_id])
         return results
 
     def _run_sub_agents(
         self, run_id: str, todos: list[ResearchTodo], thread_id: str, claims: UrlClaims
-    ) -> dict[str, ResearchOutcome]:
+    ) -> dict:
         """Synchronous entry point (called from the sync ``researching`` graph node): drives the
         async fan-out below to completion on a short-lived event loop, since nothing else in the
         call chain is async."""
@@ -75,7 +77,7 @@ class ResearchSupervisor:
 
     async def _gather_sub_agents(
         self, run_id: str, todos: list[ResearchTodo], thread_id: str, claims: UrlClaims
-    ) -> dict[str, ResearchOutcome]:
+    ) -> dict:
         # Each sub-agent's actual work (LLM calls, MCP search) is still synchronous, so
         # asyncio.to_thread runs it in a worker thread -- same real parallelism as before, capped
         # by the semaphore since asyncio.to_thread's own thread pool has no such limit. Unlike a
@@ -93,14 +95,43 @@ class ResearchSupervisor:
                 )
                 return todo.todo_id, outcome
 
-        results = await asyncio.gather(*(bounded(todo) for todo in todos))
-        return dict(results)
+        tasks = [asyncio.create_task(bounded(todo)) for todo in todos]
+        registry = UrlRegistry.load(self.vfs, run_id)
+        by_id = {todo.todo_id: todo for todo in todos}
+        results = {}
+        errors = []
+        for finished in asyncio.as_completed(tasks):
+            todo_id, outcome = await finished
+            try:
+                payload = asdict(outcome)
+                payload["findings"] = outcome.findings.model_dump(mode="json") if outcome.findings else None
+                self.vfs.write_json(run_id, f"{research_prefix(by_id[todo_id])}/retrieved_outcome.json",
+                                    payload, "retrieved_outcome", task_id=todo_id)
+                results[todo_id] = persist_research(
+                    self.vfs, self.index, run_id, by_id[todo_id], outcome, registry)
+            except Exception as exc:
+                # Finish persisting siblings even if one local index/storage operation failed.
+                errors.append(exc)
+                # Drop uncommitted URL registrations from the failed persistence attempt.
+                registry = UrlRegistry.load(self.vfs, run_id)
+        if errors:
+            raise RuntimeError("Research persistence failed; completed sibling artifacts are recoverable") from errors[0]
+        return results
 
     def _research_one(
         self, run_id: str, todo: ResearchTodo, thread_id: str, claims: UrlClaims
     ) -> ResearchOutcome:
         # One failing sub-agent must not cancel its siblings; the failure becomes its outcome.
         try:
+            try:
+                payload = json.loads(self.vfs.read(
+                    run_id, f"{research_prefix(todo)}/retrieved_outcome.json"))
+            except FileNotFoundError:
+                payload = None
+            if payload is not None:
+                if payload.get("findings") is not None:
+                    payload["findings"] = ResearchFindings.model_validate(payload["findings"])
+                return ResearchOutcome(**payload)
             return self.researcher.research(
                 todo.research_question + (
                     "\nResearch only this missing evidence: " + todo.research_instruction

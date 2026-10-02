@@ -364,3 +364,15 @@ def test_explicit_rejection_is_never_classified_as_approval(stores, tmp_path):
     assert paused_again["stage"] == "Awaiting Approval"
     assert paused_again["feedback_route"] == "revise"
     assert not (tmp_path / "exports" / "approval-run.md").exists()
+
+
+def test_stale_publication_enters_recovery_interrupt(stores, tmp_path):
+    graph = _bvf_graph(stores, FakeReportModel([GOOD]), output_dir=tmp_path / "exports")
+    config = {"configurable": {"thread_id": "approval-run"}}
+    graph.invoke(_initial_state(), config)
+    graph.update_state(config, {"draft": GOOD + "\nChanged after verification"})
+    result = graph.invoke(Command(resume={"approved": True}), config)
+    assert result["stage"] == "NEEDS_REVIEW"
+    assert result.get("__interrupt__")
+    assert result["__interrupt__"][0].value["kind"] == "recovery_required"
+    assert result["verification"] is None and result["approval"] is None

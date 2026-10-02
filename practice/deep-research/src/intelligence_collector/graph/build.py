@@ -179,10 +179,29 @@ def build_graph(
     def replan(state):
         if scope_agent is None:
             raise ValueError("Plan repair requires a configured Planner Agent")
-        brief = (state.get("scoped_request") or {}).get("research_question", "")
-        repair_brief = ResearchBrief(research_question=brief + "\nRequired missing topics: " +
-                                     state.get("plan_repair_instruction", ""))
+        repair_brief = ResearchBrief(research_question=
+            "Plan ONLY the missing topics below. Do not repeat existing questions: " +
+            repr([todo["research_question"] for todo in state.get("todos", [])]) +
+            "\nMissing topics: " + state.get("plan_repair_instruction", ""))
         result = planner.planning({**state, "scoped_request": repair_brief.model_dump(mode="json")})
+        existing = list(state.get("todos", []))
+        questions = {todo["research_question"].strip().casefold() for todo in existing}
+        additions = []
+        ids = {todo["todo_id"] for todo in existing}
+        for todo in result["todos"]:
+            if todo["research_question"].strip().casefold() in questions:
+                continue
+            if todo["todo_id"] in ids:
+                from uuid import uuid4
+                todo = {**todo, "todo_id": str(uuid4())}
+            ids.add(todo["todo_id"])
+            questions.add(todo["research_question"].strip().casefold())
+            additions.append(todo)
+        result.update(todos=[*existing, *additions], scoped_request=state["scoped_request"])
+        (vfs or research_nodes.vfs).write_json(state["run_id"], "planning/active_todos.json",
+                                              result["todos"], "todos")
+        if not additions:
+            result.update(verification_issue="plan_gap", last_error="Planner added no missing topics")
         return {**result, "research_gap_attempt": state.get("research_gap_attempt", 0) + 1,
                 "approval": None, "publication": None}
 
@@ -239,7 +258,9 @@ def build_graph(
             route_after_approval,
             {APPROVED: Node.PUBLISH, REJECTED: Node.CLASSIFY_FEEDBACK},
         )
-        graph.add_edge(Node.PUBLISH, END)
+        graph.add_conditional_edges(Node.PUBLISH,
+                                    lambda state: END if (state.get("publication") or {}).get("published")
+                                    else Node.NEEDS_REVIEW, [END, Node.NEEDS_REVIEW])
         graph.add_conditional_edges(
             Node.CLASSIFY_FEEDBACK,
             route_after_feedback,
