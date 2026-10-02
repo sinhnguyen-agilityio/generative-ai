@@ -120,6 +120,45 @@ class RecoveryDecision(Model):
         return self
 
 
+class ApprovalResumeDecision(Model):
+    """Validated response to the publication-approval interrupt."""
+
+    approved: bool | None = None
+    reply: str = Field(default="", max_length=MAX_RECOVERY_FEEDBACK_LENGTH)
+    feedback: str = Field(default="", max_length=MAX_RECOVERY_FEEDBACK_LENGTH)
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_decision(self):
+        self.reply = self.reply.strip()
+        self.feedback = self.feedback.strip()
+        self.actor = self.actor.strip()
+        if self.approved is True and (self.reply or self.feedback):
+            raise ValueError("approval cannot also contain revision feedback")
+        if self.approved is False and not (self.reply or self.feedback):
+            raise ValueError("rejection requires feedback")
+        if self.approved is None and not (self.reply or self.feedback):
+            raise ValueError("review response requires approval or a non-empty reply")
+        return self
+
+
+class ClarificationResumeDecision(Model):
+    """Validated response to a scope-clarification interrupt."""
+
+    reply: str = Field(min_length=1, max_length=MAX_RECOVERY_FEEDBACK_LENGTH)
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def normalize_fields(self):
+        self.reply = self.reply.strip()
+        self.actor = self.actor.strip()
+        if not self.reply:
+            raise ValueError("clarification reply must not be blank")
+        if not self.actor:
+            raise ValueError("clarification actor must not be blank")
+        return self
+
+
 class RunRecord(Model):
     """Discoverable metadata for one durable LangGraph run.
 
@@ -135,6 +174,22 @@ class RunRecord(Model):
     current_stage: str = ""
     checkpoint_namespace: str = ""
     request_summary: str = ""
+    terminal: bool = False
+
+
+class RecoverySnapshot(Model):
+    """Safe, UI-facing view of a registered run and its authoritative checkpoint."""
+
+    run_id: str = Field(min_length=1)
+    thread_id: str = Field(min_length=1)
+    current_stage: str = ""
+    workflow_status: WorkflowStatus
+    has_interrupt: bool = False
+    interrupt_kind: str = ""
+    next_nodes: list[str] = Field(default_factory=list)
+    last_successful_node: str = ""
+    last_error: str = ""
+    updated_at: datetime
     terminal: bool = False
 
 
