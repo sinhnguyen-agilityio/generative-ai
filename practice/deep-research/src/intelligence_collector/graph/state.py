@@ -58,6 +58,15 @@ class GraphState(TypedDict, total=False):
     reviewer_requests: list[str]
     recovery_decision: dict | None
     recovery_route: str
+    research_gaps: list[dict]
+    research_gap_attempt: int
+    research_gap_budget: int
+    verification_issue: str
+    verifier_attempt: int
+    verifier_error: str
+    draft_version: int
+    plan_repair_instruction: str
+    research_verifier_attempt: int
     # Publication
     approval: dict | None
     publication: dict | None

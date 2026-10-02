@@ -10,8 +10,8 @@ research step already gathered and checks two things:
 * guidelines: does it follow the operator-configured report guidelines
   (see ``config.DEFAULT_REPORT_GUIDELINES``)?
 
-The judge only says which criteria failed and why; every failure is fixed the same way, by
-rewriting the report from the same evidence (see ``BVFNodes.fixing``).
+The judge classifies failures as draft defects, missing evidence, or missing plan coverage;
+the graph selects the bounded repair loop for that classification.
 """
 
 from __future__ import annotations
@@ -78,6 +78,13 @@ class ReportJudge:
             ),
             evidence=evidence,
             report=report,
+        )
+        messages[0].content += (
+            "\nFor each failed criterion classify issue_type: draft_defect when existing evidence "
+            "can support a corrected report; evidence_gap when required evidence is missing; "
+            "plan_gap when the plan omitted required research. Evidence gaps MUST name "
+            "affected_todo_ids from the evidence question ids and give a research_instruction. "
+            "Unsupported incidental claims removable from the draft are draft defects."
         )
         return self.router.invoke_messages(
             "verify",

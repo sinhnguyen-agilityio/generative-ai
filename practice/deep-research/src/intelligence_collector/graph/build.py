@@ -33,8 +33,10 @@ from intelligence_collector.graph.routing import (
     route_after_feedback,
     route_after_verify,
     route_after_recovery,
+    route_after_research,
 )
 from intelligence_collector.graph.state import GraphState
+from intelligence_collector.contracts import ResearchBrief
 
 __all__ = ["build_graph", "node_wrapper"]
 
@@ -139,8 +141,17 @@ def build_graph(
 
     add_node(Node.RESEARCH, research_nodes.researching)
     add_node(Node.ASSESS_RESEARCH, research_nodes.research_complete)
-    _chain(graph, Node.PLAN, Node.RESEARCH,
-           Node.ASSESS_RESEARCH, Node.SYNTHESIZE)
+    _chain(graph, Node.PLAN, Node.RESEARCH, Node.ASSESS_RESEARCH)
+    graph.add_conditional_edges(Node.ASSESS_RESEARCH, route_after_research, {
+        Node.SYNTHESIZE: Node.SYNTHESIZE,
+        Node.PREPARE_GAP_RESEARCH: Node.PREPARE_GAP_RESEARCH,
+        Node.NEEDS_REVIEW: Node.NEEDS_REVIEW,
+        Node.REPLAN: Node.REPLAN if scope_agent is not None else Node.NEEDS_REVIEW,
+        Node.RETRY_RESEARCH_ASSESSMENT: Node.RETRY_RESEARCH_ASSESSMENT})
+    add_node(Node.RETRY_RESEARCH_ASSESSMENT, lambda state: state)
+    graph.add_edge(Node.RETRY_RESEARCH_ASSESSMENT, Node.ASSESS_RESEARCH)
+    add_node(Node.PREPARE_GAP_RESEARCH, research_nodes.prepare_gap_research)
+    graph.add_edge(Node.PREPARE_GAP_RESEARCH, Node.RESEARCH)
 
     # ===== BUILD-VERIFY-FIX LOOP =====
     bvf = research_nodes.bvf
@@ -153,6 +164,21 @@ def build_graph(
         state, can_rescope=scope_agent is not None))
     recovery = RecoveryNodes(vfs or research_nodes.vfs, can_rescope=scope_agent is not None)
     add_node(Node.APPLY_RECOVERY, recovery.apply)
+    add_node(Node.RETRY_VERIFIER, lambda state: state)
+    graph.add_edge(Node.RETRY_VERIFIER, Node.VERIFY)
+
+    def replan(state):
+        if scope_agent is None:
+            raise ValueError("Plan repair requires a configured Planner Agent")
+        brief = (state.get("scoped_request") or {}).get("research_question", "")
+        repair_brief = ResearchBrief(research_question=brief + "\nRequired missing topics: " +
+                                     state.get("plan_repair_instruction", ""))
+        result = planner.planning({**state, "scoped_request": repair_brief.model_dump(mode="json")})
+        return {**result, "research_gap_attempt": state.get("research_gap_attempt", 0) + 1,
+                "approval": None, "publication": None}
+
+    add_node(Node.REPLAN, replan)
+    graph.add_edge(Node.REPLAN, Node.RESEARCH)
 
     graph.add_edge(Node.SYNTHESIZE, Node.VERIFY)
     passed_target = Node.APPROVE if with_approval else END
@@ -162,10 +188,13 @@ def build_graph(
     graph.add_conditional_edges(
         Node.VERIFY,
         route_after_verify,
-        {PASSED: Node.EVALUATE_QUALITY, FIX: Node.FIX, NEEDS_REVIEW: Node.NEEDS_REVIEW},
+        {PASSED: Node.EVALUATE_QUALITY, FIX: Node.FIX, NEEDS_REVIEW: Node.NEEDS_REVIEW,
+         Node.PREPARE_GAP_RESEARCH: Node.PREPARE_GAP_RESEARCH,
+         Node.REPLAN: Node.REPLAN if scope_agent is not None else Node.NEEDS_REVIEW,
+         Node.RETRY_VERIFIER: Node.RETRY_VERIFIER},
     )
     graph.add_edge(Node.EVALUATE_QUALITY, passed_target)
-    # The fix is always a rewrite from the same evidence.
+    # Draft defects rewrite existing evidence; evidence and plan gaps use their own loop.
     graph.add_edge(Node.FIX, Node.SYNTHESIZE)
     graph.add_edge(Node.NEEDS_REVIEW, Node.AWAIT_RECOVERY)
     graph.add_edge(Node.AWAIT_RECOVERY, Node.APPLY_RECOVERY)

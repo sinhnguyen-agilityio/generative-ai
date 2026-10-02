@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 from langgraph.types import Command
 from intelligence_collector.agents.report_judge import ReportJudge
+from intelligence_collector.agents.research_judge import ResearchEvidenceJudge
 from intelligence_collector.agents.feedback_router import FeedbackRouter
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.scope import ScopeAgent
@@ -140,6 +141,7 @@ def _get_scope_graph(st, agent, tracer):
             # Sole Verify gate (LLM-as-judge, no deterministic pre-check); shares the
             # scope/planner reasoning-tier model.
             report_judge=ReportJudge(agent.router),
+            research_assessor=ResearchEvidenceJudge(agent.router),
             report_guidelines=settings.report_guidelines,
             max_concurrent_researchers=settings.max_concurrent_researchers,
             recovery_budget=settings.recovery_attempts,

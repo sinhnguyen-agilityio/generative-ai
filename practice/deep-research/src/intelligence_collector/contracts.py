@@ -236,6 +236,8 @@ class ResearchTodo(Model):
     todo_id: str = Field(default_factory=lambda: str(uuid4()))
     research_question: str = Field(min_length=1)
     status: TodoStatus = TodoStatus.PLANNED
+    research_attempt: int = Field(default=1, ge=1)
+    research_instruction: str = ""
 
     @model_validator(mode="after")
     def validate_question(self):
@@ -277,6 +279,20 @@ class ResearchFindings(Model):
         if not self.sufficient and not self.unresolved_gaps:
             raise ValueError("insufficient research must name at least one unresolved gap")
         return self
+
+
+class ResearchEvidenceCheck(Model):
+    todo_id: str
+    sufficient: bool
+    missing_evidence: str = ""
+
+
+class ResearchEvidenceVerdict(Model):
+    """Independent semantic assessment of question coverage and plan completeness."""
+
+    questions: list[ResearchEvidenceCheck] = Field(min_length=1)
+    plan_complete: bool
+    missing_plan_topics: list[str] = Field(default_factory=list)
 
 
 class DraftAssessment(Model):
@@ -361,6 +377,9 @@ class ReportJudgeCriterion(Model):
     criterion: str = Field(min_length=1)
     met: bool
     justification: str = Field(min_length=1)
+    issue_type: Literal["draft_defect", "evidence_gap", "plan_gap"] = "draft_defect"
+    affected_todo_ids: list[str] = Field(default_factory=list)
+    research_instruction: str = ""
 
 
 class ReportJudgeVerdict(Model):

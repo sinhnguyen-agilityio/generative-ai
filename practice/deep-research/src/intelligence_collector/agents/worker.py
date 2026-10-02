@@ -17,7 +17,12 @@ from intelligence_collector.tools.url_tracking import UrlRegistry
 
 
 def _evidence_path(todo: ResearchTodo) -> str:
-    return f"research/{todo.todo_id}/evidence/result.json"
+    return f"{research_prefix(todo)}/evidence/result.json"
+
+
+def research_prefix(todo: ResearchTodo) -> str:
+    base = f"research/{todo.todo_id}"
+    return base if todo.research_attempt == 1 else f"{base}/attempts/{todo.research_attempt}"
 
 
 def already_researched(vfs, run_id: str, todo: ResearchTodo) -> bool:
@@ -32,7 +37,7 @@ def already_researched(vfs, run_id: str, todo: ResearchTodo) -> bool:
 def _write_failure(vfs, run_id: str, todo: ResearchTodo, message: str):
     return vfs.write_json(
         run_id,
-        f"research/{todo.todo_id}/outcome.json",
+        f"{research_prefix(todo)}/outcome.json",
         {"status": "failed", "question": todo.research_question, "error": message},
         "research_outcome",
         task_id=todo.todo_id,
@@ -111,7 +116,7 @@ def persist_research(
             continue
         ref = vfs.write_json(
             run_id,
-            f"research/{todo.todo_id}/raw/{i}.json",
+            f"{research_prefix(todo)}/raw/{i}.json",
             {"source": record.model_dump(mode="json"), "content": raw},
             "raw_capture",
             task_id=todo.todo_id,
@@ -143,7 +148,7 @@ def persist_research(
     todo.status = TodoStatus.COMPLETED
     refs.append(vfs.write(
         run_id,
-        f"research/{todo.todo_id}/notes/result.md",
+        f"{research_prefix(todo)}/notes/result.md",
         f"# Research notes\n\nQuestion: {todo.research_question}\n\n"
         f"Search calls: {outcome.search_calls}/{outcome.search_budget}\n\n"
         f"Sources: {len(sources)} ({reused} already captured earlier in this run)\n\n"
@@ -153,7 +158,7 @@ def persist_research(
     ))
     refs.append(vfs.write_json(
         run_id,
-        f"research/{todo.todo_id}/excerpts/result.json",
+        f"{research_prefix(todo)}/excerpts/result.json",
         {"excerpts": [item["excerpt"] for item in evidence_sources]},
         "excerpts",
         task_id=todo.todo_id,
@@ -163,6 +168,7 @@ def persist_research(
         _evidence_path(todo),
         {
             "task_id": todo.todo_id,
+            "research_attempt": todo.research_attempt,
             "question": todo.research_question,
             "summary": findings.summary,
             "sources": evidence_sources,
@@ -184,4 +190,3 @@ def run_worker(vfs, index, run_id, todo: ResearchTodo, researcher: ResearchAgent
         return todo, [], []
     outcome = researcher.research(todo.research_question, run_id=run_id, thread_id=thread_id)
     return persist_research(vfs, index, run_id, todo, outcome)
-

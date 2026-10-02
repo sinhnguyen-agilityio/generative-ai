@@ -8,6 +8,8 @@ dependencies are injected once and the wiring in ``build.py`` stays declarative.
 from __future__ import annotations
 
 import hashlib
+import json
+from intelligence_collector.agents.worker import _evidence_path
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -40,6 +42,7 @@ from intelligence_collector.contracts import (
     ScopeAssessment,
     Stage,
     VerificationResult,
+    TodoStatus,
 )
 from intelligence_collector.graph.state import GraphState
 from intelligence_collector.observability.evaluation import (
@@ -78,6 +81,10 @@ class Node:
     NEEDS_REVIEW = "needs_review"
     AWAIT_RECOVERY = "await_recovery"
     APPLY_RECOVERY = "apply_recovery_decision"
+    PREPARE_GAP_RESEARCH = "prepare_gap_research"
+    REPLAN = "replan"
+    RETRY_VERIFIER = "retry_verifier"
+    RETRY_RESEARCH_ASSESSMENT = "retry_research_assessment"
     # Human review and publication
     APPROVE = "approval"
     CLASSIFY_FEEDBACK = "classify_feedback"
@@ -175,6 +182,8 @@ class RecoveryNodes:
                       stall_count=0, progress_fingerprint="", last_error="",
                       faithfulness_score=None, context_precision_score=None,
                       response_relevancy_score=None)
+        update.update(research_gap_attempt=0, research_gap_budget=1,
+                      research_verifier_attempt=0, verifier_attempt=0)
         if action in {RecoveryAction.RETRY_REPORT, RecoveryAction.REVISE}:
             feedback = decision.feedback or "Repair the unresolved verification issues: " + (
                 state.get("last_error") or (state.get("verification") or {}).get("repair_details", "")
@@ -290,6 +299,7 @@ class ResearchNodes:
         *,
         report_writer: ReportWriter | None = None,
         report_judge: ReportJudge,
+        research_assessor=None,
         report_guidelines: list[str] = (),
         max_concurrent_researchers: int = DEFAULT_MAX_CONCURRENT_RESEARCHERS,
         recovery_budget: int = DEFAULT_RECOVERY_BUDGET,
@@ -306,6 +316,7 @@ class ResearchNodes:
             index,
             max_concurrent_researchers=max_concurrent_researchers,
         )
+        self.research_assessor = research_assessor
         self.bvf = BVFNodes(
             vfs,
             index,
@@ -356,9 +367,7 @@ class ResearchNodes:
         }
 
     def research_complete(self, state):
-        """Gate before synthesis: raise if the supervisor finds research incomplete, otherwise
-        record its assessment.
-        """
+        """Check operational readiness and per-question evidence before synthesis."""
         todos = [ResearchTodo.model_validate(
             todo) for todo in state.get("todos", [])]
         assessment = self.supervisor.assess(
@@ -366,25 +375,80 @@ class ResearchNodes:
             state.get("artifacts", []),
             state.get("index_refs", []),
         )
-        ref = self.vfs.write_json(
-            state["run_id"],
-            "supervisor/progress/latest.json",
-            assessment.model_dump(mode="json"),
-            "progress_assessment",
-        )
-        if not assessment.ready_for_synthesis:
-            raise RuntimeError(
-                "ResearchComplete denied: "
-                + ("; ".join(assessment.blockers) or assessment.next_action)
-            )
+        gaps = []
+        for todo in todos:
+            try:
+                bundle = json.loads(self.vfs.read(state["run_id"], _evidence_path(todo)))
+            except FileNotFoundError:
+                bundle = {}
+            if not bundle.get("sources") or not bundle.get("summary") or (
+                bundle.get("sufficient") is not True or bundle.get("unresolved_gaps")
+            ):
+                gaps.append({"todo_id": todo.todo_id,
+                             "instruction": "; ".join(bundle.get("unresolved_gaps") or [])
+                             or "Find sufficient evidence to answer the research question."})
+        ready = assessment.ready_for_synthesis and not gaps
+        plan_gap = False
+        if self.research_assessor is not None:
+            try:
+                verdict = self.research_assessor.assess(
+                    (state.get("scoped_request") or {}).get("research_question", ""), todos,
+                    format_evidence(load_catalog(self.vfs, state["run_id"], state.get("evidence", []))),
+                    run_id=state["run_id"], thread_id=state.get("thread_id", ""),
+                )
+            except Exception:
+                return {**state, "verification_issue": "research_verifier_failure",
+                        "progress_assessment": None,
+                        "research_verifier_attempt": state.get("research_verifier_attempt", 0) + 1,
+                        "last_error": "Research evidence judge unavailable or returned invalid output"}
+            gaps_by_id = {gap["todo_id"]: gap for gap in gaps}
+            for check in verdict.questions:
+                if not check.sufficient:
+                    gaps_by_id[check.todo_id] = {
+                        "todo_id": check.todo_id, "instruction": check.missing_evidence}
+            gaps = list(gaps_by_id.values())
+            plan_gap = not verdict.plan_complete
+            assessment.blockers.extend(verdict.missing_plan_topics)
+            ready = ready and not gaps and not plan_gap
+        assessment.ready_for_synthesis = ready
+        assessment.next_action = "synthesize" if ready else "gap research"
+        assessment.blockers.extend(gap["instruction"] for gap in gaps)
+        ref = self.vfs.write_json(state["run_id"], "supervisor/progress/latest.json",
+                                  assessment.model_dump(mode="json"), "progress_assessment")
         return {
             **state,
-            "stage": Stage.SYNTHESIZING.value,
-            "current_action": "ResearchComplete validated",
+            "stage": Stage.SYNTHESIZING.value if ready else Stage.RESEARCHING.value,
+            "current_action": "Research evidence sufficient" if ready else "Research gaps need repair",
             "activity": _activity(state, "Assessing research completeness"),
             "progress_assessment": assessment.model_dump(mode="json"),
+            "research_gaps": gaps,
+            "verification_issue": "plan_gap" if plan_gap else "evidence_gap" if not ready else "",
+            "plan_repair_instruction": "; ".join(verdict.missing_plan_topics) if plan_gap else "",
+            "research_verifier_attempt": 0,
+            "research_gap_budget": state.get("research_gap_budget", 2),
+            "last_error": "\n".join(assessment.blockers) if not ready else "",
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }
+
+    def prepare_gap_research(self, state):
+        if state.get("research_gap_attempt", 0) >= state.get("research_gap_budget", 2):
+            raise ValueError("Research gap allowance exhausted")
+        todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
+        gaps = {gap["todo_id"]: gap["instruction"] for gap in state.get("research_gaps", [])}
+        if not gaps or not set(gaps).issubset({todo.todo_id for todo in todos}):
+            raise ValueError("Gap research requires known affected todo ids")
+        for todo in todos:
+            if todo.todo_id in gaps:
+                todo.status = TodoStatus.PLANNED
+                todo.research_attempt += 1
+                todo.research_instruction = gaps[todo.todo_id]
+        ref = self.vfs.write_json(state["run_id"], "planning/active_todos.json",
+                                  [todo.model_dump(mode="json") for todo in todos], "todos")
+        return {**state, "todos": [todo.model_dump(mode="json") for todo in todos],
+                "research_gap_attempt": state.get("research_gap_attempt", 0) + 1,
+                "verification": None, "approval": None, "publication": None,
+                "verifier_attempt": 0,
+                "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")]}
 
 
 # ===== BUILD-VERIFY-FIX =====
@@ -467,7 +531,7 @@ class BVFNodes:
             run_id=state["run_id"],
             thread_id=state.get("thread_id", ""),
         )
-        version = state.get("recovery_attempt", 0) + 1
+        version = state.get("draft_version", 0) + 1
         ref = persist_report(self.vfs, state["run_id"], report, version)
         # The ranked evidence this draft was written from, per research question: what Context
         # Precision scores if this draft becomes the final report.
@@ -490,6 +554,9 @@ class BVFNodes:
             "activity": _activity(state, "Synthesizing report"),
             "previous_draft": state.get("draft", ""),
             "draft": report,
+            "draft_version": version,
+            "verifier_attempt": 0,
+            "verifier_error": "",
             "writer_evidence": writer_evidence,
             "artifacts": [
                 *state.get("artifacts", []),
@@ -506,16 +573,45 @@ class BVFNodes:
         catalog = self._catalog(state)
         brief = ResearchBrief.model_validate(state["scoped_request"])
         criteria = build_report_judge_criteria(self.report_guidelines)
+        criteria.extend([
+            "The report directly answers the overall research goal without substituting a different topic.",
+            *[f"The report answers research question {todo['todo_id']}: {todo['research_question']} "
+              "using the available evidence and clearly identifies any remaining uncertainty."
+              for todo in state.get("todos", [])],
+        ])
         report = state.get("draft", "")
-        verdict = self.report_judge.verify(
-            brief,
-            criteria,
-            report,
-            format_evidence(catalog),
-            reviewer_requests=list(state.get("reviewer_requests", [])),
-            run_id=state["run_id"],
-            thread_id=state.get("thread_id", ""),
-        )
+        try:
+            verdict = self.report_judge.verify(
+                brief,
+                criteria,
+                report,
+                format_evidence(catalog),
+                reviewer_requests=list(state.get("reviewer_requests", [])),
+                run_id=state["run_id"],
+                thread_id=state.get("thread_id", ""),
+            )
+        except Exception as exc:
+            return {**state, "verification_issue": "verifier_failure", "verification": None,
+                    "verifier_error": str(exc), "last_error": "Report verifier unavailable",
+                    "verifier_attempt": state.get("verifier_attempt", 0) + 1}
+        failed_items = [item for item in verdict.results if not item.met]
+        issue = "draft_defect"
+        plan_instructions = []
+        gaps = []
+        for item in failed_items:
+            if item.issue_type == "plan_gap":
+                issue = "plan_gap"
+                plan_instructions.append(item.research_instruction or item.justification)
+            elif item.issue_type == "evidence_gap" and issue != "plan_gap":
+                known = {todo["todo_id"] for todo in state.get("todos", [])}
+                if not item.affected_todo_ids or not set(item.affected_todo_ids).issubset(known):
+                    return {**state, "verification_issue": "verifier_failure",
+                            "verification": None, "last_error": "Verifier returned invalid gap ids",
+                            "verifier_attempt": state.get("verifier_attempt", 0) + 1}
+                issue = "evidence_gap"
+                gaps.extend({"todo_id": todo_id,
+                             "instruction": item.research_instruction or item.justification}
+                            for todo_id in item.affected_todo_ids)
         artifact_hash = hashlib.sha256(report.encode()).hexdigest() if report else ""
         result = judge_verdict_to_result(verdict, artifact_hash)
         fingerprint = failure_fingerprint(result)
@@ -541,6 +637,11 @@ class BVFNodes:
             ),
             "activity": _activity(state, "Verifying report"),
             "verification": result.model_dump(mode="json"),
+            "verification_issue": issue,
+            "research_gaps": gaps,
+            "plan_repair_instruction": "; ".join(plan_instructions),
+            "verifier_attempt": 0,
+            "verifier_error": "",
             "verification_history": [
                 *state.get("verification_history", []
                            ), result.model_dump(mode="json")
@@ -682,7 +783,10 @@ class BVFNodes:
         """Recovery budget exhausted or no progress: stop without ever labelling it verified."""
         verification = state.get("verification") or {}
         attempts = state.get("recovery_attempt", 0)
-        reason = (
+        reason = state.get("last_error") if state.get("verification_issue") in {
+            "verifier_failure", "research_verifier_failure"} else (
+            "research gap budget exhausted" if state.get("research_gap_attempt", 0) >=
+            state.get("research_gap_budget", 2) else
             "no progress after reflection" if state.get("stall_count", 0) >= MAX_STALLED_ATTEMPTS
             else f"recovery budget {state.get('recovery_budget', self.recovery_budget)} exhausted"
         )
@@ -703,7 +807,7 @@ class BVFNodes:
             **state,
             "stage": Stage.NEEDS_REVIEW.value,
             "status": "needs_review",
-            "last_error": verification.get("repair_details", ""),
+            "last_error": verification.get("repair_details") or state.get("last_error", ""),
             "current_action": f"Needs review: {reason} after {attempts} fix attempt(s)",
             "activity": _activity(state, "Verification needs review", "failure"),
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],

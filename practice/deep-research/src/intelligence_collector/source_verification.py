@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass, field
 
 from intelligence_collector.contracts import VerificationResult
+from pathlib import Path
 from intelligence_collector.tools.url_tracking import normalize_url
 
 CATALOG_STATE_PATH = "verification/catalog_state.json"
@@ -138,12 +139,39 @@ def evidence_task_ids(evidence_refs: list[dict]) -> list[str]:
 
 def load_catalog(vfs, run_id: str, evidence_refs: list[dict]) -> SourceCatalog:
     """Read the evidence bundles referenced by graph state (in research order)."""
-    bundles = [
-        json.loads(
-            vfs.read(run_id, f"research/{task_id}/evidence/result.json"))
-        for task_id in evidence_task_ids(evidence_refs)
-    ]
-    return catalog_from_bundles(bundles)
+    bundles = []
+    seen = set()
+    base = (vfs.root / run_id).resolve()
+    for ref in evidence_refs:
+        task_id = ref.get("task_id")
+        if not task_id:
+            continue
+        path = ref.get("path")
+        relative = str(Path(path).resolve().relative_to(base)) if path else (
+            f"research/{task_id}/evidence/result.json"
+        )
+        if relative in seen:
+            continue
+        seen.add(relative)
+        bundles.append(json.loads(vfs.read(run_id, relative)))
+    # Keep historic sources in their original order for stable citations, but only the newest
+    # attempt determines each todo's summary and unresolved gaps.
+    latest = {}
+    all_sources = {}
+    for bundle in bundles:
+        latest[bundle.get("task_id")] = bundle
+        all_sources.setdefault(bundle.get("task_id"), []).extend(bundle.get("sources", []))
+    # Seed citations from capture order before combining the latest per-question findings.
+    historic = catalog_from_bundles(bundles)
+    merged = catalog_from_bundles([
+        {**bundle, "sources": all_sources[task_id]} for task_id, bundle in latest.items()
+    ])
+    by_url = {_normalize_url(source.url): sid for sid, source in historic.sources.items()}
+    for bundle in merged.bundles:
+        bundle.source_ids = [by_url[_normalize_url(merged.sources[sid].url)]
+                             for sid in bundle.source_ids]
+    merged.sources = historic.sources
+    return merged
 
 
 def save_catalog_state(vfs, run_id: str, evidence_refs: list[dict]):

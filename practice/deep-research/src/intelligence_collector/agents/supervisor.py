@@ -47,7 +47,8 @@ class ResearchSupervisor:
 
     def delegate(self, run_id: str, todos: list[ResearchTodo], *, thread_id: str = ""):
         """Research every todo; returns ``(todo, refs, chunks)`` per todo in plan order."""
-        pending = [todo for todo in todos if not already_researched(self.vfs, run_id, todo)]
+        pending = [todo for todo in todos if todo.status == TodoStatus.PLANNED
+                   and not already_researched(self.vfs, run_id, todo)]
         # One run-level URL registry, so a page found by several sub-agents is captured once.
         registry = UrlRegistry.load(self.vfs, run_id)
         # Shared by the parallel sub-agents while they search, so a page one task already
@@ -58,7 +59,8 @@ class ResearchSupervisor:
         results = []
         for todo in todos:
             if todo.todo_id not in outcomes:
-                todo.status = TodoStatus.COMPLETED  # researched in an earlier invocation
+                if already_researched(self.vfs, run_id, todo):
+                    todo.status = TodoStatus.COMPLETED
                 results.append((todo, [], []))
             else:
                 results.append(persist_research(
@@ -103,7 +105,10 @@ class ResearchSupervisor:
         # One failing sub-agent must not cancel its siblings; the failure becomes its outcome.
         try:
             return self.researcher.research(
-                todo.research_question,
+                todo.research_question + (
+                    "\nResearch only this missing evidence: " + todo.research_instruction
+                    if todo.research_instruction else ""
+                ),
                 run_id=run_id,
                 thread_id=thread_id,
                 task_id=todo.todo_id,

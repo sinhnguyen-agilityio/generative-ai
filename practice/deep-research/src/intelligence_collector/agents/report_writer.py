@@ -61,7 +61,7 @@ def format_evidence(catalog: SourceCatalog) -> str:
             for sid in bundle.source_ids
         ]
         blocks.append(
-            f"### Research question: {bundle.question}\n"
+            f"### Research question: {bundle.question}\nTodo id: {bundle.todo_id}\n"
             f"Findings summary (URLs map to the source ids below):\n{bundle.summary or '(none)'}\n"
             f"Sources:\n" + ("\n".join(sources) or "(none)")
         )
