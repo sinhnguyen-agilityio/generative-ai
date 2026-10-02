@@ -57,6 +57,7 @@ class GraphState(TypedDict, total=False):
     reviewer: str
     reviewer_requests: list[str]
     recovery_decision: dict | None
+    recovery_route: str
     # Publication
     approval: dict | None
     publication: dict | None

@@ -13,6 +13,7 @@ from intelligence_collector.graph.nodes import (
     Node,
     PlannerNodes,
     ScopeNodes,
+    RecoveryNodes,
     approval,
     await_clarification,
     await_recovery,
@@ -31,6 +32,7 @@ from intelligence_collector.graph.routing import (
     route_after_clarify,
     route_after_feedback,
     route_after_verify,
+    route_after_recovery,
 )
 from intelligence_collector.graph.state import GraphState
 
@@ -69,7 +71,8 @@ def build_graph(
             verifying --(all checks pass)--> evaluating_quality -> approval (with_approval) | END
                       --(failed, budget left)--> fixing (reflect) -> synthesizing (rewrite)
                       --(budget exhausted / no progress)--> needs_review
-                          -> await_recovery (interrupt) -> END
+                          -> await_recovery (interrupt) -> apply_recovery_decision
+                          -> authorized repair, research, rescope, export, or cancellation
             approval (human-in-the-loop review) --(explicit approve)--> publishing -> END
                      --(chat reply / reject)--> classify_feedback (LLM reads the reply)
             classify_feedback --(approve)--> publishing -> END
@@ -146,7 +149,10 @@ def build_graph(
     add_node(Node.EVALUATE_QUALITY, bvf.evaluating_quality)
     add_node(Node.FIX, bvf.fixing)
     add_node(Node.NEEDS_REVIEW, bvf.needs_review)
-    add_node(Node.AWAIT_RECOVERY, await_recovery)
+    add_node(Node.AWAIT_RECOVERY, lambda state: await_recovery(
+        state, can_rescope=scope_agent is not None))
+    recovery = RecoveryNodes(vfs or research_nodes.vfs, can_rescope=scope_agent is not None)
+    add_node(Node.APPLY_RECOVERY, recovery.apply)
 
     graph.add_edge(Node.SYNTHESIZE, Node.VERIFY)
     passed_target = Node.APPROVE if with_approval else END
@@ -162,7 +168,15 @@ def build_graph(
     # The fix is always a rewrite from the same evidence.
     graph.add_edge(Node.FIX, Node.SYNTHESIZE)
     graph.add_edge(Node.NEEDS_REVIEW, Node.AWAIT_RECOVERY)
-    graph.add_edge(Node.AWAIT_RECOVERY, END)
+    graph.add_edge(Node.AWAIT_RECOVERY, Node.APPLY_RECOVERY)
+    graph.add_conditional_edges(Node.APPLY_RECOVERY, route_after_recovery, {
+        "retry_report": Node.SYNTHESIZE,
+        "revise": Node.SYNTHESIZE,
+        "research": Node.RESEARCH,
+        "rescope": Node.CLARIFY if scope_agent is not None else END,
+        "export_incomplete": END,
+        "cancel": END,
+    })
 
     # ===== APPROVAL =====
     if with_approval:

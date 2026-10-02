@@ -8,6 +8,7 @@ from intelligence_collector.graph.nodes import (
     Node,
 )
 from intelligence_collector.graph.state import GraphState
+from intelligence_collector.contracts import RecoveryAction
 
 # Outcomes of route_after_verify; build.py maps "passed" to approval or END.
 PASSED, FIX, NEEDS_REVIEW = "passed", "fix", "needs_review"
@@ -19,6 +20,11 @@ APPROVED, REJECTED = "approved", "rejected"
 TO_PUBLISH, TO_REVISE, TO_SCOPE = "approve", "revise", "scope"
 
 # ===== CONDITIONAL EDGE ROUTERS =====
+
+
+def route_after_recovery(state: GraphState) -> str:
+    """Only recognized human actions can select a recovery transition."""
+    return RecoveryAction(state.get("recovery_route")).value
 
 
 def route_after_clarify(state: GraphState) -> str:

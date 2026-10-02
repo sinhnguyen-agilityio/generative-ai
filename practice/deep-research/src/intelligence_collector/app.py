@@ -612,7 +612,7 @@ _PROGRESS_BY_STAGE = {
 
 
 # A published thread is finished. Clarification, approval and recovery states are durable pauses.
-_THREAD_DONE_STAGES = {Stage.PUBLISHED.value}
+_THREAD_DONE_STAGES = {Stage.PUBLISHED.value, "Cancelled", "Exported Incomplete"}
 
 
 def _run_chat_turn(st, text, *, reviewing, clarifying=False, placeholders, vfs_for_ui):

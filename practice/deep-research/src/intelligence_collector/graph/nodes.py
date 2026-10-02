@@ -77,6 +77,7 @@ class Node:
     FIX = "fixing"
     NEEDS_REVIEW = "needs_review"
     AWAIT_RECOVERY = "await_recovery"
+    APPLY_RECOVERY = "apply_recovery_decision"
     # Human review and publication
     APPROVE = "approval"
     CLASSIFY_FEEDBACK = "classify_feedback"
@@ -115,11 +116,10 @@ def await_clarification(state: GraphState) -> GraphState:
     }
 
 
-def await_recovery(state: GraphState) -> GraphState:
+def await_recovery(state: GraphState, *, can_rescope=True) -> GraphState:
     """Pause a failed BVF run for an explicit, validated human recovery decision.
 
-    Phase 5 will route the stored decision to its authorized remediation node. Until then the
-    resumed graph ends in ``NEEDS_REVIEW`` without applying or implying a repair.
+    The next node applies the stored decision through an explicit conditional graph edge.
     """
     from langgraph.types import interrupt
 
@@ -127,13 +127,69 @@ def await_recovery(state: GraphState) -> GraphState:
         "kind": "recovery_required",
         "run_id": state.get("run_id"),
         "reason": state.get("current_action") or state.get("last_error", ""),
-        "allowed_actions": [action.value for action in RecoveryAction],
+        "allowed_actions": [action.value for action in RecoveryAction
+                            if can_rescope or action is not RecoveryAction.RESCOPE],
     }))
     return {
         **state,
         "recovery_decision": decision.model_dump(mode="json"),
         "current_action": f"Recovery action authorized: {decision.action.value}",
     }
+
+
+class RecoveryNodes:
+    """Apply human authorization before any recovery work runs."""
+
+    def __init__(self, vfs, *, can_rescope=False):
+        self.vfs = vfs
+        self.can_rescope = can_rescope
+
+    def apply(self, state):
+        decision = RecoveryDecision.model_validate(state.get("recovery_decision"))
+        action = decision.action
+        if action is RecoveryAction.RESCOPE and not self.can_rescope:
+            raise ValueError("Rescoping requires a configured Scope Agent")
+        history = [*state.get("bvf_history", []), {
+            "kind": "RECOVERY_DECISION", **decision.model_dump(mode="json"),
+        }]
+        update = {**state, "recovery_decision": None, "recovery_route": action.value,
+                  "bvf_history": history, "approval": None, "publication": None}
+        if action is RecoveryAction.CANCEL:
+            return {**update, "stage": "Cancelled", "status": "cancelled",
+                    "current_action": "Run cancelled by reviewer"}
+        if action is RecoveryAction.EXPORT_INCOMPLETE:
+            content = (
+                "# INCOMPLETE — unverified research report\n\n"
+                "This artifact has unresolved verification issues and is not published.\n\n"
+                + state.get("last_error", "") + "\n\n" + state.get("draft", "")
+            )
+            ref = self.vfs.write(state["run_id"], "reports/incomplete.md", content,
+                                 "incomplete_report")
+            return {**update, "stage": "Exported Incomplete", "status": "exported_incomplete",
+                    "current_action": "Incomplete report saved for review",
+                    "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")]}
+        # Each human authorization starts a fresh, small recovery allowance. Verification history
+        # and artifacts remain available, but no stale verification/approval follows the new draft.
+        update.update(verification=None, status="active", recovery_attempt=0,
+                      recovery_budget=decision.additional_attempts or 1,
+                      stall_count=0, progress_fingerprint="", last_error="",
+                      faithfulness_score=None, context_precision_score=None,
+                      response_relevancy_score=None)
+        if action in {RecoveryAction.RETRY_REPORT, RecoveryAction.REVISE}:
+            feedback = decision.feedback or "Repair the unresolved verification issues: " + (
+                state.get("last_error") or (state.get("verification") or {}).get("repair_details", "")
+            )
+            return {**update, "stage": Stage.SYNTHESIZING.value,
+                    "human_feedback": feedback,
+                    "reviewer_requests": [*state.get("reviewer_requests", []), feedback]}
+        if action is RecoveryAction.RESEARCH:
+            # A distinct question avoids the existing worker's completed-artifact resume guard.
+            # Only this explicitly requested gap is delegated; prior evidence remains available.
+            todo = ResearchTodo(research_question=decision.feedback)
+            return {**update, "stage": Stage.RESEARCHING.value, "human_feedback": "",
+                    "todos": [todo.model_dump(mode="json")], "todo_ids": [todo.todo_id]}
+        return {**update, "stage": Stage.SCOPING.value, "request": decision.feedback,
+                "draft": "", "human_feedback": "", "reviewer_requests": []}
 
 
 # ===== SCOPE AND PLANNING =====

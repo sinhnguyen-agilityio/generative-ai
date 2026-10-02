@@ -101,6 +101,8 @@ def node_wrapper(
         )
 
     def result_status(result: GraphState) -> WorkflowStatus:
+        if result.get("status") in {"cancelled", "exported_incomplete"}:
+            return WorkflowStatus(result["status"])
         stage = result.get("stage")
         if stage == Stage.PUBLISHED.value:
             return WorkflowStatus.PUBLISHED
