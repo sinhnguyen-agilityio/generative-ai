@@ -1,6 +1,8 @@
 import json
 
 import pytest
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
@@ -130,17 +132,37 @@ def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
         _plan_payload(),
     ])
     router = ModelRouter(model)
-    graph = build_graph(scope_agent=ScopeAgent(router), vfs=VFS(tmp_path))
-    first = graph.invoke({"run_id": "run-2", "thread_id": "thread-2", "request": "Compare databases"})
+    graph = build_graph(
+        scope_agent=ScopeAgent(router), vfs=VFS(tmp_path), checkpointer=MemorySaver()
+    )
+    config = {"configurable": {"thread_id": "thread-2"}}
+    first = graph.invoke(
+        {"run_id": "run-2", "thread_id": "thread-2", "request": "Compare databases"},
+        config,
+    )
     assert first["stage"] == "Scoping"
+    assert first.get("__interrupt__")
     assert first["scope_assessment"]["need_clarification"] is True
     assert first["messages"][-1].content.startswith("Which database versions")
 
-    second = graph.invoke({**first, "request": "Compare PostgreSQL and SQLite for local apps"})
+    second = graph.invoke(
+        Command(resume={
+            "reply": "Compare PostgreSQL and SQLite for local apps",
+            "actor": "tester",
+        }),
+        config,
+    )
     assert second["stage"] == "Scoping"
+    assert second.get("__interrupt__")
     assert len(second["messages"]) == 4
 
-    resumed = graph.invoke({**second, "request": "Every factual claim must cite a primary source"})
+    resumed = graph.invoke(
+        Command(resume={
+            "reply": "Every factual claim must cite a primary source",
+            "actor": "tester",
+        }),
+        config,
+    )
     assert resumed["stage"] == "Planning"
     assert resumed["scope_assessment"]["need_clarification"] is False
     assert len(resumed["messages"]) == 6

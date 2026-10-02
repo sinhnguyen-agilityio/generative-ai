@@ -116,7 +116,7 @@ def node_wrapper(
     def interrupt_status() -> WorkflowStatus:
         if name == "approval":
             return WorkflowStatus.WAITING_FOR_APPROVAL
-        if name == "needs_review":
+        if name == "await_recovery":
             return WorkflowStatus.WAITING_FOR_RECOVERY
         return WorkflowStatus.WAITING_FOR_CLARIFICATION
 

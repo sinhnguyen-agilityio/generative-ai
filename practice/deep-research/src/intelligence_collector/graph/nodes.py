@@ -31,7 +31,10 @@ from intelligence_collector.agents.supervisor import (
 from intelligence_collector.agents.synthesis import persist_report
 from intelligence_collector.contracts import (
     ApprovalDecision,
+    ClarificationResumeDecision,
     FeedbackDecision,
+    RecoveryAction,
+    RecoveryDecision,
     ResearchBrief,
     ResearchTodo,
     ScopeAssessment,
@@ -61,6 +64,7 @@ class Node:
 
     # Scope and planning
     CLARIFY = "clarify_with_user"
+    AWAIT_CLARIFICATION = "await_clarification"
     WRITE_BRIEF = "write_research_brief"
     PLAN = "planning"
     # Research pipeline
@@ -72,6 +76,7 @@ class Node:
     EVALUATE_QUALITY = "evaluating_quality"
     FIX = "fixing"
     NEEDS_REVIEW = "needs_review"
+    AWAIT_RECOVERY = "await_recovery"
     # Human review and publication
     APPROVE = "approval"
     CLASSIFY_FEEDBACK = "classify_feedback"
@@ -86,6 +91,49 @@ def _activity(state, label: str, status: str = "success"):
         {"id": f"{len(state.get('activity', [])) + 1}:{label}",
          "label": label, "status": status},
     ]
+
+
+def await_clarification(state: GraphState) -> GraphState:
+    """Pause after scope analysis and feed the validated answer back into scoping.
+
+    Keeping this interrupt in its own node prevents the Scope Agent call in
+    ``clarify_with_user`` from being repeated when LangGraph re-enters the interrupted node.
+    """
+    from langgraph.types import interrupt
+
+    assessment = ScopeAssessment.model_validate(state["scope_assessment"])
+    decision = ClarificationResumeDecision.model_validate(interrupt({
+        "kind": "clarification_required",
+        "run_id": state.get("run_id"),
+        "question": assessment.question,
+    }))
+    return {
+        **state,
+        "request": decision.reply,
+        "reviewer": decision.actor,
+        "current_action": "Clarification received — reassessing scope",
+    }
+
+
+def await_recovery(state: GraphState) -> GraphState:
+    """Pause a failed BVF run for an explicit, validated human recovery decision.
+
+    Phase 5 will route the stored decision to its authorized remediation node. Until then the
+    resumed graph ends in ``NEEDS_REVIEW`` without applying or implying a repair.
+    """
+    from langgraph.types import interrupt
+
+    decision = RecoveryDecision.model_validate(interrupt({
+        "kind": "recovery_required",
+        "run_id": state.get("run_id"),
+        "reason": state.get("current_action") or state.get("last_error", ""),
+        "allowed_actions": [action.value for action in RecoveryAction],
+    }))
+    return {
+        **state,
+        "recovery_decision": decision.model_dump(mode="json"),
+        "current_action": f"Recovery action authorized: {decision.action.value}",
+    }
 
 
 # ===== SCOPE AND PLANNING =====

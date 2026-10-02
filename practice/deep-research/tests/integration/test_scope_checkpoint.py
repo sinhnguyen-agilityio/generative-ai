@@ -1,6 +1,7 @@
 import sqlite3
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.types import Command
 
 from intelligence_collector.agents.scope import ScopeAgent
 from intelligence_collector.graph.build import build_graph
@@ -38,6 +39,7 @@ def test_scope_clarification_checkpoint_resumes_after_process_restart(tmp_path):
     config = {"configurable": {"thread_id": "scope-thread"}}
     first = graph.invoke({"run_id": "run", "thread_id": "scope-thread", "request": "Compare databases"}, config)
     assert first["stage"] == "Scoping"
+    assert first.get("__interrupt__")
     first_connection.close()
 
     second_connection = sqlite3.connect(checkpoint_path, check_same_thread=False)
@@ -47,7 +49,10 @@ def test_scope_clarification_checkpoint_resumes_after_process_restart(tmp_path):
         vfs=VFS(tmp_path / "vfs"),
     )
     resumed = restarted_graph.invoke(
-        {"request": "Compare PostgreSQL and SQLite for local apps", "run_id": "run", "thread_id": "scope-thread"},
+        Command(resume={
+            "reply": "Compare PostgreSQL and SQLite for local apps",
+            "actor": "tester",
+        }),
         config,
     )
     assert resumed["stage"] == "Planning"

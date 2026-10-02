@@ -14,6 +14,8 @@ from intelligence_collector.graph.nodes import (
     PlannerNodes,
     ScopeNodes,
     approval,
+    await_clarification,
+    await_recovery,
     stage_only,
 )
 from intelligence_collector.graph.routing import (
@@ -60,12 +62,14 @@ def build_graph(
     The topology depends on which collaborators are injected::
 
         Full (scope_agent + research_nodes):
-            START -> clarify_with_user --(needs clarification)--> END
+            START -> clarify_with_user --(needs clarification)--> await_clarification (interrupt)
+                                       <--(validated human reply)--/
                                        \\-> write_research_brief -> planning
                   -> researching -> research_complete -> synthesizing -> verifying
             verifying --(all checks pass)--> evaluating_quality -> approval (with_approval) | END
                       --(failed, budget left)--> fixing (reflect) -> synthesizing (rewrite)
-                      --(budget exhausted / no progress)--> needs_review -> END
+                      --(budget exhausted / no progress)--> needs_review
+                          -> await_recovery (interrupt) -> END
             approval (human-in-the-loop review) --(explicit approve)--> publishing -> END
                      --(chat reply / reject)--> classify_feedback (LLM reads the reply)
             classify_feedback --(approve)--> publishing -> END
@@ -98,12 +102,14 @@ def build_graph(
         planner = PlannerNodes(
             planner_agent or PlannerAgent(scope_agent.router), vfs)
         add_node(Node.CLARIFY, scope.clarify_with_user)
+        add_node(Node.AWAIT_CLARIFICATION, await_clarification)
         add_node(Node.WRITE_BRIEF, scope.write_research_brief)
         add_node(Node.PLAN, planner.planning)
 
         graph.add_edge(START, Node.CLARIFY)
         graph.add_conditional_edges(Node.CLARIFY, route_after_clarify, [
-                                    Node.WRITE_BRIEF, END])
+                                    Node.WRITE_BRIEF, Node.AWAIT_CLARIFICATION])
+        graph.add_edge(Node.AWAIT_CLARIFICATION, Node.CLARIFY)
         graph.add_edge(Node.WRITE_BRIEF, Node.PLAN)
     else:
         for name in (Node.STUB_SCOPE, Node.PLAN):
@@ -140,6 +146,7 @@ def build_graph(
     add_node(Node.EVALUATE_QUALITY, bvf.evaluating_quality)
     add_node(Node.FIX, bvf.fixing)
     add_node(Node.NEEDS_REVIEW, bvf.needs_review)
+    add_node(Node.AWAIT_RECOVERY, await_recovery)
 
     graph.add_edge(Node.SYNTHESIZE, Node.VERIFY)
     passed_target = Node.APPROVE if with_approval else END
@@ -154,7 +161,8 @@ def build_graph(
     graph.add_edge(Node.EVALUATE_QUALITY, passed_target)
     # The fix is always a rewrite from the same evidence.
     graph.add_edge(Node.FIX, Node.SYNTHESIZE)
-    graph.add_edge(Node.NEEDS_REVIEW, END)
+    graph.add_edge(Node.NEEDS_REVIEW, Node.AWAIT_RECOVERY)
+    graph.add_edge(Node.AWAIT_RECOVERY, END)
 
     # ===== APPROVAL =====
     if with_approval:

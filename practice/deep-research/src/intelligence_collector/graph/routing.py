@@ -2,8 +2,6 @@
 ``build.py``).
 """
 
-from langgraph.graph import END
-
 from intelligence_collector.graph.nodes import (
     DEFAULT_RECOVERY_BUDGET,
     MAX_STALLED_ATTEMPTS,
@@ -24,10 +22,10 @@ TO_PUBLISH, TO_REVISE, TO_SCOPE = "approve", "revise", "scope"
 
 
 def route_after_clarify(state: GraphState) -> str:
-    """End the turn to wait for the user's answer, or continue to the research brief."""
+    """Pause at the dedicated clarification interrupt, or continue to the brief."""
     assessment = state.get("scope_assessment") or {}
     if assessment.get("need_clarification", True):
-        return END
+        return Node.AWAIT_CLARIFICATION
     return Node.WRITE_BRIEF
 
 

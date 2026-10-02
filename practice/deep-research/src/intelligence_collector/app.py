@@ -508,6 +508,19 @@ def _awaiting_review(snapshot) -> bool:
     )
 
 
+def _awaiting_clarification(snapshot) -> bool:
+    assessment = snapshot.get("scope_assessment") or {}
+    return (
+        snapshot.get("stage") == Stage.SCOPING.value
+        and assessment.get("need_clarification") is True
+        and bool(str(assessment.get("question") or "").strip())
+    )
+
+
+def _awaiting_recovery(snapshot) -> bool:
+    return snapshot.get("stage") == Stage.NEEDS_REVIEW.value
+
+
 def _render_transcript(st, snapshot):
     """The chat: the scope conversation and review replies, then the current report — which,
     while awaiting review, asks the user to approve or request changes by replying."""
@@ -531,6 +544,7 @@ def _render_transcript(st, snapshot):
 
 _NODE_ACTIVITY = {
     Node.CLARIFY: ("Evaluating scope", "Scope Agent", None),
+    Node.AWAIT_CLARIFICATION: ("Waiting for scope clarification", "Scope Agent", None),
     Node.WRITE_BRIEF: ("Generating research brief", "Scope Agent", None),
     Node.PLAN: ("Calling write_todos", "Planner", "write_todos"),
     Node.RESEARCH: ("Delegating research to sub-agents", "Research Supervisor", "tavily_search"),
@@ -540,6 +554,7 @@ _NODE_ACTIVITY = {
     Node.EVALUATE_QUALITY: ("Scoring RAGAS report quality", "Verifier", None),
     Node.FIX: ("Reflecting on verification failures", "Fix Planner", None),
     Node.NEEDS_REVIEW: ("Escalating for review", "Verifier", None),
+    Node.AWAIT_RECOVERY: ("Waiting for recovery decision", "Verifier", None),
     Node.APPROVE: ("Waiting for publication decision", "Publisher", None),
     Node.CLASSIFY_FEEDBACK: ("Classifying reviewer feedback", "Feedback Router", None),
     Node.PUBLISH: ("Publishing report", "Publisher", None),
@@ -596,11 +611,11 @@ _PROGRESS_BY_STAGE = {
 }
 
 
-# A thread in one of these stages is finished, so its Langfuse `research.thread` root is ended.
-_THREAD_DONE_STAGES = {Stage.PUBLISHED.value, Stage.NEEDS_REVIEW.value}
+# A published thread is finished. Clarification, approval and recovery states are durable pauses.
+_THREAD_DONE_STAGES = {Stage.PUBLISHED.value}
 
 
-def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
+def _run_chat_turn(st, text, *, reviewing, clarifying=False, placeholders, vfs_for_ui):
     """One chat message drives one graph turn: a new request (or scope answer) starts/continues
     the research; while a report awaits review, the message is the reviewer's reply and resumes
     the paused graph, whose feedback classifier reads it as approve / format / scope."""
@@ -608,7 +623,8 @@ def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
     run_id = st.session_state.scope_state["run_id"]
     thread_id = st.session_state.scope_thread_id
     st.session_state._execution_id = str(uuid4())
-    with st.status("Processing your reply" if reviewing else "Processing research request",
+    resuming = reviewing or clarifying
+    with st.status("Processing your reply" if resuming else "Processing research request",
                    expanded=False) as indicator:
         def lifecycle(node, status):
             """Record node progress in the activity log and the status indicator."""
@@ -616,7 +632,11 @@ def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
             indicator.update(label=item["label"], state="running")
 
         st.session_state._lifecycle_callback = lifecycle
-        trace_input = {"review_reply": text} if reviewing else {"request": text}
+        trace_input = (
+            {"review_reply": text} if reviewing
+            else {"clarification_reply": text} if clarifying
+            else {"request": text}
+        )
         # Every turn of one chat thread (request, clarifications, review replies, re-scoping)
         # shares one Langfuse trace, keyed by the thread, and nests under the thread's single
         # `research.thread` root, opened on its first turn and ended once the thread finishes
@@ -633,7 +653,7 @@ def _run_chat_turn(st, text, *, reviewing, placeholders, vfs_for_ui):
                     "Set INTELLIGENCE_REASONING_MODEL and retry."
                 )
             graph_input = (
-                Command(resume={"reply": text, "actor": "local-user"}) if reviewing
+                Command(resume={"reply": text, "actor": "local-user"}) if resuming
                 else {**st.session_state.scope_state, "request": text, "thread_id": thread_id}
             )
             config = {"configurable": {"thread_id": thread_id}}
@@ -730,12 +750,18 @@ def render():
             publication = snapshot.get("publication") or {}
             st.success(f"Published to {publication.get('destination', '(unknown destination)')}")
         reviewing = _awaiting_review(snapshot)
+        clarifying = _awaiting_clarification(snapshot)
+        recovering = _awaiting_recovery(snapshot)
         # Wrapping chat_input in a container (instead of calling it at the script's top level)
         # trades away its viewport-pinned/floating placement so the New Thread button can render
         # in normal flow right below it.
         with st.container():
             text = st.chat_input(
-                "Reply: approve, or what to change" if reviewing else "What should we research?"
+                "Reply: approve, or what to change" if reviewing
+                else "Answer the clarification question" if clarifying
+                else "Recovery action required" if recovering
+                else "What should we research?",
+                disabled=recovering,
             )
             if st.button("New thread", icon="➕"):
                 _start_new_thread(st)
@@ -751,7 +777,8 @@ def render():
                     st.session_state.progress = "Request rejected; no research started"
                 return st
             _run_chat_turn(
-                st, text, reviewing=reviewing, placeholders=placeholders, vfs_for_ui=vfs_for_ui,
+                st, text, reviewing=reviewing, clarifying=clarifying,
+                placeholders=placeholders, vfs_for_ui=vfs_for_ui,
             )
             st.rerun()
         except GuardrailViolation as exc:
