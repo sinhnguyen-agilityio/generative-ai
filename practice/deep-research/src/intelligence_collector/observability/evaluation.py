@@ -5,6 +5,7 @@ Observability only: a score never gates verification or publication.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from typing import Callable
 
@@ -15,7 +16,9 @@ ensure_ragas_importable()
 
 # Output cap per judge call. RAGAS defaults to 1024, which a whole report's statement list or
 # verdicts overflow ("The output is incomplete due to a max_tokens length limit").
-JUDGE_MAX_TOKENS = _bounded_int("INTELLIGENCE_QUALITY_OUTPUT_TOKENS", 2048, 32768)
+JUDGE_MAX_TOKENS = (None if os.getenv("INTELLIGENCE_DISABLE_OUTPUT_CAPS", "").lower()
+                    in {"1", "true"} else
+                    _bounded_int("INTELLIGENCE_QUALITY_OUTPUT_TOKENS", 2048, 32768))
 # Statements judged per NLI call; each verdict carries a reason, so this bounds the output size.
 NLI_BATCH_SIZE = 12
 # Judge calls in flight at once (statement extraction and NLI batches share the limit).

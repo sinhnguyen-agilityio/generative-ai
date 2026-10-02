@@ -19,6 +19,8 @@ DEFAULT_OUTPUT_LIMITS = {
 
 
 def output_limits_from_env() -> dict[str, int]:
+    if os.getenv("INTELLIGENCE_DISABLE_OUTPUT_CAPS", "").lower() in {"1", "true"}:
+        return {}
     overrides = json.loads(os.getenv("INTELLIGENCE_NODE_OUTPUT_TOKENS", "{}"))
     if not isinstance(overrides, dict):
         raise ValueError("INTELLIGENCE_NODE_OUTPUT_TOKENS must be a JSON object")
@@ -36,7 +38,7 @@ def capped_model(model, role, limits):
     Do not wrap duck-typed test fakes; a real provider must support model_copy. Provider
     models read these fields when constructing requests, including structured output.
     """
-    if model is None or not hasattr(model, "model_copy"):
+    if not limits or model is None or not hasattr(model, "model_copy"):
         return model
     fields = type(model).model_fields
     field = "max_output_tokens" if "max_output_tokens" in fields else "max_tokens"

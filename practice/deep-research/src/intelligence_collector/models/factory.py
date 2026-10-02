@@ -57,6 +57,14 @@ class ModelFactory:
             """Build one tier: the primary model plus an optional fallback created without the extra
             kwargs.
             """
+            if not limits:
+                kwargs = dict(kwargs or {})
+                for key in ("max_tokens", "max_output_tokens", "max_completion_tokens"):
+                    kwargs.pop(key, None)
+                if isinstance(kwargs.get("model_kwargs"), dict):
+                    kwargs["model_kwargs"] = {
+                        key: value for key, value in kwargs["model_kwargs"].items()
+                        if key not in {"max_tokens", "max_output_tokens", "max_completion_tokens"}}
             primary = self.create(ModelConfig(model, provider=provider, timeout=timeout, kwargs=kwargs))
             # The fallback runs with default settings: it only has to be a reliable safety net.
             fallback = (

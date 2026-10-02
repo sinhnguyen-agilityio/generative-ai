@@ -12,6 +12,13 @@ class GoogleProvider(BaseModel):
     max_output_tokens: int | None = None
 
 
+def test_output_caps_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_DISABLE_OUTPUT_CAPS", "1")
+    assert output_limits_from_env() == {}
+    model = Provider()
+    assert capped_model(model, "verify", {}) is model
+
+
 @pytest.mark.parametrize("provider,field", [(Provider(), "max_tokens"),
                                          (GoogleProvider(), "max_output_tokens")])
 def test_role_cap_clones_provider_without_mutating_shared_model(provider, field):
