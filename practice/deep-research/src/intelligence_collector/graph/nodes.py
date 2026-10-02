@@ -75,6 +75,7 @@ class Node:
     ASSESS_RESEARCH = "research_complete"
     # Build-Verify-Fix loop
     SYNTHESIZE = "synthesizing"
+    PREPARE_REVISION = "prepare_revision"
     VERIFY = "verifying"
     EVALUATE_QUALITY = "evaluating_quality"
     FIX = "fixing"
@@ -152,7 +153,8 @@ class RecoveryNodes:
         self.can_rescope = can_rescope
 
     def apply(self, state):
-        decision = RecoveryDecision.model_validate(state.get("recovery_decision"))
+        decision = RecoveryDecision.model_validate(
+            state.get("recovery_decision"))
         action = decision.action
         if action is RecoveryAction.RESCOPE and not self.can_rescope:
             raise ValueError("Rescoping requires a configured Scope Agent")
@@ -186,17 +188,28 @@ class RecoveryNodes:
                       research_verifier_attempt=0, verifier_attempt=0)
         if action in {RecoveryAction.RETRY_REPORT, RecoveryAction.REVISE}:
             feedback = decision.feedback or "Repair the unresolved verification issues: " + (
-                state.get("last_error") or (state.get("verification") or {}).get("repair_details", "")
+                state.get("last_error") or (state.get("verification")
+                                            or {}).get("repair_details", "")
             )
             return {**update, "stage": Stage.SYNTHESIZING.value,
                     "human_feedback": feedback,
                     "reviewer_requests": [*state.get("reviewer_requests", []), feedback]}
         if action is RecoveryAction.RESEARCH:
-            # A distinct question avoids the existing worker's completed-artifact resume guard.
-            # Only this explicitly requested gap is delegated; prior evidence remains available.
-            todo = ResearchTodo(research_question=decision.feedback)
+            todos = [ResearchTodo.model_validate(item) for item in state.get("todos", [])]
+            affected = {gap.get("todo_id") for gap in state.get("research_gaps", [])}
+            reopened = False
+            for todo in todos:
+                if todo.todo_id in affected:
+                    todo.status = TodoStatus.PLANNED
+                    todo.research_attempt += 1
+                    todo.research_instruction = decision.feedback
+                    reopened = True
+            if not reopened:
+                todos.append(ResearchTodo(research_question=decision.feedback))
+            # Preserve completed plan coverage; only planned tasks are delegated.
             return {**update, "stage": Stage.RESEARCHING.value, "human_feedback": "",
-                    "todos": [todo.model_dump(mode="json")], "todo_ids": [todo.todo_id]}
+                    "todos": [todo.model_dump(mode="json") for todo in todos],
+                    "todo_ids": [todo.todo_id for todo in todos]}
         return {**update, "stage": Stage.SCOPING.value, "request": decision.feedback,
                 "draft": "", "human_feedback": "", "reviewer_requests": []}
 
@@ -346,13 +359,15 @@ class ResearchNodes:
         completed = []
         for todo, refs, chunks in results:
             completed.append(todo.model_dump(mode="json"))
-            artifacts.extend(ref.model_dump(mode="json") for ref in refs)
+            paths = {item.get("path") for item in artifacts}
+            artifacts.extend(ref.model_dump(mode="json") for ref in refs if ref.path not in paths)
+            evidence_paths = {item.get("path") for item in evidence}
             evidence.extend(
                 ref.model_dump(mode="json")
                 for ref in refs
-                if ref.kind == "evidence_bundle"
+                if ref.kind == "evidence_bundle" and ref.path not in evidence_paths
             )
-            index_refs.extend(chunk.chunk_id for chunk in chunks)
+            index_refs.extend(chunk.chunk_id for chunk in chunks if chunk.chunk_id not in index_refs)
         done = sum(todo["status"] == "completed" for todo in completed)
         return {
             **state,
@@ -378,11 +393,13 @@ class ResearchNodes:
         gaps = []
         for todo in todos:
             try:
-                bundle = json.loads(self.vfs.read(state["run_id"], _evidence_path(todo)))
+                bundle = json.loads(self.vfs.read(
+                    state["run_id"], _evidence_path(todo)))
             except FileNotFoundError:
                 bundle = {}
             if not bundle.get("sources") or not bundle.get("summary") or (
-                bundle.get("sufficient") is not True or bundle.get("unresolved_gaps")
+                bundle.get("sufficient") is not True or bundle.get(
+                    "unresolved_gaps")
             ):
                 gaps.append({"todo_id": todo.todo_id,
                              "instruction": "; ".join(bundle.get("unresolved_gaps") or [])
@@ -392,9 +409,12 @@ class ResearchNodes:
         if self.research_assessor is not None:
             try:
                 verdict = self.research_assessor.assess(
-                    (state.get("scoped_request") or {}).get("research_question", ""), todos,
-                    format_evidence(load_catalog(self.vfs, state["run_id"], state.get("evidence", []))),
-                    run_id=state["run_id"], thread_id=state.get("thread_id", ""),
+                    (state.get("scoped_request") or {}).get(
+                        "research_question", ""), todos,
+                    format_evidence(load_catalog(
+                        self.vfs, state["run_id"], state.get("evidence", []))),
+                    run_id=state["run_id"], thread_id=state.get(
+                        "thread_id", ""),
                 )
             except Exception:
                 return {**state, "verification_issue": "research_verifier_failure",
@@ -433,8 +453,10 @@ class ResearchNodes:
     def prepare_gap_research(self, state):
         if state.get("research_gap_attempt", 0) >= state.get("research_gap_budget", 2):
             raise ValueError("Research gap allowance exhausted")
-        todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
-        gaps = {gap["todo_id"]: gap["instruction"] for gap in state.get("research_gaps", [])}
+        todos = [ResearchTodo.model_validate(
+            todo) for todo in state.get("todos", [])]
+        gaps = {gap["todo_id"]: gap["instruction"]
+                for gap in state.get("research_gaps", [])}
         if not gaps or not set(gaps).issubset({todo.todo_id for todo in todos}):
             raise ValueError("Gap research requires known affected todo ids")
         for todo in todos:
@@ -536,7 +558,8 @@ class BVFNodes:
         # The ranked evidence this draft was written from, per research question: what Context
         # Precision scores if this draft becomes the final report.
         writer_evidence = [
-            {"todo_id": bundle.todo_id, "question": bundle.question, "source_ids": bundle.source_ids}
+            {"todo_id": bundle.todo_id, "question": bundle.question,
+                "source_ids": bundle.source_ids}
             for bundle in catalog.bundles
         ]
         ranking_ref = self.vfs.write_json(
@@ -580,6 +603,13 @@ class BVFNodes:
               for todo in state.get("todos", [])],
         ])
         report = state.get("draft", "")
+        from intelligence_collector.agents.reviewer_checks import reviewer_format_checks
+
+        requests = list(state.get("reviewer_requests", []))
+        criteria.extend(
+            f"The report satisfies this human reviewer request: {request}"
+            for request in requests
+        )
         try:
             verdict = self.report_judge.verify(
                 brief,
@@ -594,6 +624,7 @@ class BVFNodes:
             return {**state, "verification_issue": "verifier_failure", "verification": None,
                     "verifier_error": str(exc), "last_error": "Report verifier unavailable",
                     "verifier_attempt": state.get("verifier_attempt", 0) + 1}
+        verdict.results.extend(reviewer_format_checks(report, requests))
         failed_items = [item for item in verdict.results if not item.met]
         issue = "draft_defect"
         plan_instructions = []
@@ -601,7 +632,8 @@ class BVFNodes:
         for item in failed_items:
             if item.issue_type == "plan_gap":
                 issue = "plan_gap"
-                plan_instructions.append(item.research_instruction or item.justification)
+                plan_instructions.append(
+                    item.research_instruction or item.justification)
             elif item.issue_type == "evidence_gap" and issue != "plan_gap":
                 known = {todo["todo_id"] for todo in state.get("todos", [])}
                 if not item.affected_todo_ids or not set(item.affected_todo_ids).issubset(known):
@@ -612,7 +644,8 @@ class BVFNodes:
                 gaps.extend({"todo_id": todo_id,
                              "instruction": item.research_instruction or item.justification}
                             for todo_id in item.affected_todo_ids)
-        artifact_hash = hashlib.sha256(report.encode()).hexdigest() if report else ""
+        artifact_hash = hashlib.sha256(
+            report.encode()).hexdigest() if report else ""
         result = judge_verdict_to_result(verdict, artifact_hash)
         fingerprint = failure_fingerprint(result)
         stalled = not result.passed and fingerprint == state.get(
@@ -679,7 +712,8 @@ class BVFNodes:
             return {**state, **update}
 
         catalog = self._catalog(state)
-        question = ResearchBrief.model_validate(state["scoped_request"]).research_question
+        question = ResearchBrief.model_validate(
+            state["scoped_request"]).research_question
         draft = state.get("draft", "")
         record: dict = {"question": question}
 
@@ -695,7 +729,8 @@ class BVFNodes:
             contexts = cited_source_excerpts(draft, catalog)
             record["faithfulness_context_count"] = len(contexts)
             update["faithfulness_score"] = run(
-                "faithfulness", lambda: self.faithfulness_evaluator(question, draft, contexts),
+                "faithfulness", lambda: self.faithfulness_evaluator(
+                    question, draft, contexts),
             )
         if self.context_precision_evaluator is not None:
             ranked = [
@@ -710,17 +745,20 @@ class BVFNodes:
                 for item in state.get("writer_evidence", [])
             ]
             result = run(
-                "context_precision", lambda: self.context_precision_evaluator(ranked, draft),
+                "context_precision", lambda: self.context_precision_evaluator(
+                    ranked, draft),
             )
             if result is not None:
                 update["context_precision_score"] = result["score"]
                 update["context_precision_details"] = result["per_question"]
         if self.response_relevancy_evaluator is not None:
             update["response_relevancy_score"] = run(
-                "response_relevancy", lambda: self.response_relevancy_evaluator(question, draft),
+                "response_relevancy", lambda: self.response_relevancy_evaluator(
+                    question, draft),
             )
 
-        verification_id = (state.get("verification") or {}).get("verification_id", "")
+        verification_id = (state.get("verification") or {}
+                           ).get("verification_id", "")
         ref = self.vfs.write_json(
             state["run_id"],
             f"verification/quality.{verification_id}.json",
@@ -758,7 +796,8 @@ class BVFNodes:
         )
         lessons = merge_lessons(lessons, reflection.lessons)
         strategy = reflection.strategy
-        entry.update(diagnosis=reflection.diagnosis, lessons=reflection.lessons, strategy=strategy)
+        entry.update(diagnosis=reflection.diagnosis,
+                     lessons=reflection.lessons, strategy=strategy)
         history.append(entry)
         run_id = state["run_id"]
         refs = [
@@ -877,8 +916,10 @@ class ApprovalNodes:
         """
         from langgraph.types import interrupt
 
-        decision = interrupt({"kind": "publication_approval", "run_id": state.get("run_id")})
-        state = {**state, "reviewer": str(decision.get("actor") or "local-user")}
+        decision = interrupt(
+            {"kind": "publication_approval", "run_id": state.get("run_id")})
+        state = {
+            **state, "reviewer": str(decision.get("actor") or "local-user")}
         if decision.get("approved") is True:
             return {
                 **state,
@@ -910,7 +951,8 @@ class ApprovalNodes:
             VerificationResult.model_validate(state["verification"]),
         )
         ref = self.vfs.write_json(
-            run_id, "publication/record.json", record.model_dump(mode="json"), "publication_record",
+            run_id, "publication/record.json", record.model_dump(
+                mode="json"), "publication_record",
         )
         outcome = (
             f"Published to {destination}" if record.published
@@ -940,10 +982,13 @@ class ApprovalNodes:
         else:
             # No classifier configured, or no reply text: default to a revision rather than
             # publishing unasked or discarding the whole research plan.
-            verdict = FeedbackDecision(route="revise", reason="No reply to classify; defaulting to revise.")
-        explicit_reject = (state.get("approval") or {}).get("approved") is False
+            verdict = FeedbackDecision(
+                route="revise", reason="No reply to classify; defaulting to revise.")
+        explicit_reject = (state.get("approval") or {}
+                           ).get("approved") is False
         if verdict.route == "approve" and explicit_reject:
-            verdict = FeedbackDecision(route="revise", reason="An explicit rejection is never an approval.")
+            verdict = FeedbackDecision(
+                route="revise", reason="An explicit rejection is never an approval.")
 
         history = [*state.get("bvf_history", []), {
             "attempt": state.get("recovery_attempt", 0),
@@ -977,6 +1022,9 @@ class ApprovalNodes:
                     content="Revising the report with your feedback; it will be verified again.")],
                 "human_feedback": feedback or "(no specific request)",
                 "reviewer_requests": requests,
+                "verification": None,
+                "approval": None,
+                "publication": None,
                 "recovery_attempt": 0,
                 "stall_count": 0,
                 "progress_fingerprint": "",
@@ -990,6 +1038,9 @@ class ApprovalNodes:
             "request": feedback,
             "human_feedback": "",
             "reviewer_requests": [],
+            "verification": None,
+            "approval": None,
+            "publication": None,
             "recovery_attempt": 0,
             "stall_count": 0,
             "progress_fingerprint": "",
@@ -998,8 +1049,6 @@ class ApprovalNodes:
 
 
 # ===== STAGE-ONLY STUBS =====
-
-
 def stage_only(name: str):
     """Placeholder node that only records its own name as the stage."""
 

@@ -110,7 +110,23 @@ class FakeAcceptanceModel:
 
     def invoke(self, messages, config=None):
         self.calls.append(messages)
-        return AIMessage(content=json.dumps(self._next(self.verdicts)))
+        scripted = self._next(self.verdicts)
+        # Scripted verdicts describe selected failures; fill the actual prompt checklist.
+        # Production rejects omissions, so this test fake must obey that same contract.
+        prompt = str(messages[-1].content)
+        block = prompt.split("Criteria to judge:\n", 1)[1].split("\n\n", 1)[0]
+        criteria = [line[2:] for line in block.splitlines() if line.startswith("- ")]
+        selected = []
+        for item in scripted["results"]:
+            label = item["criterion"]
+            index = (1 if label == "Fairly represents the gathered evidence" else
+                     2 if label == "Explains uncertainty and evidence gaps" else 0)
+            criterion = label if label in criteria else criteria[min(index, len(criteria) - 1)]
+            selected.append({**item, "criterion": criterion})
+        used = {item["criterion"] for item in selected}
+        selected.extend({"criterion": criterion, "met": True, "justification": "Satisfied."}
+                        for criterion in criteria if criterion not in used)
+        return AIMessage(content=json.dumps({"results": selected}))
 
     def prompts(self) -> list[str]:
         return ["\n".join(str(m.content) for m in messages) for messages in self.calls]

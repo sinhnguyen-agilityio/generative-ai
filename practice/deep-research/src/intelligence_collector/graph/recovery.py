@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from langgraph.types import Command
+from intelligence_collector.graph.migration import normalize_checkpoint
 
 from intelligence_collector.contracts import (
     ApprovalResumeDecision,
@@ -17,6 +18,7 @@ from intelligence_collector.contracts import (
     RecoveryDecision,
     RecoverySnapshot,
     RunRecord,
+    WorkflowStatus,
 )
 
 
@@ -47,12 +49,60 @@ class WorkflowRecoveryService:
         self.graph = graph
         self.run_registry = run_registry
 
-    @staticmethod
-    def _config(thread_id: str) -> dict[str, dict[str, str]]:
-        return {"configurable": {"thread_id": thread_id}}
+    def _config(self, thread_id: str) -> dict:
+        record = self._registered(thread_id)
+        return {"configurable": {"thread_id": thread_id,
+                                 "checkpoint_ns": record.checkpoint_namespace},
+                "recursion_limit": 100}
+
+    def load_state(self, thread_id: str) -> dict:
+        """Restore authoritative state without starting a new request or replaying START."""
+        self.inspect(thread_id)
+        checkpoint = self.graph.get_state(self._config(thread_id))
+        state = normalize_checkpoint(dict(checkpoint.values))
+        # Older workflows ended at these human-waiting states. Bridge them through
+        # existing graph edges rather than restarting scoping or bypassing approval.
+        if not checkpoint.next and not self._interrupts(checkpoint):
+            stage = state.get("stage")
+            node = ("needs_review" if stage == "NEEDS_REVIEW" else
+                    "clarify_with_user" if stage == "Scoping" and
+                    (state.get("scope_assessment") or {}).get("need_clarification") else None)
+            if node is not None:
+                self.graph.update_state(self._config(thread_id), state, as_node=node)
+                return self._clean_result(self.graph.invoke(None, self._config(thread_id)))
+        return state
 
     def list_recoverable_runs(self) -> list[RunRecord]:
         return self.run_registry.list_unfinished()
+
+    def discover_legacy_runs(self) -> list[RunRecord]:
+        """Explicitly backfill the registry from existing root-graph checkpoints."""
+        saver = self.graph.checkpointer
+        if saver is None:
+            raise CheckpointNotFound("No durable checkpointer is configured")
+        seen = set()
+        # SQLite saver iteration holds its connection lock. Collect before calling
+        # get_state/inspect, which needs that same lock.
+        entries = list(saver.list(None))
+        for entry in entries:
+            config = entry.config.get("configurable", {})
+            thread_id = config.get("thread_id")
+            if not thread_id or config.get("checkpoint_ns", "") or thread_id in seen:
+                continue
+            seen.add(thread_id)
+            values = entry.checkpoint.get("channel_values", {})
+            if not values.get("run_id"):
+                continue
+            normalize_checkpoint(values)
+            if values.get("thread_id", thread_id) != thread_id:
+                raise CheckpointIdentityMismatch("Legacy checkpoint thread identity mismatch")
+            self.run_registry.register_run(values["run_id"], thread_id,
+                                           request_summary=values.get("request", ""))
+            snapshot = self.inspect(thread_id)
+            self.run_registry.update_run(snapshot.run_id, thread_id,
+                                         workflow_status=snapshot.workflow_status,
+                                         current_stage=snapshot.current_stage)
+        return self.list_recoverable_runs()
 
     def _registered(self, thread_id: str) -> RunRecord:
         thread_id = str(thread_id).strip()
@@ -99,6 +149,7 @@ class WorkflowRecoveryService:
             raise CheckpointNotFound(
                 f"No checkpoint state exists for thread '{record.thread_id}'"
             )
+        normalize_checkpoint(values)
         checkpoint_run_id = str(values.get("run_id") or "")
         checkpoint_thread_id = str(values.get("thread_id") or record.thread_id)
         if checkpoint_run_id != record.run_id or checkpoint_thread_id != record.thread_id:
@@ -106,18 +157,24 @@ class WorkflowRecoveryService:
                 "Run registry identity does not match the checkpoint state"
             )
         interrupts = self._interrupts(checkpoint)
+        stage = str(values.get("stage") or record.current_stage)
+        terminal_status = {"Published": WorkflowStatus.PUBLISHED,
+                           "Cancelled": WorkflowStatus.CANCELLED,
+                           "Exported Incomplete": WorkflowStatus.EXPORTED_INCOMPLETE}.get(stage)
+        waiting_status = {"NEEDS_REVIEW": WorkflowStatus.WAITING_FOR_RECOVERY,
+                          "Awaiting Approval": WorkflowStatus.WAITING_FOR_APPROVAL}.get(stage)
         return RecoverySnapshot(
             run_id=record.run_id,
             thread_id=record.thread_id,
-            current_stage=str(values.get("stage") or record.current_stage),
-            workflow_status=record.workflow_status,
+            current_stage=stage,
+            workflow_status=terminal_status or waiting_status or record.workflow_status,
             has_interrupt=bool(interrupts),
             interrupt_kind=self._interrupt_kind(interrupts),
             next_nodes=[str(node) for node in (getattr(checkpoint, "next", ()) or ())],
             last_successful_node=self._last_successful_node(checkpoint),
             last_error=str(values.get("last_error") or ""),
             updated_at=record.updated_at,
-            terminal=record.terminal,
+            terminal=terminal_status is not None,
         )
 
     @staticmethod

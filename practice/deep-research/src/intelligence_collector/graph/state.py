@@ -11,6 +11,7 @@ class GraphState(TypedDict, total=False):
 
     # Identity and progress shown in the UI
     run_id: str
+    checkpoint_schema_version: int
     thread_id: str
     stage: str  # a contracts.Stage value
     status: str

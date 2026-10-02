@@ -15,7 +15,7 @@ def persist_report(vfs, run_id: str, report: str, version: int):
         previous = vfs.read(run_id, latest_path)
     except FileNotFoundError:
         previous = None
-    if previous is not None:
+    if previous is not None and previous != report.encode():
         vfs.write(run_id, "reports/previous.md", previous, "previous_draft")
     vfs.write(run_id, f"reports/draft.v{version}.md", report, "draft")
     return vfs.write(run_id, latest_path, report, "latest_report")

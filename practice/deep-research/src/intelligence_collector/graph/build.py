@@ -97,8 +97,16 @@ def build_graph(
 
     def add_node(name: str, fn) -> None:
         """Register a node wrapped with tracing and lifecycle notifications."""
+        from intelligence_collector.graph.operation_journal import OperationJournal
+
+        bvf = getattr(research_nodes, "bvf", None)
+        writer = getattr(bvf, "writer", None)
+        context = repr((getattr(bvf, "report_guidelines", None),
+                        getattr(bvf, "evidence_top_k", None),
+                        getattr(getattr(writer, "router", None), "model_name", None)))
+        journal = OperationJournal(vfs, context) if vfs is not None else None
         graph.add_node(name, node_wrapper(
-            name, fn, tracer, lifecycle, run_registry))
+            name, fn, tracer, lifecycle, run_registry, journal))
 
     # ===== SCOPE AND PLANNING =====
 
@@ -200,12 +208,24 @@ def build_graph(
     graph.add_edge(Node.AWAIT_RECOVERY, Node.APPLY_RECOVERY)
     graph.add_conditional_edges(Node.APPLY_RECOVERY, route_after_recovery, {
         "retry_report": Node.SYNTHESIZE,
-        "revise": Node.SYNTHESIZE,
+        "revise": Node.PREPARE_REVISION,
         "research": Node.RESEARCH,
         "rescope": Node.CLARIFY if scope_agent is not None else END,
         "export_incomplete": END,
         "cancel": END,
     })
+
+    def prepare_revision(state):
+        from intelligence_collector.agents.reviewer_checks import effective_requests
+
+        return {**state, "reviewer_requests": effective_requests(
+            list(state.get("reviewer_requests", []))), "verification": None,
+            "approval": None, "publication": None, "verifier_attempt": 0,
+            "faithfulness_score": None, "context_precision_score": None,
+            "response_relevancy_score": None}
+
+    add_node(Node.PREPARE_REVISION, prepare_revision)
+    graph.add_edge(Node.PREPARE_REVISION, Node.SYNTHESIZE)
 
     # ===== APPROVAL =====
     if with_approval:
@@ -224,7 +244,7 @@ def build_graph(
             route_after_feedback,
             {
                 TO_PUBLISH: Node.PUBLISH,
-                TO_REVISE: Node.SYNTHESIZE,
+                TO_REVISE: Node.PREPARE_REVISION,
                 # A scope change re-enters scoping (the stub scope node when no scope agent).
                 TO_SCOPE: Node.CLARIFY if scope_agent is not None else Node.STUB_SCOPE,
             },

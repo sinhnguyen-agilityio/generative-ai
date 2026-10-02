@@ -235,6 +235,10 @@ corrected report that passes every check."""
 REVIEWER_BLOCK = """A human reviewer asked for these changes to the report:
 {requests}
 
+For an explicit word count, count whitespace-separated body words, including heading text but
+excluding [S<n>] citation markers, punctuation-only tokens, and the final Markdown Sources section.
+Keep the Sources section complete even when the requested body is short. Never silently truncate.
+
 The reviewer's requests take precedence over the layout rules and report guidelines above wherever
 they conflict (for example a single paragraph instead of '## ' sections). They never override the
 evidence rules: every factual statement stays true to the evidence and keeps its [S<n>] citation,

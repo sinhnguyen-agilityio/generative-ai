@@ -6,6 +6,11 @@ The sub-agent (``researcher.py``) only searches and compresses. This module turn
 
 from __future__ import annotations
 
+import hashlib
+import json
+
+from intelligence_collector.contracts import ArtifactRef
+
 from intelligence_collector.agents.researcher import ResearchAgent, ResearchOutcome
 from intelligence_collector.contracts import (
     IndexedChunk,
@@ -32,6 +37,21 @@ def already_researched(vfs, run_id: str, todo: ResearchTodo) -> bool:
     except FileNotFoundError:
         return False
     return True
+
+
+def restore_research(vfs, run_id: str, todo: ResearchTodo):
+    """Recover the evidence reference if a crash preceded the graph checkpoint write."""
+    path = _evidence_path(todo)
+    text = vfs.read(run_id, path)
+    bundle = json.loads(text)
+    if bundle.get("task_id") != todo.todo_id:
+        raise ValueError("Saved evidence belongs to a different research task")
+    todo.status = TodoStatus.COMPLETED
+    ref = ArtifactRef(run_id=run_id, path=str(vfs.root / run_id / path), kind="evidence_bundle",
+                      content_hash=hashlib.sha256(text).hexdigest(),
+                      task_id=todo.todo_id)
+    chunks = [IndexedChunk.model_validate(item) for item in bundle.get("indexed_chunks", [])]
+    return todo, [ref], chunks
 
 
 def _write_failure(vfs, run_id: str, todo: ResearchTodo, message: str):
@@ -176,6 +196,7 @@ def persist_research(
             "search_budget": outcome.search_budget,
             "sufficient": findings.sufficient,
             "unresolved_gaps": findings.unresolved_gaps,
+            "indexed_chunks": [chunk.model_dump(mode="json") for chunk in chunks],
         },
         "evidence_bundle",
         task_id=todo.todo_id,
@@ -186,7 +207,6 @@ def persist_research(
 def run_worker(vfs, index, run_id, todo: ResearchTodo, researcher: ResearchAgent, *, thread_id=""):
     """Research one todo with its own sub-agent and persist the outcome."""
     if already_researched(vfs, run_id, todo):
-        todo.status = TodoStatus.COMPLETED
-        return todo, [], []
+        return restore_research(vfs, run_id, todo)
     outcome = researcher.research(todo.research_question, run_id=run_id, thread_id=thread_id)
     return persist_research(vfs, index, run_id, todo, outcome)

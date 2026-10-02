@@ -215,7 +215,8 @@ def test_review_flow_graph_structure(stores, tmp_path):
     assert (Node.PUBLISH, "__end__") in edges
     assert (Node.APPROVE, Node.CLASSIFY_FEEDBACK) in edges
     assert (Node.CLASSIFY_FEEDBACK, Node.PUBLISH) in edges  # a chat reply read as an approval
-    assert (Node.CLASSIFY_FEEDBACK, Node.SYNTHESIZE) in edges  # revise: rewrite and re-verify
+    assert (Node.CLASSIFY_FEEDBACK, Node.PREPARE_REVISION) in edges
+    assert (Node.PREPARE_REVISION, Node.SYNTHESIZE) in edges  # rewrite and re-verify
     assert (Node.CLASSIFY_FEEDBACK, Node.STUB_SCOPE) in edges  # clarify_with_user when a scope agent is wired
     assert "writer" not in {node for edge in edges for node in edge}
 

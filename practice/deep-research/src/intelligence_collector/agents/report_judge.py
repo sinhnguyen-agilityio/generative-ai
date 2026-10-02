@@ -17,6 +17,7 @@ the graph selects the bounded repair loop for that classification.
 from __future__ import annotations
 
 import hashlib
+from collections import Counter
 
 from intelligence_collector.agents.prompts import (
     REPORT_JUDGE_TEMPLATE,
@@ -86,13 +87,16 @@ class ReportJudge:
             "affected_todo_ids from the evidence question ids and give a research_instruction. "
             "Unsupported incidental claims removable from the draft are draft defects."
         )
-        return self.router.invoke_messages(
+        verdict = self.router.invoke_messages(
             "verify",
             messages,
             ReportJudgeVerdict,
             run_id=run_id,
             thread_id=thread_id,
         )
+        if Counter(item.criterion for item in verdict.results) != Counter(criteria):
+            raise ValueError("Report judge must return every requested criterion exactly once")
+        return verdict
 
 
 def judge_verdict_to_result(verdict: ReportJudgeVerdict, artifact_hash: str) -> VerificationResult:

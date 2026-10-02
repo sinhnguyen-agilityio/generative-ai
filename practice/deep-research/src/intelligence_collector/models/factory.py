@@ -8,6 +8,8 @@ from typing import Any, NamedTuple
 from langchain.chat_models import init_chat_model
 
 from intelligence_collector.models.router import MAX_MODEL_ATTEMPTS, ModelRouter
+from intelligence_collector.models.token_limits import output_limits_from_env
+from intelligence_collector.config import _bounded_int
 
 
 @dataclass(frozen=True)
@@ -39,7 +41,7 @@ class ModelFactory:
 
     def create(self, config: ModelConfig):
         """Instantiate one chat model through LangChain's provider-agnostic `init_chat_model`."""
-        kwargs = {"timeout": config.timeout, **(config.kwargs or {})}
+        kwargs = {"timeout": config.timeout, "max_retries": 0, **(config.kwargs or {})}
         if config.provider:
             kwargs["model_provider"] = config.provider
         return init_chat_model(config.model, **kwargs)
@@ -47,6 +49,9 @@ class ModelFactory:
     def create_routers(self, settings, *, trace=None, callbacks=None) -> ModelRouters:
         """Build the reasoning and standard tiers from `RoleModelSettings`, each with its own
         optional fallback model. `trace` and `callbacks` are shared by both tiers."""
+
+        limits = output_limits_from_env()
+        attempts = _bounded_int("INTELLIGENCE_MODEL_MAX_ATTEMPTS", 1, MAX_MODEL_ATTEMPTS)
 
         def tier(model, provider, kwargs, fallback_model, fallback_provider, timeout, **router_kwargs) -> ModelRouter:
             """Build one tier: the primary model plus an optional fallback created without the extra
@@ -59,23 +64,22 @@ class ModelFactory:
                 if fallback_model
                 else None
             )
-            return ModelRouter(primary, fallback, trace=trace, callbacks=callbacks, **router_kwargs)
+            return ModelRouter(primary, fallback, trace=trace, callbacks=callbacks,
+                               output_limits=limits, **router_kwargs)
 
         return ModelRouters(
-            # Groq's own strict-structured-output decoding for gpt-oss is intermittently flaky
-            # (json_validate_failed on a fraction of otherwise-identical requests -- a known,
-            # unresolved Groq-side issue, not something a schema/prompt change can fix). The
-            # reasoning tier carries verify's report-judge call, so give it every retry the
-            # router allows before it ever has to fall back.
+            # Retries are explicit and shared by both tiers; graph repair allowances
+            # remain separate. A configured fallback still runs once per attempt.
             reasoning=tier(
                 settings.reasoning_model, settings.reasoning_provider, settings.reasoning_kwargs,
                 settings.reasoning_fallback_model, settings.reasoning_fallback_provider,
                 settings.reasoning_timeout,
-                max_attempts=MAX_MODEL_ATTEMPTS,
+                max_attempts=attempts,
             ),
             standard=tier(
                 settings.standard_model, settings.standard_provider, settings.standard_kwargs,
                 settings.standard_fallback_model, settings.standard_fallback_provider,
                 settings.standard_timeout,
+                max_attempts=attempts,
             ),
         )

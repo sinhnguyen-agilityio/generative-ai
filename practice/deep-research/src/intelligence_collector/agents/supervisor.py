@@ -11,6 +11,7 @@ import asyncio
 
 from intelligence_collector.agents.researcher import ResearchAgent, ResearchOutcome
 from intelligence_collector.agents.worker import already_researched, failed_outcome, persist_research
+from intelligence_collector.agents.worker import restore_research
 from intelligence_collector.contracts import ProgressAssessment, ResearchTodo, TodoStatus
 from intelligence_collector.tools.mcp import redact_mcp_error
 from intelligence_collector.tools.think_tool import think_tool
@@ -60,8 +61,9 @@ class ResearchSupervisor:
         for todo in todos:
             if todo.todo_id not in outcomes:
                 if already_researched(self.vfs, run_id, todo):
-                    todo.status = TodoStatus.COMPLETED
-                results.append((todo, [], []))
+                    results.append(restore_research(self.vfs, run_id, todo))
+                else:
+                    results.append((todo, [], []))
             else:
                 results.append(persist_research(
                     self.vfs, self.index, run_id, todo, outcomes[todo.todo_id], registry

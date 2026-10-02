@@ -20,6 +20,7 @@ from intelligence_collector.config import RoleModelSettings, Settings, load_loca
 from intelligence_collector.contracts import Stage, VerificationResult
 from intelligence_collector.guardrails import GuardrailViolation, normalize_text, validate_request
 from intelligence_collector.graph.build import build_graph
+from intelligence_collector.graph.recovery import WorkflowRecoveryService
 from intelligence_collector.graph.nodes import Node, ResearchNodes
 from intelligence_collector.models.factory import ModelFactory
 from intelligence_collector.observability.evaluation import (
@@ -658,7 +659,7 @@ def _run_chat_turn(st, text, *, reviewing, clarifying=False, placeholders, vfs_f
                 Command(resume={"reply": text, "actor": "local-user"}) if resuming
                 else {**st.session_state.scope_state, "request": text, "thread_id": thread_id}
             )
-            config = {"configurable": {"thread_id": thread_id}}
+            config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
             graph = _get_scope_graph(st, agent, tracer)
             try:
                 # stream_mode="values" yields the full accumulated state after each node, so
@@ -696,6 +697,94 @@ def _run_chat_turn(st, text, *, reviewing, clarifying=False, placeholders, vfs_f
     st.session_state.progress = _PROGRESS_BY_STAGE.get(
         st.session_state.stage, "Scope clear; Planning started"
     )
+
+
+def _recovery_service(st):
+    tracer = _get_tracer(st)
+    agent = _get_scope_agent(st, tracer)
+    if agent is None:
+        raise RuntimeError("Configure the reasoning model before recovering a run.")
+    graph = _get_scope_graph(st, agent, tracer)
+    return WorkflowRecoveryService(graph, st.session_state.run_registry)
+
+
+def _adopt_recovered_state(st, state):
+    st.session_state.scope_state = state
+    st.session_state.scope_thread_id = state["thread_id"]
+    st.session_state.stage = state.get("stage", "Scoping")
+    st.session_state.activity = list(state.get("activity", []))
+    st.session_state.progress = _PROGRESS_BY_STAGE.get(
+        st.session_state.stage, "Recovered checkpoint; continuation available")
+
+
+def _pending_checkpoint(st, snapshot):
+    if "scope_graph" not in st.session_state or "run_registry" not in st.session_state:
+        return False
+    service = WorkflowRecoveryService(st.session_state.scope_graph, st.session_state.run_registry)
+    try:
+        checkpoint = service.inspect(snapshot.get("thread_id", ""))
+    except Exception:
+        return False
+    return bool(checkpoint.next_nodes and not checkpoint.has_interrupt and not checkpoint.terminal)
+
+
+def _render_recovery_controls(st, snapshot):
+    """Discovery is local and cheap; construct agents only on an explicit recovery action."""
+    settings = Settings.from_env()
+    if Path(settings.checkpoint_path).is_file():
+        if st.button("Find saved checkpoints"):
+            try:
+                _recovery_service(st).discover_legacy_runs()
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Checkpoint discovery failed: {exc}")
+    if Path(settings.run_registry_path).is_file():
+        registry = st.session_state.get("run_registry") or RunRegistry(settings.run_registry_path)
+        runs = registry.list_unfinished()
+        if runs:
+            with st.expander("Recover an unfinished run"):
+                chosen = st.selectbox("Run", [run.thread_id for run in runs],
+                                      format_func=lambda value: next(
+                                          f"{run.request_summary or run.run_id} — {run.current_stage}"
+                                          for run in runs if run.thread_id == value))
+                if st.button("Restore checkpoint"):
+                    try:
+                        _adopt_recovered_state(st, _recovery_service(st).load_state(chosen))
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Recovery failed: {exc}")
+    if snapshot.get("stage") in _THREAD_DONE_STAGES:
+        return
+    if _awaiting_recovery(snapshot):
+        st.caption("Choose a bounded recovery action. Incomplete export is never publication.")
+        action = st.selectbox("Recovery action", [
+            "revise", "retry_report", "research", "rescope", "export_incomplete", "cancel"])
+        feedback = st.text_area("Repair instructions or research feedback", max_chars=4000)
+        attempts = (int(st.number_input("Additional repair attempts", min_value=1,
+                                       max_value=2, value=1)) if action == "retry_report" else 0)
+        if st.button("Apply recovery action"):
+            try:
+                if feedback and not validate_request(normalize_text(feedback)).allowed:
+                    raise ValueError("Recovery feedback rejected by input guardrails")
+                result = _recovery_service(st).resume_interrupt(snapshot["thread_id"], {
+                    "action": action, "feedback": feedback, "additional_attempts": attempts})
+                _adopt_recovered_state(st, result)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Recovery failed: {exc}")
+    elif snapshot.get("run_id") and "scope_graph" in st.session_state and "run_registry" in st.session_state:
+        service = WorkflowRecoveryService(st.session_state.scope_graph, st.session_state.run_registry)
+        try:
+            checkpoint = service.inspect(snapshot["thread_id"])
+        except Exception:
+            return  # A newly-created chat thread does not have a checkpoint yet.
+        if checkpoint.next_nodes and not checkpoint.has_interrupt:
+            if st.button("Continue unfinished run"):
+                try:
+                    _adopt_recovered_state(st, service.continue_run(snapshot["thread_id"]))
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Continuation failed: {exc}")
 
 
 def render():
@@ -736,6 +825,7 @@ def render():
         _render_graph_snapshot(st, snapshot)
 
     with chat_col:
+        _render_recovery_controls(st, snapshot)
         clarification = existing_scope_state.get("scope_assessment", {}).get("question")
         if st.session_state.stage == "Scoping" and clarification:
             st.info("Waiting for your response")
@@ -754,6 +844,16 @@ def render():
         reviewing = _awaiting_review(snapshot)
         clarifying = _awaiting_clarification(snapshot)
         recovering = _awaiting_recovery(snapshot)
+        pending = _pending_checkpoint(st, snapshot)
+        if pending:
+            st.info("This checkpoint has unfinished work. Use Continue unfinished run to resume it.")
+        if current_stage == "Exported Incomplete":
+            try:
+                st.download_button("Download incomplete report",
+                                   vfs_for_ui.read(snapshot["run_id"], "reports/incomplete.md"),
+                                   file_name="incomplete-report.md", mime="text/markdown")
+            except FileNotFoundError:
+                st.error("The incomplete report artifact is unavailable.")
         # Wrapping chat_input in a container (instead of calling it at the script's top level)
         # trades away its viewport-pinned/floating placement so the New Thread button can render
         # in normal flow right below it.
@@ -763,7 +863,7 @@ def render():
                 else "Answer the clarification question" if clarifying
                 else "Recovery action required" if recovering
                 else "What should we research?",
-                disabled=recovering,
+                disabled=recovering or pending or current_stage in _THREAD_DONE_STAGES,
             )
             if st.button("New thread", icon="➕"):
                 _start_new_thread(st)

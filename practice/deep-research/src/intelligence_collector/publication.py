@@ -33,6 +33,12 @@ def publish(content: str, destination: str, approval: ApprovalDecision, verifica
         return PublicationRecord(destination=destination, artifact_hash=digest, approval_id=approval.approval_id, published=False, error="approval/hash/verification mismatch")
     target = Path(destination)
     target.parent.mkdir(parents=True, exist_ok=True)
+    # A crash can occur after the atomic replace but before the graph checkpoints.
+    # Recheck authorization above, then reuse the exact already-published bytes.
+    if target.is_file() and target.read_bytes() == content.encode("utf-8"):
+        return PublicationRecord(destination=destination, artifact_hash=digest,
+                                 approval_id=approval.approval_id, published=True,
+                                 published_at=now())
     fd, tmp = tempfile.mkstemp(dir=target.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:

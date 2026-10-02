@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.runnables import Runnable, RunnableLambda
 
 from intelligence_collector.models.redaction import redact_text, redact_value
+from intelligence_collector.models.token_limits import DEFAULT_OUTPUT_LIMITS, capped_model
 
 T = TypeVar("T", bound=BaseModel)
 MAX_MODEL_ATTEMPTS = 3
@@ -99,7 +100,8 @@ class ModelRouter:
       failures (see `_is_transient`) are raised at once instead of being retried.
     """
 
-    def __init__(self, primary, fallback=None, *, max_attempts: int = 2, trace=None, callbacks=None):
+    def __init__(self, primary, fallback=None, *, max_attempts: int = 2, trace=None, callbacks=None,
+                 output_limits=None):
         if primary is None:
             raise RuntimeError("model router requires a configured primary model")
         if not isinstance(max_attempts, int) or not 1 <= max_attempts <= MAX_MODEL_ATTEMPTS:
@@ -108,6 +110,7 @@ class ModelRouter:
         self.max_attempts = max_attempts
         self.trace = trace  # called as trace(**event); None disables tracing (and its rendering cost)
         self.callbacks = list(callbacks or [])
+        self.output_limits = dict(DEFAULT_OUTPUT_LIMITS if output_limits is None else output_limits)
         # A fallback that rescues a call is visible in the callback trace as the child model run.
         self.model_name = _model_name(primary)
 
@@ -122,7 +125,9 @@ class ModelRouter:
         Retries up to `max_attempts` when the output is invalid; every attempt is traced.
         """
         config = self._config(role, run_id, thread_id)
-        chain = self._chain(_bind_schema(self.primary, schema), _bind_schema(self.fallback, schema), role, config)
+        chain = self._chain(
+            _bind_schema(capped_model(self.primary, role, self.output_limits), schema),
+            _bind_schema(capped_model(self.fallback, role, self.output_limits), schema), role, config)
         errors = []
         for attempt in range(1, self.max_attempts + 1):
             try:
@@ -158,8 +163,9 @@ class ModelRouter:
         """Tool-calling decision: the returned AIMessage carries a final answer or tool calls."""
         config = self._config(role, run_id, thread_id)
         chain = self._chain(
-            _bind_tools(self.primary, tools, tool_choice),
-            None if self.fallback is None else _bind_tools(self.fallback, tools, tool_choice),
+            _bind_tools(capped_model(self.primary, role, self.output_limits), tools, tool_choice),
+            None if self.fallback is None else _bind_tools(
+                capped_model(self.fallback, role, self.output_limits), tools, tool_choice),
             role, config,
         )
         raw = chain.invoke(messages, config=config)

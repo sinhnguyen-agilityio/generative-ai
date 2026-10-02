@@ -12,6 +12,7 @@ from langgraph.errors import GraphInterrupt
 
 from intelligence_collector.contracts import Stage, WorkflowStatus
 from intelligence_collector.graph.state import GraphState
+from intelligence_collector.graph.migration import normalize_checkpoint
 
 # State fields exported to Langfuse as trace scores: {state key: score name}.
 SCORE_FIELDS = {
@@ -70,6 +71,7 @@ def node_wrapper(
     tracer=None,
     lifecycle: Lifecycle | None = None,
     run_registry=None,
+    operation_journal=None,
 ) -> NodeFn:
     """Wrap a graph node with UI lifecycle notifications and a Langfuse span.
 
@@ -142,10 +144,18 @@ def node_wrapper(
 
     def wrapped(state: GraphState) -> GraphState:
         """Report lifecycle status around the node and check that it returns a mapping."""
+        state = normalize_checkpoint(state)
         register(state)
         notify(name, "running")
         try:
-            result = run(dict(state))
+            journal = operation_journal if name == "synthesizing" else None
+            result = journal.read(name, state) if journal is not None else None
+            if result is None:
+                result = run(dict(state))
+                if not isinstance(result, dict):
+                    raise TypeError(f"{name} must return a mapping state update")
+                if journal is not None:
+                    journal.write(name, state, result)
         except GraphInterrupt:
             # An intentional pause for a human decision (see graph/nodes.py's ApprovalNodes),
             # not a failure — GraphInterrupt is a real Exception subclass (so a bare `except
