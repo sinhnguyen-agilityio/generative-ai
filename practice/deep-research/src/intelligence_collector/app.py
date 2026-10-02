@@ -29,6 +29,7 @@ from intelligence_collector.observability.evaluation import (
 from intelligence_collector.observability.tracing import Tracer
 from intelligence_collector.publication import can_request_approval
 from intelligence_collector.storage.chroma_vector_index import ChromaVectorIndex, default_embeddings
+from intelligence_collector.storage.run_registry import RunRegistry
 from intelligence_collector.storage.vfs import VFS
 from intelligence_collector.tools.mcp import TavilyMCP
 
@@ -111,6 +112,7 @@ def _get_scope_graph(st, agent, tracer):
 
     settings = Settings.from_env()
     connection = _open_checkpoint_connection(settings.checkpoint_path)
+    run_registry = RunRegistry(settings.run_registry_path)
     vfs = VFS(settings.vfs_root)
     research_nodes = None
     tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
@@ -153,12 +155,14 @@ def _get_scope_graph(st, agent, tracer):
         lifecycle=lambda node, status: st.session_state.get(
             "_lifecycle_callback", lambda *_: None
         )(node, status),
+        run_registry=run_registry,
         with_approval=True,
         output_dir=settings.output_dir,
         # A cheap binary classification, so the standard tier (fewer rate-limit failures).
         feedback_router=FeedbackRouter(st.session_state.model_routers.standard),
     )
     st.session_state.scope_checkpoint_connection = connection
+    st.session_state.run_registry = run_registry
     st.session_state.scope_graph = graph
     return graph
 

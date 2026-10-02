@@ -31,6 +31,40 @@ class Stage(str, Enum):
     NEEDS_REVIEW = "NEEDS_REVIEW"
 
 
+class WorkflowStatus(str, Enum):
+    """Durable execution status, distinct from the node currently shown as ``Stage``.
+
+    Waiting statuses identify the kind of validated human input required to resume a
+    checkpoint. Terminal statuses make it explicit that an incomplete export or cancellation
+    is not a successful publication.
+    """
+
+    RUNNING = "running"
+    WAITING_FOR_CLARIFICATION = "waiting_for_clarification"
+    WAITING_FOR_APPROVAL = "waiting_for_approval"
+    WAITING_FOR_RECOVERY = "waiting_for_recovery"
+    PUBLISHED = "published"
+    EXPORTED_INCOMPLETE = "exported_incomplete"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+
+
+class RecoveryAction(str, Enum):
+    """Human-authorized transitions available at a recovery checkpoint.
+
+    These are domain actions rather than graph node names. A later graph phase owns the fixed
+    mapping from each action to its legal destination, preventing callers from selecting an
+    arbitrary node.
+    """
+
+    RETRY_REPORT = "retry_report"
+    REVISE = "revise"
+    RESEARCH = "research"
+    RESCOPE = "rescope"
+    EXPORT_INCOMPLETE = "export_incomplete"
+    CANCEL = "cancel"
+
+
 class TodoStatus(str, Enum):
     """Lifecycle of one research todo."""
 
@@ -46,6 +80,62 @@ class Model(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     schema_version: int = 1
+
+
+MAX_RECOVERY_FEEDBACK_LENGTH = 4_000
+MAX_ADDITIONAL_RECOVERY_ATTEMPTS = 2
+
+
+class RecoveryDecision(Model):
+    """Validated human decision used to resume a ``NEEDS_REVIEW`` checkpoint.
+
+    Revision, research, and scope changes require an instruction so the graph never invents
+    the requested change. A retry must carry a fresh, explicitly bounded allowance. The
+    contract deliberately contains no node or stage field: graph routing remains system-owned.
+    """
+
+    action: RecoveryAction
+    feedback: str = Field(default="", max_length=MAX_RECOVERY_FEEDBACK_LENGTH)
+    additional_attempts: int = Field(
+        default=0, ge=0, le=MAX_ADDITIONAL_RECOVERY_ATTEMPTS
+    )
+
+    @model_validator(mode="after")
+    def validate_action_requirements(self):
+        self.feedback = self.feedback.strip()
+        instruction_actions = {
+            RecoveryAction.REVISE,
+            RecoveryAction.RESEARCH,
+            RecoveryAction.RESCOPE,
+        }
+        if self.action in instruction_actions and not self.feedback:
+            raise ValueError(f"{self.action.value} requires non-empty feedback")
+        if self.action is RecoveryAction.RETRY_REPORT:
+            if self.additional_attempts == 0:
+                raise ValueError("retry_report requires at least one additional attempt")
+        elif self.additional_attempts != 0:
+            raise ValueError(
+                "additional attempts are allowed only for retry_report"
+            )
+        return self
+
+
+class RunRecord(Model):
+    """Discoverable metadata for one durable LangGraph run.
+
+    The registry contains only lifecycle metadata. The LangGraph checkpointer remains the
+    authoritative source for workflow state and the VFS remains authoritative for artifacts.
+    """
+
+    run_id: str = Field(min_length=1)
+    thread_id: str = Field(min_length=1)
+    created_at: datetime
+    updated_at: datetime
+    workflow_status: WorkflowStatus
+    current_stage: str = ""
+    checkpoint_namespace: str = ""
+    request_summary: str = ""
+    terminal: bool = False
 
 
 class ScopeAssessment(BaseModel):

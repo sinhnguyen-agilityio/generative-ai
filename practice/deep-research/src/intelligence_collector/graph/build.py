@@ -51,6 +51,7 @@ def build_graph(
     vfs=None,
     tracer=None,
     lifecycle=None,
+    run_registry=None,
     output_dir: str = "exports",
     feedback_router=None,
 ):
@@ -88,7 +89,7 @@ def build_graph(
     def add_node(name: str, fn) -> None:
         """Register a node wrapped with tracing and lifecycle notifications."""
         graph.add_node(name, node_wrapper(
-            name, fn, tracer, lifecycle))
+            name, fn, tracer, lifecycle, run_registry))
 
     # ===== SCOPE AND PLANNING =====
 

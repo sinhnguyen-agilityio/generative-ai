@@ -10,6 +10,7 @@ import json
 
 from langgraph.errors import GraphInterrupt
 
+from intelligence_collector.contracts import Stage, WorkflowStatus
 from intelligence_collector.graph.state import GraphState
 
 # State fields exported to Langfuse as trace scores: {state key: score name}.
@@ -68,6 +69,7 @@ def node_wrapper(
     fn: NodeFn,
     tracer=None,
     lifecycle: Lifecycle | None = None,
+    run_registry=None,
 ) -> NodeFn:
     """Wrap a graph node with UI lifecycle notifications and a Langfuse span.
 
@@ -78,6 +80,45 @@ def node_wrapper(
     something other than a mapping.
     """
     notify = lifecycle or (lambda _node, _status: None)
+
+    def register(state: GraphState) -> None:
+        if run_registry is None:
+            return
+        run_registry.register_run(
+            state.get("run_id", ""),
+            state.get("thread_id", ""),
+            request_summary=state.get("request", ""),
+        )
+
+    def update(state: GraphState, status: WorkflowStatus) -> None:
+        if run_registry is None:
+            return
+        run_registry.update_run(
+            state.get("run_id", ""),
+            state.get("thread_id", ""),
+            workflow_status=status,
+            current_stage=state.get("stage", ""),
+        )
+
+    def result_status(result: GraphState) -> WorkflowStatus:
+        stage = result.get("stage")
+        if stage == Stage.PUBLISHED.value:
+            return WorkflowStatus.PUBLISHED
+        if stage == Stage.NEEDS_REVIEW.value:
+            return WorkflowStatus.WAITING_FOR_RECOVERY
+        if stage == Stage.AWAITING_APPROVAL.value:
+            return WorkflowStatus.WAITING_FOR_APPROVAL
+        assessment = result.get("scope_assessment") or {}
+        if stage == Stage.SCOPING.value and assessment.get("need_clarification"):
+            return WorkflowStatus.WAITING_FOR_CLARIFICATION
+        return WorkflowStatus.RUNNING
+
+    def interrupt_status() -> WorkflowStatus:
+        if name == "approval":
+            return WorkflowStatus.WAITING_FOR_APPROVAL
+        if name == "needs_review":
+            return WorkflowStatus.WAITING_FOR_RECOVERY
+        return WorkflowStatus.WAITING_FOR_CLARIFICATION
 
     def run(state: GraphState) -> GraphState:
         """Run the node, inside a Langfuse span when tracing is on."""
@@ -99,6 +140,7 @@ def node_wrapper(
 
     def wrapped(state: GraphState) -> GraphState:
         """Report lifecycle status around the node and check that it returns a mapping."""
+        register(state)
         notify(name, "running")
         try:
             result = run(dict(state))
@@ -107,14 +149,17 @@ def node_wrapper(
             # not a failure — GraphInterrupt is a real Exception subclass (so a bare `except
             # Exception` below would catch it too), and LangGraph's own resume mechanism
             # handles it; don't mark this node's lifecycle activity as failed.
+            update(state, interrupt_status())
             raise
         except Exception:
+            update(state, WorkflowStatus.FAILED)
             notify(name, "failure")
             raise
         notify(name, "success")
 
         if not isinstance(result, dict):
             raise TypeError(f"{name} must return a mapping state update")
+        update(result, result_status(result))
         return result
 
     wrapped.__name__ = name

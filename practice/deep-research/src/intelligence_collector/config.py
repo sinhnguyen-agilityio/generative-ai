@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -87,6 +88,7 @@ class Settings:
 
     vfs_root: str = ".data/vfs"
     checkpoint_path: str = ".data/checkpoints.sqlite3"
+    run_registry_path: str = ".data/run_registry.sqlite3"
     vector_path: str = ".data/vector-index.json"
     chroma_path: str = ".data/chroma"
     embedding_model: str = "gemini-embedding-2"
@@ -110,10 +112,17 @@ class Settings:
         """Build the settings from the environment. Raises ``ValueError`` for an out-of-range limit
         or malformed JSON.
         """
+        checkpoint_path = os.getenv(
+            "INTELLIGENCE_CHECKPOINT_PATH", cls.checkpoint_path
+        )
+        registry_default = str(
+            Path(checkpoint_path).expanduser().with_name("run_registry.sqlite3")
+        )
         return cls(
             vfs_root=os.getenv("INTELLIGENCE_VFS_ROOT", cls.vfs_root),
-            checkpoint_path=os.getenv(
-                "INTELLIGENCE_CHECKPOINT_PATH", cls.checkpoint_path),
+            checkpoint_path=checkpoint_path,
+            run_registry_path=os.getenv(
+                "INTELLIGENCE_RUN_REGISTRY_PATH", registry_default),
             vector_path=os.getenv("INTELLIGENCE_VECTOR_PATH", cls.vector_path),
             chroma_path=os.getenv("INTELLIGENCE_CHROMA_PATH", cls.chroma_path),
             embedding_model=os.getenv(
