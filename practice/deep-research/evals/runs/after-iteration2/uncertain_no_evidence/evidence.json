@@ -1,0 +1,47 @@
+{
+  "sources": {
+    "S1": {
+      "url": "https://www.langchain.com/blog/langchain-langchain-1-0-alpha-releases",
+      "title": "LangChain & LangGraph 1.0 alpha releases",
+      "excerpt": "Agent Architecture\n\nLangChain\n\n#### Building a Harness with Jev\n\nSydney Runkle\n\nHunter Lovell\n\nSeptember 17, 2026\n\n5\n\nmin\n\nOpen Source\n\nAgent Architecture\n\nLangChain\n\n#### MCP in LangChain: Stateless Protocol, Elicitation, and More!\n\nSydney Runkle\n\nSeptember 3, 2026\n\n5\n\nmin\n\n.png)\n\nOpen Source\n\nLangGraph\n\nAgent Architecture\n\n#### 3 Years of Graph Engineering with LangGraph\n\nSydney Runkle\n\nHarrison Chase\n\nJuly 22, 2026\n\nmin\n\nThank you! Your submission has been received!"
+    },
+    "S2": {
+      "url": "https://uvik.net/blog/langchain-vs-langgraph",
+      "title": "LangChain vs LangGraph: 2026 Decision Guide | Uvik Software",
+      "excerpt": "|  |  |\n --- |\n| ~34.5M / mo | LangGraph monthly PyPI downloads — the most-installed agent framework (Firecrawl, 2026) |\n| ~400 | Companies running agents on LangGraph Platform, incl. Klarna, Uber, LinkedIn, JPMorgan (Firecrawl, 2026) |\n| 4 vs 17 | Lines of code for a working agent: create\\_agent vs hand-built StateGraph (Uvik measurement, 2026) |\n| ~100k vs ~34k | GitHub stars: LangChain vs LangGraph (GitHub, mid-2026) | [...] By monthly PyPI installs, LangGraph is the most-installed agent framework in 2026 — ahead of the OpenAI Agents SDK, CrewAI, and AutoGen (directional figures).\n\n## Use LangChain when / Use LangGraph when [...] LangGraph is the durable runtime underpinning production agents at scale. Roughly 400 companies run agents on LangGraph Platform — including Klarna, Uber, LinkedIn, Replit, Elastic, Cisco, BlackRock, and JPMorgan. And while it ranks third among agent frameworks by GitHub stars, it is the most-installed by a wide margin, at roughly 34.5 million monthly PyPI downloads."
+    },
+    "S3": {
+      "url": "https://www.taskade.com/blog/langchain-history",
+      "title": "What Is LangChain? Complete History & LangGraph Guide (2026)",
+      "excerpt": "| Commercial product | LangSmith (observability & tracing) |\n| Key sub-project | LangGraph (stateful multi-agent framework) |\n| Monthly PyPI downloads | 10M+ |\n| Enterprise users | Elastic, GitLab, Rakuten, Morningstar | [...] LangChain's future is LangGraph and LangSmith. The core Python library (langchain) has reached relative maturity, integrations get updated, but the fundamental architecture is stable. LangGraph continues to evolve rapidly, with LangGraph Cloud (managed deployment), LangGraph Studio (visual editor), and improved multi-agent coordination patterns. LangSmith is the commercial priority, enterprise contracts for tracing and evaluation are the revenue engine. The broader trend: LangChain is [...] LangChain reached 50,000 GitHub stars faster than any Python library before it, faster than TensorFlow, faster than PyTorch, faster than FastAPI. By February 2023, it had over 800 contributors. By March, it was being downloaded more than 500,000 times a month from PyPI."
+    },
+    "S4": {
+      "url": "https://jbinternational.co.uk/article/view/4680",
+      "title": "LangGraph 1.0 and 1.2 in 2026: Why Durable State Has Changed Everything for Python Agent Developers",
+      "excerpt": "With version=\"v2\", invoke() and stream() output are automatically coerced to declared Pydantic models — eliminating the manual parsing that was previously required and reducing a common source of type errors. Chat models now also expose a .profile attribute through model profiles (derived from models.dev), enabling the framework to automatically infer capabilities like structured output support and context limits.\n\n## The 2026 Developer Landscape: LangGraph vs Everything Else [...] LangGraph 1.2 introduced type-safe streaming and invocation via a version=\"v2\" parameter. Passing version=\"v2\" to stream() or astream() now returns unified StreamPart output with type, ns, and data keys on every chunk — each with its own TypedDict, all importable from langgraph.types. For invoke(), version=\"v2\" returns a GraphOutput object with .value and .interrupts attributes. This makes working with agent output significantly less error-prone, especially in production systems where [...] Train Your Development Team with JBI Training\n\nJBI Training delivers expert-led, hands-on Build Agentic AIs with Python RAG and MCP in London, online, and on-site across the UK.\n\nExplore all our GenAI and Python AI courses: \n\nTags: LangGraph training UK 2026, LangGraph course London, AI agents Python training, LangGraph 1.2 course UK, agentic AI Python developers UK, LangGraph production training\n\nCONTACT\n\n+44 (0)20 8446 7555\n\nenquiries@jbinternational.co.uk"
+    },
+    "S5": {
+      "url": "https://tech-insider.org/langgraph-tutorial-ai-agent-python-2026",
+      "title": "How to Build an AI Agent with LangGraph Python in 14 Steps [2026]",
+      "excerpt": "LangGraph has become the go-to framework for building production-grade AI agents in Python. The framework reached its v1.0 milestone on October 22, 2025, backed by $125 million in Series B funding reported by JBI International, and has since evolved rapidly – LangGraph 2.0 arrived in February 2026, described by Dev.to as codifying three years of production patterns. Today the project counts well over 126,000 GitHub stars and provides developers with a graph-based approach to orchestrating [...] to orchestrating multi-step, stateful AI workflows that go far beyond simple prompt-response chains. This appetite for hands-on material predates the framework’s biggest milestones, too – Medium author Balamurali M. published an early community walkthrough, “LangGraph tutorial with examples,” on September 9, 2025, part of the wave of independent guides this tutorial builds on. This LangGraph tutorial walks you through building a fully functional autonomous AI agent from scratch in 14 detailed [...] ```"
+    }
+  },
+  "bundles": [
+    {
+      "question": "For the open-source LangGraph library (Python), is there a public, citable metric for the number of monthly active developers specifically in September 2026? If no exact September 2026 monthly-active-developers figure exists in public sources, what is the closest available public proxy metric and for what date range is it measured?",
+      "source_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "summary": "I did not find a public, citable metric for **monthly active developers (MA-devs)** for the open-source **LangGraph (Python)** project specifically for **September 2026**. None of the provided sources reported an MA-devs time series or a September 2026 value.\n\nClosest public proxy found (not MA-devs):\n- **Monthly PyPI downloads / install activity**: One source claims LangGraph has “~34.5M / mo” monthly PyPI downloads in 2026, describing it as the “most-installed agent framework” (i.e., download/adoption activity rather than developer activity) [https://uvik.net/blog/langchain-vs-langgraph].\n\nNo public source evidence in the provided results specifies that this PyPI-download proxy is measured over the **September 2026** date range, nor does it define/approximate MA-devs.",
+      "gaps": [
+        "No public, citable MA-devs (monthly active developers) metric for LangGraph (Python) for September 2026 was found in the available sources.",
+        "No source provided an MA-devs time series by month for LangGraph (Python), preventing extraction of a September 2026 figure.",
+        "The closest proxy located—claimed monthly PyPI downloads (~34.5M/mo)—does not specify a September 2026 date range or define it as a developer-activity metric."
+      ]
+    }
+  ]
+}

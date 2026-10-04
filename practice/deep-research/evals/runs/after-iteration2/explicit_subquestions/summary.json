@@ -1,0 +1,133 @@
+{
+  "case_id": "explicit_subquestions",
+  "label": "after",
+  "run_id": "b1292b0a-82d0-40c7-af37-cc36a68f3167",
+  "question": "For HTTP status 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?",
+  "stage": "Awaiting Approval",
+  "pauses": [
+    "plan_approval",
+    "publication_approval"
+  ],
+  "error": null,
+  "brief": {
+    "schema_version": 1,
+    "research_question": "For HTTP status 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?",
+    "required_answers": [
+      "Which RFC defines HTTP status 429 Too Many Requests",
+      "What HTTP status 429 Too Many Requests means",
+      "Which response header tells the client how long to wait before retrying"
+    ],
+    "output_requirements": [],
+    "original_question": "For HTTP status 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?"
+  },
+  "todos": [
+    {
+      "research_question": "For the HTTP status code 429 (Too Many Requests), which RFC defines it, what the status means, and which response header tells the client how long to wait before retrying?",
+      "evidence_needed": "RFC text showing: the RFC number/section that defines 429 Too Many Requests, the meaning/semantics of 429, and the specified retry-timing response header (Retry-After) and how it’s used.",
+      "status": "completed",
+      "research_attempt": 1
+    }
+  ],
+  "plan": {
+    "kind": "initial",
+    "original_question": "For HTTP status 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?",
+    "research_question": "For HTTP status 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?",
+    "required_answers": [
+      "Which RFC defines HTTP status 429 Too Many Requests",
+      "What HTTP status 429 Too Many Requests means",
+      "Which response header tells the client how long to wait before retrying"
+    ],
+    "output_requirements": [],
+    "tasks": [
+      {
+        "todo_id": "d421022e-9434-4bdb-98d9-7bcf9370116b",
+        "question": "For the HTTP status code 429 (Too Many Requests), which RFC defines it, what the status means, and which response header tells the client how long to wait before retrying?",
+        "evidence_needed": "RFC text showing: the RFC number/section that defines 429 Too Many Requests, the meaning/semantics of 429, and the specified retry-timing response header (Retry-After) and how it’s used."
+      }
+    ],
+    "report_shape": "Provide a concise direct answer naming the defining RFC (with section), explaining what 429 Too Many Requests means, and identifying the response header used for retry timing, with citations to the exact RFC sections.",
+    "plan_hash": "0a75218eaaa3b6edd47add862a6520718b6500cea296ed0fbe74951f163847ec"
+  },
+  "research_status": "READY",
+  "research_limitations": [],
+  "verification_passed": true,
+  "verification_outcome": "PASS",
+  "failed_checks": [],
+  "verifier_error": "",
+  "last_error": "",
+  "faithfulness_score": 1.0,
+  "draft_version": 1,
+  "improvement_cycles": 0,
+  "repair_history": [],
+  "model_calls_by_role": {
+    "guardrail": 1,
+    "scope": 2,
+    "planner": 1,
+    "researcher": 2,
+    "research_compressor": 1,
+    "synthesizer": 1,
+    "verify": 1
+  },
+  "tokens_by_role": {
+    "guardrail": {
+      "input": 364,
+      "output": 18
+    },
+    "scope": {
+      "input": 1063,
+      "output": 460
+    },
+    "planner": {
+      "input": 525,
+      "output": 693
+    },
+    "researcher": {
+      "input": 2850,
+      "output": 161
+    },
+    "research_compressor": {
+      "input": 2362,
+      "output": 218
+    },
+    "synthesizer": {
+      "input": 3116,
+      "output": 266
+    },
+    "verify": {
+      "input": 3461,
+      "output": 558
+    }
+  },
+  "tavily_searches": 1,
+  "vector_retrievals": 0,
+  "ragas_faithfulness_runs": 1,
+  "node_runs": {
+    "clarify_with_user": 1,
+    "write_research_brief": 1,
+    "planning": 1,
+    "await_plan_approval": 2,
+    "researching": 1,
+    "research_complete": 1,
+    "synthesizing": 1,
+    "verifying": 1,
+    "evaluating_quality": 1,
+    "approval": 1
+  },
+  "node_seconds": {
+    "clarify_with_user": 2.0,
+    "write_research_brief": 2.4,
+    "planning": 4.3,
+    "await_plan_approval": 0.0,
+    "researching": 9.7,
+    "research_complete": 0.0,
+    "synthesizing": 1.9,
+    "verifying": 9.2,
+    "evaluating_quality": 0.0
+  },
+  "elapsed_seconds": 29.6,
+  "models": {
+    "reasoning": "gpt-5.4-nano",
+    "standard": "gpt-5.4-nano",
+    "faithfulness": "gpt-4.1-mini"
+  }
+}

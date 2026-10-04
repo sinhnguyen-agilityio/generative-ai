@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 from langgraph.types import Command
 from intelligence_collector.agents.report_judge import ReportJudge
-from intelligence_collector.agents.research_judge import ResearchEvidenceJudge
+from intelligence_collector.agents.extension_judge import ExtensionJudge
 from intelligence_collector.agents.feedback_router import FeedbackRouter
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.scope import ScopeAgent
@@ -86,9 +86,11 @@ def _open_checkpoint_connection(checkpoint_path: str):
 
 
 def _quality_evaluators(settings, embeddings) -> dict:
-    """RAGAS evaluators for the metrics in ``INTELLIGENCE_EVAL_METRICS``, keyed by their
-    ``ResearchNodes`` argument. The judge (default OpenAI gpt-4.1-mini) is independent of the
-    app's reasoning/standard tier models; every metric is off when its provider's key is unset.
+    """RAGAS evaluators keyed by their ``ResearchNodes`` argument. Faithfulness is the third
+    verification gate, so it is always built when the judge key is set; Context Precision and
+    Response Relevancy follow ``INTELLIGENCE_EVAL_METRICS``. The judge (default OpenAI
+    gpt-4.1-mini) is independent of the app's reasoning/standard tier models. Without the
+    judge key no evaluator exists and verification reports ERROR (see ``require_faithfulness``).
     Response Relevancy reuses the vector index's embeddings."""
     judge_key_env = "GOOGLE_API_KEY" if settings.faithfulness_provider == "google_genai" else "OPENAI_API_KEY"
     api_key = os.getenv(judge_key_env, "").strip()
@@ -104,7 +106,8 @@ def _quality_evaluators(settings, embeddings) -> dict:
         "response_relevancy": ("response_relevancy_evaluator",
                                lambda: make_response_relevancy_evaluator(**judge, embeddings=embeddings)),
     }
-    return {factories[m][0]: factories[m][1]() for m in settings.eval_metrics}
+    metrics = dict.fromkeys(["faithfulness", *settings.eval_metrics])
+    return {factories[m][0]: factories[m][1]() for m in metrics}
 
 
 def _get_scope_graph(st, agent, tracer):
@@ -122,6 +125,11 @@ def _get_scope_graph(st, agent, tracer):
     if not (tavily_key and tavily_url):
         st.warning("Research is disabled: configure TAVILY_API_KEY and TAVILY_MCP_URL. "
                    "This run can only clarify the request and prepare a plan.")
+    judge_key = ("GOOGLE_API_KEY" if settings.faithfulness_provider == "google_genai"
+                 else "OPENAI_API_KEY")
+    if tavily_key and tavily_url and not os.getenv(judge_key, "").strip():
+        st.warning(f"Report verification needs RAGAS Faithfulness: configure {judge_key}. "
+                   "Until then every verification ends in ERROR and no report can be approved.")
     if tavily_key and tavily_url:
         researcher = ResearchAgent(
             st.session_state.model_routers.standard,
@@ -140,16 +148,17 @@ def _get_scope_graph(st, agent, tracer):
             # Real semantic retrieval: Gemini embeddings, persisted locally via Chroma. Used to
             # narrow the Build/Fix prompt to each question's most relevant sources; Verify always
             # re-reads the full evidence independently, so this never affects what gets checked.
-            ChromaVectorIndex(settings.chroma_path, embeddings=embeddings),
+            ChromaVectorIndex(settings.chroma_path, embeddings=embeddings,
+                              model=settings.embedding_model, provider=settings.embedding_provider),
             researcher,
-            # Semantic verification complements deterministic citation/request checks; shares the
-            # scope/planner reasoning-tier model.
+            # Coverage gate; shares the scope/planner reasoning-tier model. Research readiness is
+            # derived from the stored bundles without an extra assessor call.
             report_judge=ReportJudge(agent.router),
-            research_assessor=ResearchEvidenceJudge(agent.router),
             report_guidelines=settings.report_guidelines,
             max_concurrent_researchers=settings.max_concurrent_researchers,
             recovery_budget=settings.recovery_attempts,
             evidence_top_k=settings.evidence_top_k,
+            require_faithfulness=True,
             **_quality_evaluators(settings, embeddings),
         )
     graph = build_graph(
@@ -166,6 +175,8 @@ def _get_scope_graph(st, agent, tracer):
         output_dir=settings.output_dir,
         # A cheap binary classification, so the standard tier (fewer rate-limit failures).
         feedback_router=FeedbackRouter(st.session_state.model_routers.standard),
+        # Decides whether stored evidence already covers a section the reviewer asked to add.
+        extension_judge=ExtensionJudge(st.session_state.model_routers.standard),
     )
     st.session_state.scope_checkpoint_connection = connection
     st.session_state.run_registry = run_registry
@@ -269,13 +280,12 @@ def _render_details_content(st, snapshot):
 
     attempt = int(snapshot.get("recovery_attempt") or 0)
     if attempt:
-        st.subheader("Recovery")
-        st.write(f"Recovery attempt: {attempt}/{snapshot.get('recovery_budget', 0)}")
-        lessons = list(snapshot.get("bvf_lessons") or [])
-        if lessons:
-            st.write("Lessons learned from failed verifications:")
-            for lesson in lessons:
-                st.markdown(f"- {lesson}")
+        st.subheader("Improvement cycles")
+        st.write(f"Cycle: {attempt}/{snapshot.get('recovery_budget', 0)}")
+        for entry in snapshot.get("bvf_history") or []:
+            if entry.get("route"):
+                st.markdown(f"- Cycle {entry.get('attempt')}: {entry['route']} repair of "
+                            + ", ".join(entry.get("failed_checks") or []))
 
     todos = list(snapshot.get("todos") or [])
     if todos:
@@ -509,10 +519,31 @@ def _awaiting_review(snapshot) -> bool:
     verification = _snapshot_verification(snapshot)
     return (
         snapshot.get("stage") == Stage.AWAITING_APPROVAL.value
-        and not snapshot.get("result_incomplete")
         and verification is not None
         and can_request_approval(verification)
     )
+
+
+def _awaiting_plan_approval(checkpoint) -> bool:
+    """Only the checkpoint knows whether a plan is paused for approval (scope-only runs also
+    end at the Planning stage, without an interrupt)."""
+    return checkpoint is not None and checkpoint.interrupt_kind == "plan_approval"
+
+
+def _render_plan(st, plan: dict):
+    """The plan awaiting approval: what is asked, the research tasks and the expected report."""
+    with st.chat_message("assistant"):
+        title = "Replacement research plan" if plan.get("kind") == "replacement" else "Research plan"
+        lines = [f"**{title}** — nothing is searched until you approve it.", "",
+                 "Required answers:", *(f"- {item}" for item in plan.get("required_answers", [])),
+                 "", "Research tasks:"]
+        for task in plan.get("tasks", []):
+            needed = f" _(evidence: {task['evidence_needed']})_" if task.get("evidence_needed") else ""
+            lines.append(f"- {task['question']}{needed}")
+        if plan.get("report_shape"):
+            lines += ["", f"Report: {plan['report_shape']}"]
+        st.markdown("\n".join(lines))
+        st.caption("Reply **approve** to start research, **cancel** to stop, or describe what to change.")
 
 
 def _awaiting_clarification(snapshot) -> bool:
@@ -547,6 +578,10 @@ def _render_transcript(st, snapshot):
     elif snapshot.get("stage") == Stage.PUBLISHED.value:
         with st.chat_message("assistant"):
             st.markdown(report)
+    elif _awaiting_recovery(snapshot):
+        with st.chat_message("assistant"):
+            st.caption(f"Unverified draft v{snapshot.get('draft_version', 1)} — not approved or published")
+            st.markdown(report)
 
 
 _NODE_ACTIVITY = {
@@ -554,12 +589,15 @@ _NODE_ACTIVITY = {
     Node.AWAIT_CLARIFICATION: ("Waiting for scope clarification", "Scope Agent", None),
     Node.WRITE_BRIEF: ("Generating research brief", "Scope Agent", None),
     Node.PLAN: ("Calling write_todos", "Planner", "write_todos"),
+    Node.AWAIT_PLAN: ("Waiting for plan approval", "Planner", None),
     Node.RESEARCH: ("Delegating research to sub-agents", "Research Supervisor", "tavily_search"),
     Node.ASSESS_RESEARCH: ("Assessing evidence for the research goal", "Research Evidence Judge", "assessment"),
     Node.SYNTHESIZE: ("Synthesizing report", "Report Writer", None),
-    Node.VERIFY: ("Verifying report with LLM judge", "Verifier", "report_judge"),
-    Node.EVALUATE_QUALITY: ("Scoring RAGAS report quality", "Verifier", None),
-    Node.FIX: ("Reflecting on verification failures", "Fix Planner", None),
+    Node.VERIFY: ("Verifying coverage, citations and faithfulness", "Verifier", "report_judge"),
+    Node.EVALUATE_QUALITY: ("Scoring optional RAGAS metrics", "Verifier", None),
+    Node.FIX: ("Diagnosing the smallest repair", "Repair Diagnosis", None),
+    Node.PREPARE_REPAIR_RESEARCH: ("Preparing targeted research", "Research Supervisor", None),
+    Node.REPLAN: ("Proposing a replacement plan", "Planner", None),
     Node.NEEDS_REVIEW: ("Escalating for review", "Verifier", None),
     Node.AWAIT_RECOVERY: ("Waiting for recovery decision", "Verifier", None),
     Node.APPROVE: ("Waiting for publication decision", "Publisher", None),
@@ -622,7 +660,7 @@ _PROGRESS_BY_STAGE = {
 _THREAD_DONE_STAGES = {Stage.PUBLISHED.value, Stage.INCOMPLETE.value, "Cancelled", "Exported Incomplete"}
 
 
-def _run_chat_turn(st, text, *, reviewing, clarifying=False, placeholders, vfs_for_ui):
+def _run_chat_turn(st, text, *, reviewing, clarifying=False, planning=False, placeholders, vfs_for_ui):
     """One chat message drives one graph turn: a new request (or scope answer) starts/continues
     the research; while a report awaits review, the message is the reviewer's reply and resumes
     the paused graph, whose feedback classifier reads it as approve / format / scope."""
@@ -630,7 +668,7 @@ def _run_chat_turn(st, text, *, reviewing, clarifying=False, placeholders, vfs_f
     run_id = st.session_state.scope_state["run_id"]
     thread_id = st.session_state.scope_thread_id
     st.session_state._execution_id = str(uuid4())
-    resuming = reviewing or clarifying
+    resuming = reviewing or clarifying or planning
     with st.status("Processing your reply" if resuming else "Processing research request",
                    expanded=False) as indicator:
         def lifecycle(node, status):
@@ -641,6 +679,7 @@ def _run_chat_turn(st, text, *, reviewing, clarifying=False, placeholders, vfs_f
         st.session_state._lifecycle_callback = lifecycle
         trace_input = (
             {"review_reply": text} if reviewing
+            else {"plan_reply": text} if planning
             else {"clarification_reply": text} if clarifying
             else {"request": text}
         )
@@ -731,8 +770,8 @@ def _inspect_checkpoint(st, snapshot):
         return None
 
 
-def _render_recovery_controls(st, snapshot, checkpoint=None):
-    """Discovery is local and cheap; construct agents only on an explicit recovery action."""
+def _render_checkpoint_tools(st):
+    """Find and restore saved runs. Discovery is local and cheap."""
     settings = Settings.from_env()
     if Path(settings.checkpoint_path).is_file():
         if st.button("Find saved checkpoints"):
@@ -756,21 +795,38 @@ def _render_recovery_controls(st, snapshot, checkpoint=None):
                         st.rerun()
                     except Exception as exc:
                         st.error(f"Recovery failed: {exc}")
+
+
+def _render_recovery_controls(st, snapshot, checkpoint=None):
+    """The run's recovery options, shown right above the chat input and only while the run
+    needs review. Widget keys include the draft version, so a new draft starts with an empty
+    form; agents are constructed only on an explicit recovery action."""
     if snapshot.get("stage") in _THREAD_DONE_STAGES:
         return
     if _awaiting_recovery(snapshot):
-        st.caption("Choose a bounded recovery action. Incomplete export is never publication.")
-        action = st.selectbox("Recovery action", [
-            "revise", "retry_report", "research", "rescope", "export_incomplete", "cancel"])
-        feedback = st.text_area("Repair instructions or research feedback", max_chars=4000)
-        attempts = (int(st.number_input("Additional repair attempts", min_value=1,
-                                       max_value=2, value=1)) if action == "retry_report" else 0)
-        if st.button("Apply recovery action"):
+        version = snapshot.get("draft_version", 0)
+        # Open only the first time; after a recovery attempt returned a new draft, the draft and
+        # the assistant's reply come first and the options stay collapsed until requested.
+        tried = any(entry.get("kind") == "RECOVERY_DECISION"
+                    for entry in snapshot.get("bvf_history") or [])
+        with st.expander("Recovery options — this run needs your decision", expanded=not tried):
+            st.caption("Choose a bounded recovery action. Incomplete export is never publication.")
+            action = st.selectbox("Recovery action", [
+                "revise", "retry_report", "research", "rescope", "export_incomplete", "cancel"],
+                key=f"recovery_action_v{version}")
+            feedback = st.text_area("Repair instructions or research feedback", max_chars=4000,
+                                    key=f"recovery_feedback_v{version}")
+            attempts = (int(st.number_input("Additional repair attempts", min_value=1,
+                                           max_value=2, value=1, key=f"recovery_attempts_v{version}"))
+                        if action == "retry_report" else 0)
+            apply = st.button("Apply recovery action", key=f"recovery_apply_v{version}")
+        if apply:
             try:
                 if feedback and not validate_request(normalize_text(feedback)).allowed:
                     raise ValueError("Recovery feedback rejected by input guardrails")
-                result = _recovery_service(st).resume_interrupt(snapshot["thread_id"], {
-                    "action": action, "feedback": feedback, "additional_attempts": attempts})
+                with st.spinner("Applying the recovery action — rewriting and re-verifying the report"):
+                    result = _recovery_service(st).resume_interrupt(snapshot["thread_id"], {
+                        "action": action, "feedback": feedback, "additional_attempts": attempts})
                 _adopt_recovered_state(st, result)
                 st.rerun()
             except Exception as exc:
@@ -826,11 +882,14 @@ def render():
         _render_graph_snapshot(st, snapshot)
 
     with chat_col:
-        _render_recovery_controls(st, snapshot, checkpoint)
+        _render_checkpoint_tools(st)
         clarification = existing_scope_state.get("scope_assessment", {}).get("question")
         if st.session_state.stage == "Scoping" and clarification:
             st.info("Waiting for your response")
         _render_transcript(st, snapshot)
+        planning = _awaiting_plan_approval(checkpoint)
+        if planning and snapshot.get("plan"):
+            _render_plan(st, snapshot["plan"])
         current_stage = snapshot.get("stage")
         if current_stage == Stage.NEEDS_REVIEW.value:
             st.error("This run needs human review before it can be treated as verified or published.")
@@ -855,14 +914,16 @@ def render():
                                    file_name="incomplete-report.md", mime="text/markdown")
             except FileNotFoundError:
                 st.error("The incomplete report artifact is unavailable.")
+        _render_recovery_controls(st, snapshot, checkpoint)
         # Wrapping chat_input in a container (instead of calling it at the script's top level)
         # trades away its viewport-pinned/floating placement so the New Thread button can render
         # in normal flow right below it.
         with st.container():
             text = st.chat_input(
                 "Reply: approve, or what to change" if reviewing
+                else "Reply: approve the plan, cancel, or what to change" if planning
                 else "Answer the clarification question" if clarifying
-                else "Recovery action required" if recovering
+                else "Use the recovery options above" if recovering
                 else "What should we research?",
                 disabled=recovering or pending or current_stage in _THREAD_DONE_STAGES,
             )
@@ -880,7 +941,7 @@ def render():
                     st.session_state.progress = "Request rejected; no research started"
                 return st
             _run_chat_turn(
-                st, text, reviewing=reviewing, clarifying=clarifying,
+                st, text, reviewing=reviewing, clarifying=clarifying, planning=planning,
                 placeholders=placeholders, vfs_for_ui=vfs_for_ui,
             )
             st.rerun()

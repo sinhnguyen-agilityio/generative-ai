@@ -124,3 +124,27 @@ def test_chroma_index_uses_openai_embeddings_when_provider_is_openai(tmp_path, m
     )
 
     assert captured["model"] == "text-embedding-3-large"
+
+
+def test_switching_embedding_models_uses_a_separate_collection(tmp_path):
+    """A 3072-dimension collection must not receive 1536-dimension vectors after a model switch."""
+    class Dim:
+        def __init__(self, size):
+            self.size = size
+
+        def embed_documents(self, texts):
+            return [[0.1] * self.size for _ in texts]
+
+        def embed_query(self, text):
+            return [0.1] * self.size
+
+    chunk = IndexedChunk(source_id="s", artifact_id="a", text="cache text",
+                         metadata={"run_id": "r", "todo_id": "t", "locator": "https://x.test"})
+    ChromaVectorIndex(tmp_path / "chroma", embeddings=Dim(8), model="gemini-embedding-2",
+                      provider="google_genai").index([chunk])
+
+    switched = ChromaVectorIndex(tmp_path / "chroma", embeddings=Dim(4), model="text-embedding-3-small",
+                                 provider="openai")
+    switched.index([chunk])
+
+    assert [c.chunk_id for c in switched.retrieve("cache", run_id="r")] == [chunk.chunk_id]

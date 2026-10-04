@@ -9,21 +9,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from intelligence_collector.agents.worker import _evidence_path, research_prefix
 
 from langchain_core.messages import AIMessage, HumanMessage
 
+from intelligence_collector.agents.planner import plan_record
 from intelligence_collector.agents.report_judge import (
     ReportJudge,
-    build_report_judge_criteria,
-    judge_verdict_to_result,
+    build_coverage_criteria,
+    coverage_checks,
+    verification_result,
 )
 from intelligence_collector.agents.report_writer import (
     DEFAULT_EVIDENCE_TOP_K,
+    DIRECT_READ_CHARS,
     ReportWriter,
-    RevisionContext,
     format_evidence,
-    merge_lessons,
     select_relevant_evidence,
 )
 from intelligence_collector.agents.supervisor import (
@@ -35,6 +37,7 @@ from intelligence_collector.contracts import (
     ApprovalDecision,
     ClarificationResumeDecision,
     FeedbackDecision,
+    PlanApprovalDecision,
     RecoveryAction,
     RecoveryDecision,
     ResearchBrief,
@@ -42,6 +45,7 @@ from intelligence_collector.contracts import (
     ResearchTodo,
     ScopeAssessment,
     Stage,
+    VerificationCheck,
     VerificationResult,
     TodoStatus,
 )
@@ -51,7 +55,10 @@ from intelligence_collector.observability.evaluation import (
     FaithfulnessEvaluator,
     ResponseRelevancyEvaluator,
 )
+from intelligence_collector.repair import diagnose, item_key, locate_with_index
 from intelligence_collector.source_verification import (
+    _normalize_url,
+    citation_errors,
     cited_source_excerpts,
     failure_fingerprint,
     load_catalog,
@@ -59,8 +66,12 @@ from intelligence_collector.source_verification import (
 )
 
 DEFAULT_RECOVERY_BUDGET = 3
+# RAGAS Faithfulness must be strictly greater than this for the third gate to pass.
+FAITHFULNESS_THRESHOLD = 0.90
 # Identical failures on this many consecutive re-verifications, despite reflection, ends the loop.
 MAX_STALLED_ATTEMPTS = 2
+# Stored passages the extension judge reads for a reviewer's "extend" request.
+EXTENSION_PASSAGES = 8
 
 
 class Node:
@@ -71,20 +82,23 @@ class Node:
     AWAIT_CLARIFICATION = "await_clarification"
     WRITE_BRIEF = "write_research_brief"
     PLAN = "planning"
+    AWAIT_PLAN = "await_plan_approval"
     # Research pipeline
     RESEARCH = "researching"
     ASSESS_RESEARCH = "research_complete"
     # Build-Verify-Fix loop
     SYNTHESIZE = "synthesizing"
     PREPARE_REVISION = "prepare_revision"
+    LOCATE_EXTENSION = "locate_extension_evidence"
     VERIFY = "verifying"
     EVALUATE_QUALITY = "evaluating_quality"
     FIX = "fixing"
+    PREPARE_REPAIR_RESEARCH = "prepare_repair_research"
+    REPLAN = "replan"
     NEEDS_REVIEW = "needs_review"
     AWAIT_RECOVERY = "await_recovery"
     APPLY_RECOVERY = "apply_recovery_decision"
     PREPARE_GAP_RESEARCH = "prepare_gap_research"
-    FINISH_INCOMPLETE = "finish_incomplete"
     RETRY_VERIFIER = "retry_verifier"
     RETRY_RESEARCH_ASSESSMENT = "retry_research_assessment"
     # Human review and publication
@@ -101,6 +115,19 @@ def _activity(state, label: str, status: str = "success"):
         {"id": f"{len(state.get('activity', [])) + 1}:{label}",
          "label": label, "status": status},
     ]
+
+
+def _unresolved_lines(verification: dict, limit: int = 3) -> list[str]:
+    """Short, user-facing lines for the failed checks of a verification record."""
+    lines = []
+    for check in (verification or {}).get("check_results", []):
+        if check.get("passed"):
+            continue
+        detail = (check.get("details") or [""])[0]
+        label = {"coverage": "Coverage", "citation": "Citations",
+                 "faithfulness": "Faithfulness"}.get(check.get("gate"), "Check")
+        lines.append(f"{label}: {detail[:220]}")
+    return lines[:limit]
 
 
 def await_clarification(state: GraphState) -> GraphState:
@@ -123,6 +150,39 @@ def await_clarification(state: GraphState) -> GraphState:
         "reviewer": decision.actor,
         "current_action": "Clarification received — reassessing scope",
     }
+
+
+def await_plan_approval(state: GraphState) -> GraphState:
+    """Pause before any retrieval until a human approves the exact plan (initial or replacement).
+
+    No model call, tool call or artifact write happens before ``interrupt()``; the approval is
+    bound to the plan hash, so a changed plan always needs a new approval.
+    """
+    from langgraph.types import interrupt
+
+    plan = state.get("plan") or {}
+    decision = PlanApprovalDecision.model_validate(interrupt({
+        "kind": "plan_approval",
+        "run_id": state.get("run_id"),
+        "plan": plan,
+    }))
+    outcome = decision.outcome
+    record = {"plan_hash": plan.get("plan_hash", ""), "approved": outcome == "approve",
+              "outcome": outcome, "actor": decision.actor, "kind": plan.get("kind", "initial")}
+    update = {**state, "plan_approval": record, "reviewer": decision.actor}
+    if outcome == "approve":
+        return {**update, "stage": Stage.RESEARCHING.value, "status": "active",
+                "current_action": "Plan approved — starting research"}
+    if outcome == "change":
+        # The requested change becomes the next scope turn: new brief, new plan, new approval.
+        return {**update, "stage": Stage.SCOPING.value, "request": decision.reply,
+                "current_action": "Plan change requested — rescoping"}
+    if plan.get("kind") == "replacement":
+        return {**update, "stage": Stage.NEEDS_REVIEW.value,
+                "current_action": "Replacement plan declined",
+                "last_error": "The replacement research plan was declined."}
+    return {**update, "stage": "Cancelled", "status": "cancelled",
+            "current_action": "Plan declined; run cancelled"}
 
 
 def await_recovery(state: GraphState, *, can_rescope=True) -> GraphState:
@@ -162,8 +222,12 @@ class RecoveryNodes:
         history = [*state.get("bvf_history", []), {
             "kind": "RECOVERY_DECISION", **decision.model_dump(mode="json"),
         }]
+        request = f"Recovery action: {action.value.replace('_', ' ')}" + (
+            f" — {decision.feedback}" if decision.feedback else "")
         update = {**state, "recovery_decision": None, "recovery_route": action.value,
-                  "bvf_history": history, "approval": None, "publication": None}
+                  "bvf_history": history, "approval": None, "publication": None,
+                  # The reviewer's decision is part of the chat, like a review reply.
+                  "messages": [*state.get("messages", []), HumanMessage(content=request)]}
         if action is RecoveryAction.CANCEL:
             return {**update, "stage": "Cancelled", "status": "cancelled",
                     "current_action": "Run cancelled by reviewer"}
@@ -284,20 +348,28 @@ class PlannerNodes:
         if self.vfs is None:
             raise RuntimeError("Planning requires an injected VFS")
         brief = ResearchBrief.model_validate(state["scoped_request"])
-        todos = self.planner_agent.write_todos(
-            brief,
-            self.vfs,
-            state["run_id"],
-            thread_id=state.get("thread_id", ""),
-        )
+        if hasattr(self.planner_agent, "plan"):
+            todos, shape = self.planner_agent.plan(
+                brief, self.vfs, state["run_id"], thread_id=state.get("thread_id", ""))
+        else:
+            todos, shape = self.planner_agent.write_todos(
+                brief, self.vfs, state["run_id"], thread_id=state.get("thread_id", "")), ""
+        plan = plan_record(brief, todos, shape)
+        version = state.get("plan_version", 0) + 1
+        ref = self.vfs.write_json(state["run_id"], f"planning/plan.v{version}.json", plan,
+                                  "research_plan")
         return {
             **state,
             "stage": Stage.PLANNING.value,
+            "current_action": f"Plan with {len(todos)} research task(s) ready for approval",
             "todos": [todo.model_dump(mode="json") for todo in todos],
+            "plan": plan, "plan_version": version, "plan_approval": None,
             "draft": "",
             "verification": None,
             "research_status": "UNKNOWN", "research_limitations": [], "result_incomplete": False,
             "research_gap_attempt": 0, "research_gap_budget": 1,
+            "repair": None, "repair_researched": [],
+            "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }
 
 
@@ -321,6 +393,7 @@ class ResearchNodes:
         recovery_budget: int = DEFAULT_RECOVERY_BUDGET,
         evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
         faithfulness_evaluator: FaithfulnessEvaluator | None = None,
+        require_faithfulness: bool = False,
         context_precision_evaluator: ContextPrecisionEvaluator | None = None,
         response_relevancy_evaluator: ResponseRelevancyEvaluator | None = None,
     ):
@@ -342,12 +415,21 @@ class ResearchNodes:
             recovery_budget=recovery_budget,
             evidence_top_k=evidence_top_k,
             faithfulness_evaluator=faithfulness_evaluator,
+            require_faithfulness=require_faithfulness,
             context_precision_evaluator=context_precision_evaluator,
             response_relevancy_evaluator=response_relevancy_evaluator,
         )
 
     def researching(self, state):
-        """Supervisor delegates each planned question to its own research sub-agent."""
+        """Supervisor delegates each planned question to its own research sub-agent.
+
+        When the run has a plan record, retrieval requires an approval of exactly that plan.
+        """
+        plan = state.get("plan")
+        if plan is not None:
+            approval = state.get("plan_approval") or {}
+            if not approval.get("approved") or approval.get("plan_hash") != plan.get("plan_hash"):
+                raise ValueError("Research requires human approval of the current plan")
         todos = [ResearchTodo.model_validate(
             todo) for todo in state.get("todos", [])]
         if not todos:
@@ -385,13 +467,19 @@ class ResearchNodes:
         }
 
     def research_complete(self, state):
-        """Assess enough evidence for the goal; optional gaps never force research."""
+        """Assess enough evidence for the goal; optional gaps never force research.
+
+        A task that failed technically (provider error, crashed sub-agent) becomes a limitation
+        when other tasks produced usable evidence. Only when nothing usable exists does it stop
+        the run, and then it goes straight to review: re-reading the same stored failure cannot
+        change the outcome, so it is never retried here.
+        """
         todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
         if not todos:
-            return {**state, "verification_issue": "research_verifier_failure",
-                    "research_verifier_attempt": state.get("research_verifier_attempt", 0) + 1,
+            return {**state, "verification_issue": "research_failure",
+                    "progress_assessment": None,
                     "last_error": "No research todos; repair the scope or plan"}
-        gaps, limitations, usable = [], [], []
+        gaps, limitations, usable, technical = [], [], [], []
         for todo in todos:
             if todo.status == TodoStatus.FAILED:
                 try:
@@ -401,10 +489,11 @@ class ResearchNodes:
                 if failure.get("failure_kind") == "technical" or (
                     "failure_kind" not in failure and failure.get("error") not in {None, "Research returned no sources"}
                 ):
-                    return {**state, "verification_issue": "research_verifier_failure",
-                            "progress_assessment": None,
-                            "research_verifier_attempt": state.get("research_verifier_attempt", 0) + 1,
-                            "last_error": "Research failed technically; retry or check provider configuration"}
+                    technical.append(todo.todo_id)
+                    limitations.append(f"Research failed technically for: {todo.research_question}")
+                    gaps.append({"todo_id": todo.todo_id,
+                                 "instruction": "Find direct evidence answering: " + todo.research_question})
+                    continue
             try:
                 bundle = json.loads(self.vfs.read(state["run_id"], _evidence_path(todo)))
             except FileNotFoundError:
@@ -419,7 +508,13 @@ class ResearchNodes:
                 limitations.append(f"No usable evidence for: {todo.research_question}")
                 gaps.append({"todo_id": todo.todo_id,
                              "instruction": "Find direct evidence answering: " + todo.research_question})
-        status = (ResearchReadiness.PARTIAL if limitations else ResearchReadiness.READY) if usable else ResearchReadiness.INSUFFICIENT
+        if technical and not usable:
+            # research_gaps names the failed tasks so the recovery "research" action reopens them.
+            return {**state, "verification_issue": "research_failure",
+                    "progress_assessment": None,
+                    "research_gaps": gaps,
+                    "last_error": "Research failed technically; retry or check provider configuration"}
+        status =(ResearchReadiness.PARTIAL if limitations else ResearchReadiness.READY) if usable else ResearchReadiness.INSUFFICIENT
         if self.research_assessor is not None:
             try:
                 verdict = self.research_assessor.assess(
@@ -459,7 +554,9 @@ class ResearchNodes:
             "progress_assessment": assessment,
             "research_status": status.value,
             "research_limitations": limitations,
-            "result_incomplete": status != ResearchReadiness.READY,
+            # Known gaps go to the writer as limitations; whether the report still answers what
+            # was asked is decided by the coverage gate, so a gap never skips report approval.
+            "result_incomplete": False,
             "research_gaps": gaps,
             "verification_issue": "evidence_gap" if not ready else "",
             "research_verifier_attempt": 0,
@@ -495,15 +592,17 @@ class ResearchNodes:
 
 
 class BVFNodes:
-    """Mandatory Build-Verify-Fix loop around the report.
+    """Build -> Verify -> (diagnose and repair) loop around the report.
 
-    Build (``synthesizing``) -> Verify (``verifying``, one LLM-as-judge call — see
-    ``agents/report_judge.py`` — that says which criteria failed and why) -> on failure Fix
-    (``fixing``: record the attempt and reflect to learn lessons) -> Build again, rewriting the
-    report from the same evidence. No new research happens inside the loop: a claim the evidence
-    cannot support is removed, narrowed, or disclosed under ``## Limitations``. Only a report that
-    passes every criterion leaves the loop normally; exhausting the recovery budget or repeating
-    the same failures ends in ``needs_review``.
+    Build (``synthesizing``) writes a complete draft. Verify (``verifying``) runs exactly three
+    gates on that exact draft: coverage of the required answers and output constraints (LLM
+    judge), citation resolution against sources collected in this run, and RAGAS Faithfulness
+    strictly greater than 0.90. PASS leaves the loop at once. FAIL enters ``fixing``, which
+    diagnoses the smallest useful correction (see ``repair.py``) and routes to a targeted
+    rewrite, Chroma-located evidence, targeted research or a replacement plan. A technical
+    evaluator failure is ERROR: it is retried or escalated, never rewritten. At most
+    ``recovery_budget`` improvement cycles run; exhaustion or no progress ends in
+    ``needs_review``.
     """
 
     def __init__(
@@ -517,8 +616,10 @@ class BVFNodes:
         recovery_budget: int,
         evidence_top_k: int = DEFAULT_EVIDENCE_TOP_K,
         faithfulness_evaluator: FaithfulnessEvaluator | None = None,
+        require_faithfulness: bool = False,
         context_precision_evaluator: ContextPrecisionEvaluator | None = None,
         response_relevancy_evaluator: ResponseRelevancyEvaluator | None = None,
+        planner=None,
     ):
         self.vfs = vfs
         self.index = index
@@ -527,9 +628,16 @@ class BVFNodes:
         self.report_guidelines = list(report_guidelines)
         self.recovery_budget = recovery_budget
         self.evidence_top_k = evidence_top_k
+        self.direct_read_chars = DIRECT_READ_CHARS
         self.faithfulness_evaluator = faithfulness_evaluator
+        # When required, a missing evaluator is a configuration ERROR rather than a skipped gate.
+        self.require_faithfulness = require_faithfulness
         self.context_precision_evaluator = context_precision_evaluator
         self.response_relevancy_evaluator = response_relevancy_evaluator
+        # Injected by build_graph when a Planner exists; enables replacement plans.
+        self.planner = planner
+        # Injected by build_graph; without it an "extend" request always researches.
+        self.extension_judge = None
 
     def _catalog(self, state):
         """Full, unfiltered catalog — used by Verify and quality scoring, never narrowed."""
@@ -537,39 +645,41 @@ class BVFNodes:
                             active_todo_ids=[todo["todo_id"] for todo in state["todos"]]
                             if "todos" in state else None)
 
+    def _writer_catalog(self, state, full, repair):
+        """What the writer reads: small corpora directly, a large one narrowed via Chroma; a
+        content repair reads the full stored evidence, and the Chroma route adds passages
+        located for the affected items."""
+        route = (repair or {}).get("route")
+        if route in {"vfs", "research"}:
+            return full
+        narrowed = select_relevant_evidence(full, self.index, state["run_id"],
+                                            top_k=self.evidence_top_k,
+                                            direct_read_chars=self.direct_read_chars)
+        if route == "chroma" and self.index is not None:
+            return locate_with_index(self.vfs, self.index, state["run_id"], full, narrowed,
+                                     repair["issues"], state.get("artifacts", []))
+        return narrowed
+
     def synthesizing(self, state):
-        """Build the first draft, a Fix revision applying every lesson learned so far, or a
+        """Build the first draft, a targeted repair of a draft that failed verification, or a
         rewrite of the reviewed report applying the human reviewer's requests.
 
-        ``human_feedback`` is set only on the pass right after a reviewer's "revise" reply: the
-        report they commented on is rewritten. ``reviewer_requests`` (every request since the
-        last scope change) stays in force for this rewrite and any BVF fix that follows it.
+        Every new version clears the previous verification, report approval and publication.
         """
         brief = ResearchBrief.model_validate(state["scoped_request"])
-        previous = state.get("verification")
-        revision = None
-        if previous and not previous.get("passed") and state.get("draft"):
-            revision = RevisionContext(
-                attempt=state.get("recovery_attempt", 0),
-                failures=previous.get("repair_details", ""),
-                previous_draft=state["draft"],
-                lessons=list(state.get("bvf_lessons", [])),
-                strategy=state.get("fix_strategy", ""),
-            )
-        # The writer's prompt sees a per-question top-K selection; Verify still checks the
-        # full catalog independently, so narrowing here can never hide a citation problem.
-        catalog = select_relevant_evidence(
-            self._catalog(state), self.index, state["run_id"], top_k=self.evidence_top_k
-        )
+        repair = state.get("repair")
+        catalog = self._writer_catalog(state, self._catalog(state), repair)
         reviewer_requests = list(state.get("reviewer_requests", []))
         reviewing = bool(state.get("human_feedback"))
         report = self.writer.write(
             brief,
             catalog,
-            revision=revision,
+            repair=repair,
+            previous_draft=state.get("draft", ""),
+            draft_version=state.get("draft_version", 0),
+            report_shape=(state.get("plan") or {}).get("report_shape", ""),
             reviewer_requests=reviewer_requests,
             reviewed_report=state.get("draft", "") if reviewing else "",
-            research_status=state.get("research_status", "READY"),
             research_limitations=state.get("research_limitations", []),
             guidelines=self.report_guidelines,
             run_id=state["run_id"],
@@ -591,7 +701,7 @@ class BVFNodes:
             **state,
             "stage": Stage.VERIFYING.value,
             "current_action": (
-                f"Draft v{version} revised with {len(revision.lessons)} lesson(s)" if revision
+                f"Draft v{version} repaired ({repair['route']})" if repair
                 else f"Draft v{version} rewritten per the reviewer's request" if reviewing
                 else "First draft built from stored evidence"
             ),
@@ -600,6 +710,7 @@ class BVFNodes:
             "previous_draft": state.get("draft", ""),
             "draft": report,
             "draft_version": version,
+            "repair": None,  # consumed
             "verifier_attempt": 0,
             "verifier_error": "",
             "writer_evidence": writer_evidence,
@@ -608,94 +719,123 @@ class BVFNodes:
                 ref.model_dump(mode="json"),
                 ranking_ref.model_dump(mode="json"),
             ],
-            "verification": None,  # a changed artifact never inherits a previous verification
+            # A changed artifact never inherits a previous verification, approval or publication.
+            "verification": None, "verification_outcome": "", "coverage_cache": None,
+            "approval": None, "publication": None, "faithfulness_score": None,
         }
 
-    def verifying(self, state):
-        """Combine independent semantic judging with structural citation/request checks.
+    def _error(self, state, message: str, partial: dict | None = None):
+        """ERROR: the evaluation could not produce a trustworthy verdict. Nothing is rewritten."""
+        return {**state, "verification_issue": "verifier_failure", "verification": None,
+                "verification_outcome": "ERROR", "verifier_error": message,
+                "last_error": "Report verifier unavailable: " + message,
+                "coverage_cache": partial,
+                "verifier_attempt": state.get("verifier_attempt", 0) + 1}
 
-        Verification errors never count as either a passing or a failed report verdict.
+    def _faithfulness(self, brief, report, catalog):
+        """Third gate. Returns ``(check, score, error)``; ``error`` means ERROR."""
+        if self.faithfulness_evaluator is None:
+            return None, None, ("Faithfulness evaluator is not configured"
+                                if self.require_faithfulness else None)
+        contexts = cited_source_excerpts(report, catalog)
+        try:
+            result = self.faithfulness_evaluator(
+                brief.original_question or brief.research_question, report, contexts)
+        except Exception as exc:
+            return None, None, f"Faithfulness evaluation failed: {type(exc).__name__}"
+        score = result.get("score") if isinstance(result, dict) else result
+        unsupported = list(result.get("unsupported") or []) if isinstance(result, dict) else []
+        if (not isinstance(score, (int, float)) or isinstance(score, bool)
+                or math.isnan(score) or not 0 <= score <= 1):
+            return None, None, "Faithfulness returned no valid score"
+        passed = score > FAITHFULNESS_THRESHOLD
+        check = VerificationCheck(
+            name="faithfulness", passed=passed, gate="faithfulness",
+            details=[] if passed else [
+                f"RAGAS Faithfulness {score:.2f} is not above {FAITHFULNESS_THRESHOLD:.2f}."
+                + (" Unsupported statements: " + " | ".join(unsupported[:8]) if unsupported else "")],
+            missing_points=[] if passed else unsupported[:8],
+            affected_ids=[] if passed else ["faithfulness"],
+        )
+        return check, float(score), None
+
+    def verifying(self, state):
+        """Run the three gates on the exact current draft and record PASS, FAIL or ERROR.
+
+        Coverage and citation run first; Faithfulness is scored only on a draft that passed
+        both (a draft failing them is repaired anyway). An evaluator failure is ERROR and never
+        becomes a FAIL or a PASS; a retry reuses saved coverage checks for the same draft.
         """
         catalog = self._catalog(state)
         brief = ResearchBrief.model_validate(state["scoped_request"])
-        criteria = build_report_judge_criteria(self.report_guidelines)
-        criteria.extend([
-            "The report addresses the user's core goal within the available evidence, without "
-            "substituting another topic; unavailable answers are explicitly identified, not invented.",
-        ])
-        if state.get("result_incomplete"):
-            criteria.append("The report is explicitly labeled INCOMPLETE and accurately discloses "
-                            "the unverified parts without implying that research is complete. Known limitations: " +
-                            json.dumps(state.get("research_limitations", [])))
         report = state.get("draft", "")
+        artifact_hash = hashlib.sha256(report.encode()).hexdigest() if report else ""
         from intelligence_collector.agents.reviewer_checks import reviewer_format_checks
 
         requests = list(state.get("reviewer_requests", []))
-        criteria.extend(
-            f"The report satisfies this human reviewer request: {request}"
-            for request in requests
-        )
-        try:
-            verdict = self.report_judge.verify(
-                brief,
-                criteria,
-                report,
-                format_evidence(catalog),
-                reviewer_requests=list(state.get("reviewer_requests", [])),
-                run_id=state["run_id"],
-                thread_id=state.get("thread_id", ""),
-            )
-        except Exception as exc:
-            return {**state, "verification_issue": "verifier_failure", "verification": None,
-                    "verifier_error": str(exc), "last_error": "Report verifier unavailable",
-                    "verifier_attempt": state.get("verifier_attempt", 0) + 1}
-        verdict.results.extend(reviewer_format_checks(report, requests))
-        from intelligence_collector.source_verification import citation_errors
-        from intelligence_collector.contracts import ReportJudgeCriterion
-
-        for error in citation_errors(report, catalog):
-            verdict.results.append(ReportJudgeCriterion(
-                criterion="Citation integrity: " + error, met=False,
-                justification=error, issue_type="draft_defect"))
-        failed_items = [item for item in verdict.results if not item.met]
-        issue = "draft_defect"
-        missing = [item.justification for item in failed_items if item.issue_type == "evidence_gap"]
-        incomplete = bool(state.get("result_incomplete")) or bool(missing)
-        artifact_hash = hashlib.sha256(
-            report.encode()).hexdigest() if report else ""
-        result = judge_verdict_to_result(verdict, artifact_hash)
+        cache = state.get("coverage_cache") or {}
+        if cache.get("artifact_hash") == artifact_hash and cache.get("checks"):
+            checks = [VerificationCheck.model_validate(item) for item in cache["checks"]]
+        else:
+            criteria = build_coverage_criteria(brief, self.report_guidelines, requests)
+            try:
+                pairs = self.report_judge.assess(
+                    brief, criteria, report, format_evidence(catalog),
+                    reviewer_requests=requests, run_id=state["run_id"],
+                    thread_id=state.get("thread_id", ""))
+            except Exception as exc:
+                return self._error(state, str(exc))
+            checks = coverage_checks(pairs)
+            for item in reviewer_format_checks(report, requests):
+                checks.append(VerificationCheck(
+                    name="reviewer_word_limit", passed=item.met, gate="coverage",
+                    issue_type="presentation", item=item.criterion,
+                    details=[] if item.met else [f"{item.criterion} — {item.justification}"]))
+            for error in citation_errors(report, catalog):
+                checks.append(VerificationCheck(
+                    name="citation_resolution", passed=False, gate="citation",
+                    issue_type="draft_defect" if error.startswith("Unknown") else "presentation",
+                    details=[error], affected_ids=[f"citation:{error}"]))
+        score = None
+        if all(check.passed for check in checks):
+            check, score, error = self._faithfulness(brief, report, catalog)
+            if error:
+                return self._error(state, error, {"artifact_hash": artifact_hash,
+                                                  "checks": [c.model_dump(mode="json") for c in checks]})
+            if check is not None:
+                checks.append(check)
+        result = verification_result(checks, artifact_hash)
         fingerprint = failure_fingerprint(result)
-        stalled = not result.passed and fingerprint == state.get(
-            "progress_fingerprint")
+        stalled = not result.passed and fingerprint == state.get("progress_fingerprint")
         run_id = state["run_id"]
         save_catalog_state(self.vfs, run_id, state.get("evidence", []))
         ref = self.vfs.write_json(
             run_id,
             f"verification/result.{result.verification_id}.json",
-            result.model_dump(mode="json"),
+            {**result.model_dump(mode="json"), "outcome": "PASS" if result.passed else "FAIL",
+             "draft_version": state.get("draft_version", 0), "faithfulness_score": score},
             "verification",
         )
         failed = [check.name for check in result.check_results if not check.passed]
-
         return {
             **state,
             "stage": (Stage.AWAITING_APPROVAL if result.passed else Stage.VERIFYING).value,
             "status": "paused" if result.passed else "active",
             "current_action": (
-                f"All {len(result.checks)} judge criteria passed"
+                f"All {len(result.checks)} verification checks passed"
                 if result.passed else f"Verification failed: {', '.join(failed)}"
             ),
             "activity": _activity(state, "Verifying report"),
             "verification": result.model_dump(mode="json"),
-            "verification_issue": issue,
-            "result_incomplete": incomplete,
-            "research_status": "PARTIAL" if missing else state.get("research_status", "READY"),
-            "research_limitations": list(dict.fromkeys([*state.get("research_limitations", []), *missing])),
+            "verification_outcome": "PASS" if result.passed else "FAIL",
+            "verification_issue": "draft_defect",
+            "faithfulness_score": score,
+            "coverage_cache": None,
             "verifier_attempt": 0,
             "verifier_error": "",
+            "last_error": "",
             "verification_history": [
-                *state.get("verification_history", []
-                           ), result.model_dump(mode="json")
+                *state.get("verification_history", []), result.model_dump(mode="json")
             ],
             "progress_fingerprint": fingerprint,
             "stall_count": state.get("stall_count", 0) + 1 if stalled else 0,
@@ -704,36 +844,29 @@ class BVFNodes:
         }
 
     def evaluating_quality(self, state):
-        """RAGAS quality scores of the final report: Faithfulness, Context Precision and Response
-        Relevancy.
+        """Optional RAGAS observations of the passing report: Context Precision and Response
+        Relevancy. Faithfulness was already scored as a verification gate and is not repeated.
 
-        Reached from ``verifying`` exactly once, via the graph edge added only on the PASSED
-        route (see ``build.py``) — never as part of a build/verify/fix attempt, so a report
-        that fails and gets rewritten is never scored along the way, only the one draft that
-        actually left the BVF loop. Observability only, per research.md's "Observability and
-        evaluation" decision: each metric runs only when its evaluator is configured, and a
-        judge-LLM failure is recorded for that metric alone, never raised, and never re-enters
-        the loop.
+        Each metric runs only when configured; a judge failure is recorded for that metric
+        alone and never re-enters the loop.
         """
         update: dict = {
-            "faithfulness_score": None, "faithfulness_error": "",
             "context_precision_score": None, "context_precision_error": "",
             "context_precision_details": [],
             "response_relevancy_score": None, "response_relevancy_error": "",
         }
-        evaluators = (
-            self.faithfulness_evaluator,
-            self.context_precision_evaluator,
-            self.response_relevancy_evaluator,
-        )
-        if state.get("result_incomplete") or all(evaluator is None for evaluator in evaluators):
+        # Tell the user a (new) verified report is waiting, so a revision visibly completes.
+        update["messages"] = [*state.get("messages", []), AIMessage(content=(
+            f"Report draft v{state.get('draft_version', 1)} passed verification (coverage, "
+            "citations, faithfulness) and is ready for your review below."))]
+        if self.context_precision_evaluator is None and self.response_relevancy_evaluator is None:
             return {**state, **update}
 
         catalog = self._catalog(state)
         question = ResearchBrief.model_validate(
             state["scoped_request"]).research_question
         draft = state.get("draft", "")
-        record: dict = {"question": question}
+        record: dict = {"question": question, "faithfulness_score": state.get("faithfulness_score")}
 
         def run(metric: str, evaluate):
             """Run one metric; a failure is recorded under ``<metric>_error``, never raised."""
@@ -743,13 +876,6 @@ class BVFNodes:
                 update[f"{metric}_error"] = str(exc)
                 return None
 
-        if self.faithfulness_evaluator is not None:
-            contexts = cited_source_excerpts(draft, catalog)
-            record["faithfulness_context_count"] = len(contexts)
-            update["faithfulness_score"] = run(
-                "faithfulness", lambda: self.faithfulness_evaluator(
-                    question, draft, contexts),
-            )
         if self.context_precision_evaluator is not None:
             ranked = [
                 {
@@ -789,65 +915,212 @@ class BVFNodes:
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }
 
-    def finish_incomplete(self, state):
-        """Display a verified, explicitly incomplete answer; never publish it."""
-        verification = state.get("verification") or {}
-        digest = hashlib.sha256(state.get("draft", "").encode()).hexdigest()
-        if not verification.get("passed") or verification.get("artifact_hash") != digest:
-            raise ValueError("Incomplete answer must still pass exact-artifact verification")
-        content = "# INCOMPLETE — not a published report\n\n" + state.get("draft", "")
-        ref = self.vfs.write(state["run_id"], "reports/incomplete.md", content, "incomplete_report")
-        return {**state, "stage": Stage.INCOMPLETE.value, "status": "incomplete",
-                "result_incomplete": True, "approval": None, "publication": None,
-                "current_action": "Incomplete answer: some information could not be verified",
-                "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
-                "messages": [*state.get("messages", []), AIMessage(content=content)]}
-
     def fixing(self, state):
-        """Self-improving retry: record the failure and reflect on it (diagnosis, lessons, strategy)
-        before the next rewrite."""
+        """Open an improvement cycle: diagnose the smallest useful correction for the failed
+        checks (no model call) and route to it. The repair plan is durable in state and VFS."""
         verification = VerificationResult.model_validate(state["verification"])
         attempt = state.get("recovery_attempt", 0) + 1
         budget = state.get("recovery_budget", self.recovery_budget)
-        history = list(state.get("bvf_history", []))
-        lessons = list(state.get("bvf_lessons", []))
-        entry = {
-            "attempt": attempt,
-            "failed_checks": [c.name for c in verification.check_results if not c.passed],
-            "fingerprint": state.get("progress_fingerprint", ""),
-            "stalled": state.get("stall_count", 0) > 0,
-        }
-        reflection = self.writer.reflect(
-            state.get("draft", ""),
-            verification,
-            history=history,
-            lessons=lessons,
-            stalled=entry["stalled"],
-            run_id=state["run_id"],
-            thread_id=state.get("thread_id", ""),
+        todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
+        shown = {item["todo_id"]: item["source_ids"] for item in state.get("writer_evidence", [])}
+        repair = diagnose(
+            verification, todos=todos, full_catalog=self._catalog(state),
+            shown_source_ids=shown, researched_items=list(state.get("repair_researched", [])),
+            can_replan=self.planner is not None,
         )
-        lessons = merge_lessons(lessons, reflection.lessons)
-        strategy = reflection.strategy
-        entry.update(diagnosis=reflection.diagnosis,
-                     lessons=reflection.lessons, strategy=strategy)
-        history.append(entry)
-        run_id = state["run_id"]
+        repair["cycle"] = attempt
+        history = [*state.get("bvf_history", []), {
+            "attempt": attempt, "draft_version": state.get("draft_version", 0),
+            "route": repair["route"],
+            "failed_checks": [c.name for c in verification.check_results if not c.passed],
+            "issues": repair["issues"], "fingerprint": state.get("progress_fingerprint", ""),
+        }]
         refs = [
-            self.vfs.write_json(
-                run_id, "verification/bvf_history.json", history, "bvf_history"),
-            self.vfs.write_json(
-                run_id, "verification/lessons.json", lessons, "bvf_lessons"),
+            self.vfs.write_json(state["run_id"], f"verification/repair.{attempt}.json", repair,
+                                "repair_plan"),
+            self.vfs.write_json(state["run_id"], "verification/bvf_history.json", history,
+                                "bvf_history"),
         ]
         return {
             **state,
             "stage": Stage.SYNTHESIZING.value,
             "recovery_attempt": attempt,
-            "current_action": f"BVF fix attempt {attempt}/{budget}: revising the draft",
-            "activity": _activity(state, f"Fix attempt {attempt}: revising the draft"),
+            "repair": repair,
+            "current_action": f"Improvement cycle {attempt}/{budget}: {repair['route']} repair",
+            "activity": _activity(state, f"Cycle {attempt}: {repair['route']} repair"),
             "bvf_history": history,
-            "bvf_lessons": lessons,
-            "fix_strategy": strategy,
             "artifacts": [*state.get("artifacts", []), *(ref.model_dump(mode="json") for ref in refs)],
+        }
+
+    def prepare_repair_research(self, state):
+        """Reopen only the affected approved tasks for targeted Tavily research on the missing
+        points; completed evidence stays and other tasks are not researched again."""
+        repair = state.get("repair") or {}
+        targets: dict[str, list[str]] = {}
+        for issue in repair.get("issues", []):
+            if issue["route"] == "research" and issue["todo_id"]:
+                targets.setdefault(issue["todo_id"], []).extend(
+                    issue["missing_points"] or [issue["item"]])
+        todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
+        if not targets or not set(targets) <= {todo.todo_id for todo in todos}:
+            raise ValueError("Targeted research requires known affected task ids")
+        for todo in todos:
+            if todo.todo_id in targets:
+                todo.status = TodoStatus.PLANNED
+                todo.research_attempt += 1
+                todo.research_instruction = "Find evidence for: " + "; ".join(targets[todo.todo_id])
+        researched = [*state.get("repair_researched", []), *(
+            item_key(issue["item"]) for issue in repair.get("issues", [])
+            if issue["route"] == "research")]
+        return {**state, "todos": [todo.model_dump(mode="json") for todo in todos],
+                "repair_researched": list(dict.fromkeys(researched)),
+                # Targeted research replaces, not adds to, the pre-draft gap allowance.
+                "research_gap_attempt": max(state.get("research_gap_attempt", 0), 1),
+                "stage": Stage.RESEARCHING.value,
+                "current_action": f"Targeted research for {len(targets)} task(s)"}
+
+    def replan(self, state):
+        """Targeted research did not help: propose replacement tasks for the unanswered items,
+        keep the original checklist and completed evidence, and wait for plan approval."""
+        if self.planner is None:
+            raise ValueError("Replacement planning requires a Planner")
+        brief = ResearchBrief.model_validate(state["scoped_request"])
+        repair = state.get("repair") or {}
+        unanswered = list(dict.fromkeys(
+            issue["item"] for issue in repair.get("issues", []) if issue["route"] == "replan"))
+        todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
+        plan = self.planner.define_plan(
+            brief, unanswered=unanswered,
+            previous_questions=[todo.research_question for todo in todos],
+            run_id=state["run_id"], thread_id=state.get("thread_id", ""))
+        from intelligence_collector.agents.planner import create_todos
+
+        new = create_todos(self.vfs, state["run_id"], plan.questions, plan.evidence_needed)
+        record = plan_record(brief, [*todos, *new], plan.report_shape, kind="replacement")
+        version = state.get("plan_version", 0) + 1
+        ref = self.vfs.write_json(state["run_id"], f"planning/plan.v{version}.json", record,
+                                  "research_plan")
+        return {**state, "todos": [todo.model_dump(mode="json") for todo in [*todos, *new]],
+                "plan": record, "plan_version": version, "plan_approval": None,
+                "repair": {**repair, "route": "research"},
+                "stage": Stage.PLANNING.value,
+                "current_action": "Replacement plan awaiting approval",
+                "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")]}
+
+    def _extension_passages(self, state, catalog, topic: str) -> list:
+        """Sources of this run's active evidence that the vector index ranks closest to `topic`,
+        across all research tasks, at most ``EXTENSION_PASSAGES``. Hits that do not map to a
+        source of the active catalog (an old scope, another run) are ignored."""
+        if self.index is None:
+            return []
+        try:
+            chunks = self.index.retrieve(topic, limit=EXTENSION_PASSAGES, run_id=state["run_id"])
+        except Exception:
+            return []
+        by_url = {_normalize_url(source.url): sid for sid, source in catalog.sources.items()}
+        found = dict.fromkeys(
+            sid for chunk in chunks
+            if (sid := by_url.get(_normalize_url(chunk.metadata.get("locator", "")))))
+        return [catalog.sources[sid] for sid in found]
+
+    def locate_extension_evidence(self, state):
+        """Reviewer asked to add a section ("extend"): look for its evidence in what this run
+        already stored before researching anything.
+
+        The vector index finds the closest stored passages; the extension judge (one LLM call)
+        decides whether they explain the topic. Enough -> a new completed task whose evidence
+        bundle holds only the relevant passages, and the writer adds the section. Not enough,
+        no passages, no judge, or a judge failure -> a new planned task researching only the
+        missing points. Either way the task is added to the plan as an extension that the
+        reviewer's request approves, and the existing report, brief and tasks are kept.
+        """
+        run_id = state["run_id"]
+        brief = ResearchBrief.model_validate(state["scoped_request"])
+        extension = dict(state.get("extension") or {})
+        request = extension.get("request") or state.get("human_feedback", "")
+        topic = (extension.get("topic") or request).strip()
+        if not topic:
+            raise ValueError("An extension request needs a topic")
+        catalog = self._catalog(state)
+        passages = self._extension_passages(state, catalog, topic)
+        verdict, judge_error = None, ""
+        if passages and self.extension_judge is not None:
+            try:
+                verdict = self.extension_judge.judge(
+                    brief.original_question or brief.research_question, request, topic, passages,
+                    run_id=run_id, thread_id=state.get("thread_id", ""))
+            except Exception as exc:
+                judge_error = f"{type(exc).__name__}: extension judge failed"
+        offered = {source.source_id for source in passages}
+        relevant = [sid for sid in dict.fromkeys(verdict.relevant_source_ids if verdict else [])
+                    if sid in offered]
+        # The judge's "sufficient" counts only with at least one real passage behind it.
+        sufficient = bool(verdict and verdict.sufficient and relevant)
+        missing = [point.strip() for point in (verdict.missing_points if verdict else [])
+                   if point.strip()]
+
+        todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
+        evidence = list(state.get("evidence", []))
+        artifacts = list(state.get("artifacts", []))
+        if sufficient:
+            todo = ResearchTodo(research_question=topic, evidence_needed=request,
+                                status=TodoStatus.COMPLETED)
+            bundle_ref = self.vfs.write_json(run_id, _evidence_path(todo), {
+                "task_id": todo.todo_id,
+                "research_attempt": todo.research_attempt,
+                "question": topic,
+                "summary": verdict.summary.strip() or f"Stored evidence on: {topic}",
+                "sources": [{"locator": catalog.sources[sid].url,
+                             "provenance": {"title": catalog.sources[sid].title},
+                             "excerpt": catalog.sources[sid].excerpt} for sid in relevant],
+                "sufficient": True,
+                "unresolved_gaps": [],
+                "indexed_chunks": [],
+                "located_from_index": True,
+            }, "evidence_bundle", task_id=todo.todo_id)
+            evidence.append(bundle_ref.model_dump(mode="json"))
+            artifacts.append(bundle_ref.model_dump(mode="json"))
+        else:
+            todo = ResearchTodo(research_question=topic, evidence_needed=request,
+                                research_instruction="; ".join(missing))
+        todos.append(todo)
+
+        update: dict = {}
+        if state.get("plan") is not None:
+            # The reviewer's request is the approval of this one added task.
+            plan = plan_record(brief, todos, state["plan"].get("report_shape", ""),
+                               kind="extension")
+            version = state.get("plan_version", 0) + 1
+            plan_ref = self.vfs.write_json(run_id, f"planning/plan.v{version}.json", plan,
+                                           "research_plan")
+            artifacts.append(plan_ref.model_dump(mode="json"))
+            update = {"plan": plan, "plan_version": version, "plan_approval": {
+                "plan_hash": plan["plan_hash"], "approved": True, "outcome": "approve",
+                "actor": state.get("reviewer") or "local-user", "kind": "extension"}}
+
+        record = {
+            "topic": topic, "request": request, "todo_id": todo.todo_id,
+            "sufficient": sufficient,
+            "passages": sorted(offered, key=lambda sid: int(sid[1:])),
+            "relevant_source_ids": relevant, "missing_points": missing,
+            "judge_error": judge_error,
+        }
+        count = sum(1 for item in state.get("bvf_history", []) if item.get("kind") == "EXTENSION")
+        artifacts.append(self.vfs.write_json(
+            run_id, f"extension/{count + 1}.json", record, "extension").model_dump(mode="json"))
+        action = (f"Stored evidence covers the new section ({len(relevant)} source(s))"
+                  if sufficient else f"Researching the new section: {topic}")
+        return {
+            **state, **update,
+            "todos": [item.model_dump(mode="json") for item in todos],
+            "todo_ids": [item.todo_id for item in todos],
+            "evidence": evidence,
+            "artifacts": artifacts,
+            "extension": record,
+            "bvf_history": [*state.get("bvf_history", []), {"kind": "EXTENSION", **record}],
+            "stage": (Stage.SYNTHESIZING if sufficient else Stage.RESEARCHING).value,
+            "current_action": action,
+            "activity": _activity(state, "Locating evidence for the requested section"),
         }
 
     def needs_review(self, state):
@@ -855,11 +1128,13 @@ class BVFNodes:
         verification = state.get("verification") or {}
         attempts = state.get("recovery_attempt", 0)
         reason = state.get("last_error") if state.get("verification_issue") in {
-            "verifier_failure", "research_verifier_failure", "publication_failure"} else (
-            "research gap budget exhausted" if state.get("research_gap_attempt", 0) >=
-            state.get("research_gap_budget", 2) else
-            "no progress after reflection" if state.get("stall_count", 0) >= MAX_STALLED_ATTEMPTS
-            else f"recovery budget {state.get('recovery_budget', self.recovery_budget)} exhausted"
+            "verifier_failure", "research_verifier_failure", "research_failure",
+            "publication_failure"} else (
+            "replacement plan declined" if (state.get("plan_approval") or {}).get("outcome") == "decline"
+            else "research gap budget exhausted" if state.get("research_gap_attempt", 0) >=
+            state.get("research_gap_budget", 2) and not state.get("draft") else
+            "no progress after repair" if state.get("stall_count", 0) >= MAX_STALLED_ATTEMPTS
+            else f"improvement cycle budget {state.get('recovery_budget', self.recovery_budget)} exhausted"
         )
         ref = self.vfs.write_json(
             state["run_id"],
@@ -869,17 +1144,23 @@ class BVFNodes:
                 "reason": reason,
                 "attempts": attempts,
                 "unresolved": verification.get("repair_details", ""),
-                "lessons": state.get("bvf_lessons", []),
                 "history": state.get("bvf_history", []),
             },
             "needs_review",
         )
+        version = state.get("draft_version", 0)
+        notice = (f"Report draft v{version} could not be verified ({reason}). It is shown below "
+                  "as an unverified draft; choose a recovery option to continue."
+                  if state.get("draft") else f"No report could be verified ({reason}). Choose a "
+                  "recovery option to continue.")
+        notice += "".join(f"\n- {line}" for line in _unresolved_lines(verification))
         return {
             **state,
             "stage": Stage.NEEDS_REVIEW.value,
             "status": "needs_review",
+            "messages": [*state.get("messages", []), AIMessage(content=notice)],
             "last_error": verification.get("repair_details") or state.get("last_error", ""),
-            "current_action": f"Needs review: {reason} after {attempts} fix attempt(s)",
+            "current_action": f"Needs review: {reason} after {attempts} improvement cycle(s)",
             "activity": _activity(state, "Verification needs review", "failure"),
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }
@@ -912,6 +1193,9 @@ class ApprovalNodes:
       - ``approve``: the reply accepts the report as-is -> ``publishing``;
       - ``revise``: change the report using the same evidence -> ``synthesizing`` rewrites it
         with the reviewer's request, and it goes through Verify again before coming back here;
+      - ``extend``: add a section within the same question -> ``locate_extension_evidence``
+        uses stored evidence when it is enough and researches only what is missing, then the
+        report is rewritten with the section and verified again;
       - ``scope``: the change needs different evidence -> ``clarify_with_user``, with the
         feedback as a new user turn, so the scope agent re-assesses it (it may ask a clarifying
         question first), rewrites the research brief, and the planner and researchers run again.
@@ -983,8 +1267,7 @@ class ApprovalNodes:
             state.get("draft", ""),
             destination,
             ApprovalDecision.model_validate(state["approval"]),
-            VerificationResult.model_validate({**state["verification"], "passed": False})
-            if state.get("result_incomplete") else VerificationResult.model_validate(state["verification"]),
+            VerificationResult.model_validate(state["verification"]),
         )
         ref = self.vfs.write_json(
             run_id, "publication/record.json", record.model_dump(
@@ -1011,8 +1294,8 @@ class ApprovalNodes:
         }
 
     def classify_feedback(self, state: GraphState) -> GraphState:
-        """LLM step: read the reviewer's chat reply as an approval, a revision request or a scope
-        change."""
+        """LLM step: read the reviewer's chat reply as an approval, a revision request, an
+        added section or a scope change."""
         feedback = state.get("human_feedback", "")
         if self.feedback_router is not None and feedback:
             verdict = self.feedback_router.route(
@@ -1072,6 +1355,28 @@ class ApprovalNodes:
                 "stall_count": 0,
                 "progress_fingerprint": "",
                 "stage": Stage.SYNTHESIZING.value,
+            }
+        if verdict.route == "extend":
+            # Keep the report, the brief and the plan; locate_extension_evidence looks for the
+            # new section's evidence in the run's index and researches only what is missing.
+            # The request joins reviewer_requests, so the coverage gate checks the new section.
+            requests = [*state.get("reviewer_requests", []), feedback]
+            return {
+                **state, **update,
+                "messages": [*replied, AIMessage(content=(
+                    "Adding that to the report: checking the evidence already collected first, "
+                    "then researching only what is missing. The updated report will be "
+                    "verified again."))],
+                "human_feedback": feedback,
+                "reviewer_requests": requests,
+                "extension": {"topic": (verdict.topic or feedback).strip(), "request": feedback},
+                "verification": None,
+                "approval": None,
+                "publication": None,
+                "recovery_attempt": 0,
+                "stall_count": 0,
+                "progress_fingerprint": "",
+                "stage": Stage.RESEARCHING.value,
             }
         # Scope change: the feedback becomes the next user turn of the scope conversation. The
         # new brief starts a fresh research + Build-Verify-Fix cycle, so earlier reviewer requests

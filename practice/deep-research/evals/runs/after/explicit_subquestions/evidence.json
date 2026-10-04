@@ -1,0 +1,43 @@
+{
+  "sources": {
+    "S1": {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429",
+      "title": "429 Too Many Requests - HTTP | MDN",
+      "excerpt": "The HTTP `429 Too Many Requests` client error response status code indicates the client has sent too many requests in a given amount of time. This mechanism of asking the client to slow down the rate of requests is commonly called \"rate limiting\".\n\nA `Retry-After` header may be included to this response to indicate how long a client should wait before making the request again. [...] http\n\n```\nGET /reports/mdn HTTP/1.1 Host: example.com \n```\n\nIn this example, server-wide rate limiting is active when a client exceeds a set threshold of requests per minute. A 429 response is returned with a `Retry-After` header that indicates requests will be allowed for this client again after 3600 seconds (60 minutes):\n\nhttp\n\n```\nHTTP/1.1 429 Too Many Requests Content-Type: text/html Retry-After: 3600   Too Many Requests\n\n# Too Many Requests\n\nYou're doing that too often! Try again later. [...] ```\n\n## Specifications\n\n| Specification |\n\n| RFC 6585 # section-4 |\n\n## See also\n\n HTTP response status codes\n `Retry-After`\n Python solution: How to avoid HTTP error 429 python\")\n\n## Help improve MDN\n\n Learn how to contribute\n\nThis page was last modified on by MDN contributors.\n\nView this page on GitHub\") • Report a problem with this content"
+    },
+    "S2": {
+      "url": "https://scrape.do/blog/429-too-many-requests",
+      "title": "What Error 429 \"Too Many Requests\" Means and How to Fix It in 2026 | Scrape.do",
+      "excerpt": "Error 429 “Too Many Requests” is an HTTP response status code that means you’ve exceeded the allowed number of requests in a given timeframe. It’s triggered by rate limiting, and it tells the client to slow down before making more requests.\n\nIn simpler terms, the server is saying “I’m getting too many hits from you, pause before trying again.”\n\nYou might see this when: [...] Although less common than it used to be, 429 \"Too many requests.\" is still an error encountered when web scraping, crawling, or even casual browsing in rare cases.\n\nIt's a very basic error every person on the web should be familiar with, just like 404.\n\nThis guide will help you understand and fix error 429 \"Too many requests.\"\n\n## What Is Error 429 \"Too Many Requests\"? [...] In fact, when scraping modern websites, most people encounter this error not as a plain 429, but through Cloudflare’s rate-limiting page: Error 1015.\n\nLet’s quickly recreate this in Python by sending 5 fast back-to-back requests to a test site designed to trigger rate limits.\n\nHere’s a basic script that sends 5 requests and prints the status code and reason:"
+    },
+    "S3": {
+      "url": "https://http.dev/429",
+      "title": "429 Too Many Requests - HTTP status code explained",
+      "excerpt": "The request limit has been reached. Try again in 30 minutes.\n\n```\n\n## How to fix\n\nCheck the Retry-After header in the response. The value specifies either a number of seconds or an HTTP date indicating when the server accepts requests again. Pause all requests until the indicated time. [...] To slow Googlebot down, 429 is the correct status code. 401 and 403 leave the crawl rate unchanged. For Bingbot, a `Crawl-delay` directive in `robots.txt` paces the crawler directly, the alternative Bing documents to status-code throttling.\n\n## Example\n\nThe client requests a resource and the server responds with 429 Too Many Requests.\n\nRequest\n\n```\nCopied !\n```\n\nResponse\n\n```\nHTTP/1.1 429 Too Many Requests Retry-After: 1800 Content-Type: text/html Content-Length: 168 Request Limit Exceeded [...] The specification does not define how the server counts HTTP requests or identifies users. Rate limiting is done on a per-resource basis, or per-user basis, across the entire server, or across several servers. User identification is accomplished using credentials or alternatively, by using Cookies.\n\nThe server optionally includes a Retry-After HTTP header to inform the client when requests are accepted again.\n\n## Crawlers and rate limiting"
+    },
+    "S4": {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After",
+      "title": "Retry-After header - HTTP | MDN",
+      "excerpt": "In a `503 Service Unavailable` response, this indicates how long the service is expected to be unavailable.\n In a `429 Too Many Requests` response, this indicates how long to wait before making a new request.\n In a redirect response, such as `301 Moved Permanently`, this indicates the minimum time that the user agent is asked to wait before issuing the redirected request.\n\n|  |  |\n --- |\n| Header type | Response header |\n\n## Syntax\n\nhttp\n\n```\nRetry-After:  Retry-After:  \n```\n\n## Directives [...] Skip to search\n\nToggle sidebar \n\n1. Web\n2. HTTP\n3. Reference\n4. Headers\n5. Retry-After\n\n \n\nRemember language   Learn more\n\n Deutsch\n English (US)\n Français\n 日本語\n 한국어\n Português (do Brasil)\n Русский\n 中文 (简体)\n\n# Retry-After header\n\nThe HTTP `Retry-After` response header indicates how long the user agent should wait before making a follow-up request. There are three main cases this header is used: [...] ## Directives\n\n:   A date after which to retry. See the `Date` header for more details on the HTTP date format.\n:   A non-negative decimal integer indicating the seconds to delay after the response is received.\n\n## Examples\n\n### Dealing with scheduled downtime"
+    },
+    "S5": {
+      "url": "https://www.rfc-editor.org/info/rfc6585",
+      "title": "RFC 6585: Additional HTTP Status Codes | RFC Editor",
+      "excerpt": "```\n RFC 6585 Additional HTTP Status Codes April 20124. 429 Too Many RequestsNottingham & Fielding Standards Track [Page 3]\n```\n\n```\n RFC 6585 Additional HTTP Status Codes April 20125. 431 Request Header Fields Too Large6. 511 Network Authentication RequiredNottingham & Fielding Standards Track [Page 4]\n```\n\n```\n RFC 6585 Additional HTTP Status Codes April 20126.1. The 511 Status Code and Captive PortalsNottingham & Fielding Standards Track [Page 5]\n``` [...] ```\n RFC 6585 Additional HTTP Status Codes April 20127. Security Considerations7.1. 428 Precondition Required7.2. 429 Too Many Requests7.3. 431 Request Header Fields Too Large7.4. 511 Network Authentication RequiredNottingham & Fielding Standards Track [Page 6]\n```\n\n```\n RFC 6585 Additional HTTP Status Codes April 20128. IANA Considerations9. References9.1. Normative References9.2. Informative ReferencesNottingham & Fielding Standards Track [Page 7]\n``` [...] ## In this section\n\n 1. Introduction\n 2. Requirements\n 3. 428 Precondition Required\n 4. 429 Too Many Requests\n 5. 431 Request Header Fields Too Large\n 6. 511 Network Authentication Required\n\n  + 6.1. The 511 Status Code and Captive Portals\n 7. Security Considerations\n\n  + 7.1. 428 Precondition Required\n  + 7.2. 429 Too Many Requests\n  + 7.3. 431 Request Header Fields Too Large\n  + 7.4. 511 Network Authentication Required\n 8. IANA Considerations\n 9. References"
+    }
+  },
+  "bundles": [
+    {
+      "question": "In HTTP, for status code 429 \"Too Many Requests\": which RFC defines the status code, what does the status code mean, and which response header tells the client how long to wait before retrying?",
+      "source_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "summary": "- **RFC defining HTTP 429:** HTTP **429 “Too Many Requests”** is defined in **RFC 6585** (“Additional HTTP Status Codes”), section **4.2** [https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429] [https://www.rfc-editor.org/info/rfc6585].\n- **Meaning of status code 429:** The server indicates it is **rejecting the request because the client has sent too many requests in a given amount of time** (rate limiting) [https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429].\n- **Header that tells the client how long to wait:** The response may include the **`Retry-After`** header, which **indicates how long to wait before making another request** [https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429] [https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After].",
+      "gaps": []
+    }
+  ]
+}

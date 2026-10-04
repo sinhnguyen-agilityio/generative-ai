@@ -122,6 +122,8 @@ def node_wrapper(
             return WorkflowStatus.WAITING_FOR_APPROVAL
         if name == "await_recovery":
             return WorkflowStatus.WAITING_FOR_RECOVERY
+        if name == "await_plan_approval":
+            return WorkflowStatus.WAITING_FOR_PLAN_APPROVAL
         return WorkflowStatus.WAITING_FOR_CLARIFICATION
 
     def run(state: GraphState) -> GraphState:

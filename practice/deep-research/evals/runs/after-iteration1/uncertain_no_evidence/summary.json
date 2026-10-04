@@ -1,0 +1,244 @@
+{
+  "case_id": "uncertain_no_evidence",
+  "label": "after",
+  "run_id": "c6c8b3db-eed0-4753-926c-10ba2c186edd",
+  "question": "How many monthly active developers used the LangGraph library in September 2026?",
+  "stage": "NEEDS_REVIEW",
+  "pauses": [
+    "clarification_required",
+    "plan_approval",
+    "recovery_required"
+  ],
+  "error": null,
+  "brief": {
+    "schema_version": 1,
+    "research_question": "How many monthly active developers used the LangGraph library in September 2026, and if there is no public, citable MAU figure, what is the closest public proxy metric available?",
+    "required_answers": [
+      "The number of monthly active developers using LangGraph in September 2026 (or a statement that no public, citable MAU figure exists).",
+      "If no MAU figure exists, the closest public proxy metric for monthly active developers using LangGraph in September 2026."
+    ],
+    "output_requirements": [
+      "Return only ResearchBrief JSON."
+    ],
+    "original_question": "How many monthly active developers used the LangGraph library in September 2026?\nAny public, citable figure is fine; if there is none, say so and give the closest public proxy metric if one exists."
+  },
+  "todos": [
+    {
+      "research_question": "For the LangGraph library (LangChain ecosystem), is there a publicly available and citable metric for the number of monthly active developers using LangGraph in September 2026?",
+      "evidence_needed": "a public, citable source that explicitly reports LangGraph MAU (monthly active developers) for September 2026, including its date/definition",
+      "status": "completed",
+      "research_attempt": 1
+    }
+  ],
+  "plan": {
+    "kind": "initial",
+    "original_question": "How many monthly active developers used the LangGraph library in September 2026?\nAny public, citable figure is fine; if there is none, say so and give the closest public proxy metric if one exists.",
+    "research_question": "How many monthly active developers used the LangGraph library in September 2026, and if there is no public, citable MAU figure, what is the closest public proxy metric available?",
+    "required_answers": [
+      "The number of monthly active developers using LangGraph in September 2026 (or a statement that no public, citable MAU figure exists).",
+      "If no MAU figure exists, the closest public proxy metric for monthly active developers using LangGraph in September 2026."
+    ],
+    "output_requirements": [
+      "Return only ResearchBrief JSON."
+    ],
+    "tasks": [
+      {
+        "todo_id": "25bd6b08-525f-40d4-8a11-f00f5479e606",
+        "question": "For the LangGraph library (LangChain ecosystem), is there a publicly available and citable metric for the number of monthly active developers using LangGraph in September 2026?",
+        "evidence_needed": "a public, citable source that explicitly reports LangGraph MAU (monthly active developers) for September 2026, including its date/definition"
+      }
+    ],
+    "report_shape": "Provide the September 2026 LangGraph monthly active developers value if a public citable MAU exists; otherwise state that no such figure is publicly available and cite the evidence.",
+    "plan_hash": "3836a85d9cfbd1cfd2bbc8e54fe66c4dea5aba5023736727fd82490f82145bc5"
+  },
+  "research_status": "PARTIAL",
+  "research_limitations": [
+    "No source among the provided results reports a publicly available, citable **monthly active developers** metric for **LangGraph** specifically in **September 2026**.",
+    "Evidence completeness not established for: For the LangGraph library (LangChain ecosystem), is there a publicly available and citable metric for the number of monthly active developers using LangGraph in September 2026?"
+  ],
+  "verification_passed": false,
+  "verification_outcome": "FAIL",
+  "failed_checks": [
+    {
+      "schema_version": 1,
+      "name": "coverage_C3",
+      "passed": false,
+      "details": [
+        "Output requirement: Return only ResearchBrief JSON. — The output is written in Markdown text, not as a ResearchBrief JSON object. Missing: Must return only ResearchBrief JSON (the provided content is Markdown and not JSON)."
+      ],
+      "affected_ids": [
+        "criterion:a88d988a"
+      ],
+      "gate": "coverage",
+      "issue_type": "presentation",
+      "item": "Output requirement: Return only ResearchBrief JSON.",
+      "missing_points": [
+        "Must return only ResearchBrief JSON (the provided content is Markdown and not JSON)."
+      ]
+    }
+  ],
+  "verifier_error": "",
+  "last_error": "[coverage_C3] Output requirement: Return only ResearchBrief JSON. — The output is written in Markdown text, not as a ResearchBrief JSON object. Missing: Must return only ResearchBrief JSON (the provided content is Markdown and not JSON).",
+  "faithfulness_score": null,
+  "draft_version": 4,
+  "improvement_cycles": 3,
+  "repair_history": [
+    {
+      "attempt": 1,
+      "draft_version": 1,
+      "route": "presentation",
+      "failed_checks": [
+        "coverage_C3"
+      ],
+      "issues": [
+        {
+          "check": "coverage_C3",
+          "gate": "coverage",
+          "issue_type": "presentation",
+          "item": "Output requirement: Return only ResearchBrief JSON.",
+          "missing_points": [
+            "Must return only ResearchBrief JSON (not Markdown)."
+          ],
+          "detail": "Output requirement: Return only ResearchBrief JSON. — The submission is written in Markdown with headings, not as a JSON object returning only the ResearchBrief JSON. Missing: Must return only ResearchBrief JSON (not Markdown).",
+          "route": "presentation",
+          "todo_id": ""
+        }
+      ],
+      "fingerprint": "9d0fb3c07db05fc515a22543e1d0715f2829b0baef7791d7ad51168ce0599a2a"
+    },
+    {
+      "attempt": 2,
+      "draft_version": 2,
+      "route": "presentation",
+      "failed_checks": [
+        "coverage_C3"
+      ],
+      "issues": [
+        {
+          "check": "coverage_C3",
+          "gate": "coverage",
+          "issue_type": "presentation",
+          "item": "Output requirement: Return only ResearchBrief JSON.",
+          "missing_points": [
+            "Return the report in ResearchBrief JSON format only (not Markdown)."
+          ],
+          "detail": "Output requirement: Return only ResearchBrief JSON. — The provided report is in Markdown sections, not a single ResearchBrief JSON output. Missing: Return the report in ResearchBrief JSON format only (not Markdown).",
+          "route": "presentation",
+          "todo_id": ""
+        }
+      ],
+      "fingerprint": "9d0fb3c07db05fc515a22543e1d0715f2829b0baef7791d7ad51168ce0599a2a"
+    },
+    {
+      "attempt": 3,
+      "draft_version": 3,
+      "route": "vfs",
+      "failed_checks": [
+        "coverage_C1",
+        "coverage_C3"
+      ],
+      "issues": [
+        {
+          "check": "coverage_C1",
+          "gate": "coverage",
+          "issue_type": "draft_defect",
+          "item": "The number of monthly active developers using LangGraph in September 2026 (or a statement that no public, citable MAU figure exists).",
+          "missing_points": [
+            "Explicitly states that no public, citable monthly active developers (MAU) figure for LangGraph in September 2026 exists (not limited to 'collected sources')."
+          ],
+          "detail": "Answers: The number of monthly active developers using LangGraph in September 2026 (or a statement that no public, citable MAU figure exists). — The report only states that no MAU figure exists in the collected sources, not that no public, citable MAU figure exists for September 2026 overall. Missing: Explicitly states that no public, citable monthly active developers (MAU) figure for LangGraph in September 2026 exists (not limited to 'collected sources').",
+          "route": "vfs",
+          "todo_id": "25bd6b08-525f-40d4-8a11-f00f5479e606"
+        },
+        {
+          "check": "coverage_C3",
+          "gate": "coverage",
+          "issue_type": "presentation",
+          "item": "Output requirement: Return only ResearchBrief JSON.",
+          "missing_points": [
+            "Return only ResearchBrief JSON."
+          ],
+          "detail": "Output requirement: Return only ResearchBrief JSON. — The provided report is Markdown text, not a JSON object of the requested ResearchBrief format. Missing: Return only ResearchBrief JSON.",
+          "route": "presentation",
+          "todo_id": ""
+        }
+      ],
+      "fingerprint": "3115ff22d9c742b148114d9f93503d1069ec98bdcf166c039098b87d3d8f3aca"
+    }
+  ],
+  "model_calls_by_role": {
+    "guardrail": 2,
+    "scope": 3,
+    "planner": 1,
+    "researcher": 2,
+    "research_compressor": 1,
+    "synthesizer": 4,
+    "verify": 5
+  },
+  "tokens_by_role": {
+    "guardrail": {
+      "input": 685,
+      "output": 36
+    },
+    "scope": {
+      "input": 1553,
+      "output": 883
+    },
+    "planner": {
+      "input": 542,
+      "output": 406
+    },
+    "researcher": {
+      "input": 2514,
+      "output": 293
+    },
+    "research_compressor": {
+      "input": 2156,
+      "output": 259
+    },
+    "synthesizer": {
+      "input": 13491,
+      "output": 934
+    },
+    "verify": {
+      "input": 15342,
+      "output": 4123
+    }
+  },
+  "tavily_searches": 1,
+  "vector_retrievals": 0,
+  "ragas_faithfulness_runs": 0,
+  "node_runs": {
+    "clarify_with_user": 2,
+    "await_clarification": 2,
+    "write_research_brief": 1,
+    "planning": 1,
+    "await_plan_approval": 2,
+    "researching": 1,
+    "research_complete": 1,
+    "synthesizing": 4,
+    "verifying": 4,
+    "fixing": 3,
+    "needs_review": 1,
+    "await_recovery": 1
+  },
+  "node_seconds": {
+    "clarify_with_user": 4.9,
+    "await_clarification": 0.0,
+    "write_research_brief": 3.0,
+    "planning": 2.6,
+    "await_plan_approval": 0.0,
+    "researching": 10.4,
+    "research_complete": 0.0,
+    "synthesizing": 7.9,
+    "verifying": 24.3,
+    "fixing": 0.0,
+    "needs_review": 0.0
+  },
+  "elapsed_seconds": 53.2,
+  "models": {
+    "reasoning": "gpt-5.4-nano",
+    "standard": "gpt-5.4-nano",
+    "faithfulness": "gpt-4.1-mini"
+  }
+}

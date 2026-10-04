@@ -1,5 +1,8 @@
-"""RAGAS scoring of the final report: Faithfulness, Context Precision and Response Relevancy.
-Observability only: a score never gates verification or publication.
+"""RAGAS scoring of report drafts: Faithfulness, Context Precision and Response Relevancy.
+
+Faithfulness is the third verification gate (strictly greater than 0.90 to pass; see
+``graph/nodes.py``). Context Precision and Response Relevancy remain optional observations of
+the passing report and never gate anything.
 """
 
 from __future__ import annotations
@@ -26,12 +29,25 @@ JUDGE_CONCURRENCY = 4
 # Sections that make no evidence-backed claims (report guidelines exempt them from citations).
 UNSCORED_SECTIONS = {"scope", "limitations", "sources"}
 _HEADING = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+_TITLE = re.compile(r"^#\s+.*$", re.MULTILINE)
+# The writer must word an evidence gap with exactly this phrase (agents/prompts.py). A gap claim
+# asserts the absence of evidence, which no excerpt can "support"; the coverage gate checks it
+# against the collected evidence instead, so it is not scored for Faithfulness.
+GAP_MARKER = "could not be established from the collected sources"
+# Labeled analysis (constitution IV) is the writer's judgment over facts cited above it; the
+# coverage gate rejects one that introduces a new fact, so it is not scored for Faithfulness.
+ANALYSIS_PREFIX = "Assessment:"
+_ANALYSIS_SENTENCE = re.compile(re.escape(ANALYSIS_PREFIX) + r"[^\n]*")
+_GAP_SENTENCE = re.compile(
+    r"[^.\n]*" + re.escape(GAP_MARKER) + r"[^.\n]*\.?(?:\s*\[S\d+\])*", re.IGNORECASE)
 
 
 def report_sections(report: str) -> list[str]:
     """Split a Markdown report into its ``## `` sections (text before the first one included) and
     drop the ones in ``UNSCORED_SECTIONS``, which only restate the scope, disclose gaps, or list
-    sources and so have nothing to be faithful to."""
+    sources and so have nothing to be faithful to. The ``# `` title line, gap disclosures
+    (``GAP_MARKER``) and labeled analysis (``ANALYSIS_PREFIX``) are not sourced claims either: a title alone was observed to be turned into
+    unsupported meta statements ("The answer references python.org")."""
     starts = [match.start() for match in _HEADING.finditer(report)]
     chunks = [report[a:b] for a, b in zip([0, *starts], [*starts, len(report)])]
     sections = []
@@ -39,7 +55,9 @@ def report_sections(report: str) -> list[str]:
         heading = _HEADING.match(chunk)
         if heading and heading.group(1).strip().lower() in UNSCORED_SECTIONS:
             continue
-        if chunk.strip():
+        chunk = _ANALYSIS_SENTENCE.sub("", _GAP_SENTENCE.sub("", _TITLE.sub("", chunk)))
+        body = chunk[heading.end():] if heading else chunk
+        if re.sub(r"[\s\-*]", "", body):
             sections.append(chunk.strip())
     return sections
 
@@ -87,11 +105,12 @@ _JUDGE_LLMS = {"openai": _openai_judge_llm, "google_genai": _google_judge_llm}
 async def _score_report_faithfulness_async(
     question: str, report: str, contexts: list[str], *, model: str, api_key: str,
     provider: str = "openai",
-) -> float | None:
+) -> dict | None:
     """RAGAS Faithfulness over the report's scored sections: supported statements / all
     statements. Same two steps as ``Faithfulness.ascore`` (extract statements, then NLI verdicts
     against the contexts), but per section and in NLI batches, so no single judge call has to
-    emit a whole report's worth of output. ``None`` when no statements were extracted."""
+    emit a whole report's worth of output. Returns ``{"score", "unsupported"}`` (the statements
+    judged unsupported, for targeted repair); ``None`` when no statements were extracted."""
     from ragas.metrics.collections import Faithfulness
 
     scorer = Faithfulness(llm=_JUDGE_LLMS[provider](model, api_key))
@@ -115,25 +134,24 @@ async def _score_report_faithfulness_async(
         return None
     batches = [statements[i:i + NLI_BATCH_SIZE] for i in range(0, len(statements), NLI_BATCH_SIZE)]
     verdicts = [v for batch in await asyncio.gather(*(verdicts_of(b) for b in batches)) for v in batch]
-    if not verdicts:
+    if not verdicts or len(verdicts) != len(statements):
         return None
-    return sum(verdicts) / len(verdicts)
+    return {"score": sum(verdicts) / len(verdicts),
+            "unsupported": [s for s, v in zip(statements, verdicts) if not v]}
 
 
 def make_faithfulness_evaluator(
     *, model: str, api_key: str, provider: str = "openai",
 ) -> FaithfulnessEvaluator:
-    """Return a ``(question, report, contexts) -> score`` callable that scores a report's RAGAS
-    Faithfulness (its body sections; see ``report_sections``) with the given judge model:
-    ``provider`` is ``"openai"``
-    (e.g. ``gpt-4.1-mini``, the default) or ``"google_genai"`` (e.g. ``gemini-3.8-flash``).
+    """Return a ``(question, report, contexts) -> {"score", "unsupported"}`` callable that scores
+    a report's RAGAS Faithfulness (its body sections; see ``report_sections``) with the given
+    judge model: ``provider`` is ``"openai"`` (e.g. ``gpt-4.1-mini``, the default) or
+    ``"google_genai"`` (e.g. ``gemini-3.8-flash``).
 
     ``contexts`` should be the excerpt text of every source the report actually cites (see
     ``source_verification.cited_source_excerpts``) -- what the report was supposed to stay
     faithful to. Returns ``None`` when there is nothing to score; raises on a judge-LLM
-    failure (rate limit, transient API error) so the caller decides how to record it. Per
-    the "Observability and evaluation" design decision (research.md), this score MUST stay
-    informational and never gate verification or publication.
+    failure (rate limit, transient API error). The verifier treats both as ERROR.
     """
 
     if provider not in _JUDGE_LLMS:

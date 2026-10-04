@@ -42,6 +42,7 @@ class WorkflowStatus(str, Enum):
 
     RUNNING = "running"
     WAITING_FOR_CLARIFICATION = "waiting_for_clarification"
+    WAITING_FOR_PLAN_APPROVAL = "waiting_for_plan_approval"
     WAITING_FOR_APPROVAL = "waiting_for_approval"
     WAITING_FOR_RECOVERY = "waiting_for_recovery"
     PUBLISHED = "published"
@@ -144,6 +145,46 @@ class ApprovalResumeDecision(Model):
         return self
 
 
+PLAN_APPROVAL_WORDS = frozenset({
+    "approve", "approved", "i approve", "yes", "ok", "okay", "go", "go ahead", "start",
+    "looks good", "lgtm", "đồng ý", "duyệt", "phê duyệt", "ok, bắt đầu",
+})
+
+
+class PlanApprovalDecision(Model):
+    """Validated response to the plan-approval interrupt (initial or replacement plan).
+
+    ``approved`` decides explicitly; otherwise ``reply`` is read: an approval phrase approves,
+    "cancel"/"decline" declines, and any other text is a requested plan change.
+    """
+
+    approved: bool | None = None
+    reply: str = Field(default="", max_length=MAX_RECOVERY_FEEDBACK_LENGTH)
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_decision(self):
+        self.reply = self.reply.strip()
+        self.actor = self.actor.strip()
+        if self.approved is None and not self.reply:
+            raise ValueError("plan decision requires approval or a non-empty reply")
+        if self.approved is True and self.reply:
+            raise ValueError("plan approval cannot also contain change requests")
+        return self
+
+    @property
+    def outcome(self) -> Literal["approve", "decline", "change"]:
+        if self.approved is not None:
+            return "approve" if self.approved and not self.reply else (
+                "change" if self.reply else "decline")
+        text = self.reply.casefold().rstrip(".! ")
+        if text in PLAN_APPROVAL_WORDS:
+            return "approve"
+        if text in {"cancel", "decline", "no", "stop", "hủy", "từ chối"}:
+            return "decline"
+        return "change"
+
+
 class ClarificationResumeDecision(Model):
     """Validated response to a scope-clarification interrupt."""
 
@@ -220,16 +261,39 @@ class ScopeAssessment(BaseModel):
         return self
 
 
+MAX_REQUIRED_ANSWERS = 8
+
+
+def _clean_items(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(item.strip() for item in items if item.strip()))
+
+
 class ResearchBrief(Model):
-    """The research question the whole run answers, written from the scope conversation."""
+    """The research question the whole run answers, written from the scope conversation.
+
+    ``required_answers`` is the acceptance checklist: each answer the user explicitly asked for,
+    in the user's terms. ``output_requirements`` lists only explicitly requested language,
+    length and format constraints. ``original_question`` is system-owned: the user's own turns,
+    verbatim, so later stages can check that nothing was added or lost.
+    """
 
     research_question: str = Field(min_length=20)
+    required_answers: list[str] = Field(default_factory=list, max_length=MAX_REQUIRED_ANSWERS)
+    output_requirements: list[str] = Field(default_factory=list, max_length=MAX_REQUIRED_ANSWERS)
+    original_question: str = ""
 
     @model_validator(mode="after")
     def reject_blank_fields(self):
         if not self.research_question.strip():
             raise ValueError("research brief question must not be blank")
+        self.required_answers = _clean_items(self.required_answers)
+        self.output_requirements = _clean_items(self.output_requirements)
         return self
+
+    @property
+    def checklist(self) -> list[str]:
+        """Required answers; a brief without them is answered as one question."""
+        return self.required_answers or [self.research_question]
 
 
 class ResearchTodo(Model):
@@ -240,6 +304,7 @@ class ResearchTodo(Model):
     status: TodoStatus = TodoStatus.PLANNED
     research_attempt: int = Field(default=1, ge=1)
     research_instruction: str = ""
+    evidence_needed: str = ""
 
     @model_validator(mode="after")
     def validate_question(self):
@@ -252,9 +317,12 @@ MAX_PLANNED_QUESTIONS = 5
 
 
 class TodoPlan(Model):
-    """Planner LLM output: the research questions. Ids and status are system-owned."""
+    """Planner LLM output: the research questions, the evidence each needs (same order) and the
+    expected report shape. Ids and status are system-owned."""
 
     questions: list[str] = Field(min_length=1, max_length=MAX_PLANNED_QUESTIONS)
+    evidence_needed: list[str] = Field(default_factory=list, max_length=MAX_PLANNED_QUESTIONS)
+    report_shape: str = ""
 
     @model_validator(mode="after")
     def validate_questions(self):
@@ -263,6 +331,8 @@ class TodoPlan(Model):
             raise ValueError("planned research questions must not be blank")
         if len({question.casefold() for question in self.questions}) != len(self.questions):
             raise ValueError("planned research questions must not repeat")
+        self.evidence_needed = [item.strip() for item in self.evidence_needed][:len(self.questions)]
+        self.report_shape = self.report_shape.strip()
         return self
 
 
@@ -353,13 +423,26 @@ class IndexedChunk(Model):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+VerificationGate = Literal["coverage", "citation", "faithfulness", ""]
+IssueType = Literal["draft_defect", "evidence_gap", "presentation"]
+
+
 class VerificationCheck(Model):
-    """One judged criterion: whether it passed and, when it failed, why."""
+    """One judged criterion: whether it passed and, when it failed, why.
+
+    ``gate`` is one of the three verification gates. For a failed coverage item, ``item`` is
+    the checklist text and ``missing_points`` the answer content the report lacks;
+    ``issue_type`` drives repair diagnosis.
+    """
 
     name: str
     passed: bool
     details: list[str] = Field(default_factory=list)
     affected_ids: list[str] = Field(default_factory=list)
+    gate: VerificationGate = ""
+    issue_type: IssueType = "draft_defect"
+    item: str = ""
+    missing_points: list[str] = Field(default_factory=list)
 
 
 class VerificationResult(Model):
@@ -390,12 +473,18 @@ class Reflection(Model):
 
 
 class ReportJudgeCriterion(Model):
-    """One report-judge criterion verdict: met or not, and why."""
+    """One coverage verdict: met or not, why, and for an unmet item the missing answer points.
+
+    ``issue_type``: ``draft_defect`` when the evidence holds the answer but the report does not
+    give it, ``evidence_gap`` when the evidence lacks it, ``presentation`` for a language,
+    length, format or layout requirement.
+    """
 
     criterion: str = Field(min_length=1)
     met: bool
     justification: str = Field(min_length=1)
-    issue_type: Literal["draft_defect", "evidence_gap"] = "draft_defect"
+    issue_type: IssueType = "draft_defect"
+    missing_points: list[str] = Field(default_factory=list)
 
 
 class ReportJudgeVerdict(Model):
@@ -429,8 +518,21 @@ class PublicationRecord(Model):
 class FeedbackDecision(Model):
     """Structured output of the reviewer-reply classifier (see agents/feedback_router.py).
     Decides whether the reviewer's chat reply approves the report ("approve": publish it), asks
-    for a change the existing evidence can support ("revise": rewrite and verify again), or needs
-    different evidence ("scope": back to scope clarification, the brief, planning and research)."""
+    for a change the existing evidence can support ("revise": rewrite and verify again), adds a
+    section within the same question ("extend": stored evidence first, research only what is
+    missing), or needs different evidence ("scope": back to scope clarification, the brief,
+    planning and research). ``topic`` is the focused question of an "extend" request."""
 
-    route: Literal["approve", "revise", "scope"]
+    route: Literal["approve", "revise", "extend", "scope"]
     reason: str = ""
+    topic: str = ""
+
+
+class ExtensionEvidenceVerdict(Model):
+    """Structured output of the extension judge (see agents/extension_judge.py): whether the
+    passages already stored for this run are enough to write the section a reviewer asked for."""
+
+    sufficient: bool
+    relevant_source_ids: list[str] = Field(default_factory=list)
+    missing_points: list[str] = Field(default_factory=list)
+    summary: str = ""

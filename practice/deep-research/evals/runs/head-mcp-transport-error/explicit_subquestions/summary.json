@@ -1,0 +1,99 @@
+{
+  "case_id": "explicit_subquestions",
+  "label": "before",
+  "run_id": "7f29ff61-4383-47c5-acfe-1d4c52d4738e",
+  "question": "For HTTP status 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?",
+  "stage": "NEEDS_REVIEW",
+  "pauses": [
+    "recovery_required"
+  ],
+  "error": null,
+  "brief": {
+    "schema_version": 1,
+    "research_question": "I need to research the HTTP 429 (Too Many Requests) response status code to determine: (1) which specific RFC(s) formally defines HTTP status code 429 (including any IETF document(s) that introduced or updated its definition, such as via the core HTTP specification or related RFCs), (2) the protocol-accurate meaning of “Too Many Requests” for clients and servers (what situation triggers it and what behavior it signals to the client), and (3) the exact response header field that tells the client how long to wait before retrying (including the RFC-defined name of the header and how its value should be interpreted), using primary/official RFC sources and citing the relevant RFC sections."
+  },
+  "todos": [
+    {
+      "research_question": "Which IETF RFC(s) formally define the HTTP 429 (Too Many Requests) response status code, including any RFC(s) that introduced or updated its definition (e.g., via the core HTTP specification or related RFCs), and what exact RFC section(s) state the definition? Use only primary/official RFC sources and provide the relevant section identifiers.",
+      "evidence_needed": null,
+      "status": "failed",
+      "research_attempt": 1
+    },
+    {
+      "research_question": "For the HTTP 429 (Too Many Requests) response status code, what is the protocol-accurate meaning of “Too Many Requests” as defined in the primary/official RFC(s)—specifically, what situation triggers returning 429 and what behavior it signals to the client (including any guidance on retrying or handling the response) and what server-side behavior is implied? Cite the relevant RFC section(s).",
+      "evidence_needed": null,
+      "status": "failed",
+      "research_attempt": 1
+    },
+    {
+      "research_question": "For the HTTP 429 (Too Many Requests) response, what exact response header field tells the client how long to wait before retrying, including the RFC-defined header name and how the header value should be interpreted (units/format and any conditional behavior)? Cite the relevant RFC section(s) from primary/official RFC sources.",
+      "evidence_needed": null,
+      "status": "failed",
+      "research_attempt": 1
+    }
+  ],
+  "plan": null,
+  "research_status": "UNKNOWN",
+  "research_limitations": [],
+  "verification_passed": null,
+  "verification_outcome": null,
+  "failed_checks": [],
+  "verifier_error": null,
+  "last_error": "Research failed technically; retry or check provider configuration",
+  "faithfulness_score": null,
+  "draft_version": null,
+  "improvement_cycles": 0,
+  "repair_history": [],
+  "model_calls_by_role": {
+    "guardrail": 1,
+    "scope": 2,
+    "planner": 1,
+    "researcher": 18
+  },
+  "tokens_by_role": {
+    "guardrail": {
+      "input": 364,
+      "output": 18
+    },
+    "scope": {
+      "input": 836,
+      "output": 444
+    },
+    "planner": {
+      "input": 484,
+      "output": 375
+    },
+    "researcher": {
+      "input": 12344,
+      "output": 905
+    }
+  },
+  "tavily_searches": 15,
+  "vector_retrievals": 0,
+  "ragas_faithfulness_runs": 0,
+  "node_runs": {
+    "clarify_with_user": 1,
+    "write_research_brief": 1,
+    "planning": 1,
+    "researching": 1,
+    "research_complete": 2,
+    "retry_research_assessment": 1,
+    "needs_review": 1,
+    "await_recovery": 1
+  },
+  "node_seconds": {
+    "clarify_with_user": 2.0,
+    "write_research_brief": 2.2,
+    "planning": 2.5,
+    "researching": 6.2,
+    "research_complete": 0.0,
+    "retry_research_assessment": 0.0,
+    "needs_review": 0.0
+  },
+  "elapsed_seconds": 13.0,
+  "models": {
+    "reasoning": "gpt-5.4-nano",
+    "standard": "gpt-5.4-nano",
+    "faithfulness": "gpt-4.1-mini"
+  }
+}

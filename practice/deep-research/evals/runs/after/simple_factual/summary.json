@@ -1,0 +1,188 @@
+{
+  "case_id": "simple_factual",
+  "label": "after",
+  "run_id": "390de105-1cf8-419d-b0c0-79ca92a42e69",
+  "question": "What is the latest stable version of Python?",
+  "stage": "Awaiting Approval",
+  "pauses": [
+    "clarification_required",
+    "plan_approval",
+    "publication_approval"
+  ],
+  "error": null,
+  "brief": {
+    "schema_version": 1,
+    "research_question": "Using python.org as the source, what is the latest stable (non–pre-release) CPython version and what is its release date?",
+    "required_answers": [
+      "the latest stable (not pre-release) Python version number"
+    ],
+    "output_requirements": [
+      "Report only the latest stable (not pre-release) Python version number and its release date."
+    ],
+    "original_question": "What is the latest stable version of Python?\nUse python.org as the source. Report only the latest stable (not pre-release) version and its release date."
+  },
+  "todos": [
+    {
+      "research_question": "On python.org, what is the latest stable (non–pre-release) CPython version number and its official release date shown on the CPython releases page?",
+      "evidence_needed": "python.org CPython releases page entry showing the newest stable (non–pre-release) version and its release date",
+      "status": "completed",
+      "research_attempt": 1
+    },
+    {
+      "research_question": "evidence_needed",
+      "evidence_needed": "",
+      "status": "completed",
+      "research_attempt": 1
+    }
+  ],
+  "plan": {
+    "kind": "initial",
+    "original_question": "What is the latest stable version of Python?\nUse python.org as the source. Report only the latest stable (not pre-release) version and its release date.",
+    "research_question": "Using python.org as the source, what is the latest stable (non–pre-release) CPython version and what is its release date?",
+    "required_answers": [
+      "the latest stable (not pre-release) Python version number"
+    ],
+    "output_requirements": [
+      "Report only the latest stable (not pre-release) Python version number and its release date."
+    ],
+    "tasks": [
+      {
+        "todo_id": "378cf342-c7ae-4746-bc2c-1ebabec59dc1",
+        "question": "On python.org, what is the latest stable (non–pre-release) CPython version number and its official release date shown on the CPython releases page?",
+        "evidence_needed": "python.org CPython releases page entry showing the newest stable (non–pre-release) version and its release date"
+      },
+      {
+        "todo_id": "bf5f4add-e7cc-42dc-baeb-99e476a8d75c",
+        "question": "evidence_needed",
+        "evidence_needed": ""
+      }
+    ],
+    "report_shape": "Provide a short direct answer with the latest stable (non–pre-release) CPython version number and its release date, citing the python.org releases page.",
+    "plan_hash": "feccc42d5f993c0657edafc587b896d5307dfd0c7cdaa657f33ee11672434069"
+  },
+  "research_status": "PARTIAL",
+  "research_limitations": [
+    "No specific topic/question was provided beyond the placeholder “evidence_needed,” so the exact evidence types (and key outcomes/metrics) cannot be tailored to the intended domain or question type.",
+    "The sources provide general guidance on reporting search strategy and evidence hierarchies, but there is no topic-specific definition of the PICO elements (population, intervention/exposure, comparison, outcomes) to determine which exact studies/evidence should be sought.",
+    "Evidence completeness not established for: evidence_needed"
+  ],
+  "verification_passed": true,
+  "verification_outcome": "PASS",
+  "failed_checks": [],
+  "verifier_error": "",
+  "last_error": "",
+  "faithfulness_score": 1.0,
+  "draft_version": 2,
+  "improvement_cycles": 1,
+  "repair_history": [
+    {
+      "attempt": 1,
+      "draft_version": 1,
+      "route": "presentation",
+      "failed_checks": [
+        "coverage_C2",
+        "citation_resolution"
+      ],
+      "issues": [
+        {
+          "check": "coverage_C2",
+          "gate": "coverage",
+          "issue_type": "presentation",
+          "item": "Output requirement: Report only the latest stable (not pre-release) Python version number and its release date.",
+          "missing_points": [
+            "Does not report only the version number and release date (it adds additional surrounding sentence text)."
+          ],
+          "detail": "Output requirement: Report only the latest stable (not pre-release) Python version number and its release date. — The report includes extra phrasing beyond just the version number and its release date. Missing: Does not report only the version number and release date (it adds additional surrounding sentence text).",
+          "route": "presentation",
+          "todo_id": ""
+        },
+        {
+          "check": "citation_resolution",
+          "gate": "citation",
+          "issue_type": "presentation",
+          "item": "",
+          "missing_points": [],
+          "detail": "Missing Sources section",
+          "route": "presentation",
+          "todo_id": ""
+        }
+      ],
+      "fingerprint": "6d9d0ce67201bdf7ee12d5905488ac8709d938cb4170e6c62004f4a9829339df"
+    }
+  ],
+  "model_calls_by_role": {
+    "guardrail": 2,
+    "scope": 3,
+    "planner": 1,
+    "researcher": 4,
+    "research_compressor": 2,
+    "synthesizer": 2,
+    "verify": 2
+  },
+  "tokens_by_role": {
+    "guardrail": {
+      "input": 674,
+      "output": 36
+    },
+    "scope": {
+      "input": 1457,
+      "output": 840
+    },
+    "planner": {
+      "input": 501,
+      "output": 136
+    },
+    "researcher": {
+      "input": 5716,
+      "output": 699
+    },
+    "research_compressor": {
+      "input": 5156,
+      "output": 799
+    },
+    "synthesizer": {
+      "input": 11357,
+      "output": 119
+    },
+    "verify": {
+      "input": 10885,
+      "output": 1206
+    }
+  },
+  "tavily_searches": 2,
+  "vector_retrievals": 0,
+  "ragas_faithfulness_runs": 1,
+  "node_runs": {
+    "clarify_with_user": 2,
+    "await_clarification": 2,
+    "write_research_brief": 1,
+    "planning": 1,
+    "await_plan_approval": 2,
+    "researching": 1,
+    "research_complete": 1,
+    "synthesizing": 2,
+    "verifying": 2,
+    "fixing": 1,
+    "evaluating_quality": 1,
+    "approval": 1
+  },
+  "node_seconds": {
+    "clarify_with_user": 6.1,
+    "await_clarification": 0.0,
+    "write_research_brief": 2.8,
+    "planning": 1.3,
+    "await_plan_approval": 0.0,
+    "researching": 13.3,
+    "research_complete": 0.0,
+    "synthesizing": 2.0,
+    "verifying": 13.6,
+    "fixing": 0.0,
+    "evaluating_quality": 0.0
+  },
+  "elapsed_seconds": 39.2,
+  "models": {
+    "reasoning": "gpt-5.4-nano",
+    "standard": "gpt-5.4-nano",
+    "faithfulness": "gpt-4.1-mini"
+  }
+}

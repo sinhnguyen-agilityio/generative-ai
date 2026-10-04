@@ -1,0 +1,125 @@
+{
+  "case_id": "uncertain_no_evidence",
+  "label": "before",
+  "run_id": "f2966629-6228-4d72-a93b-2e41c5ac4df9",
+  "question": "How many monthly active developers used the LangGraph library in September 2026?",
+  "stage": "NEEDS_REVIEW",
+  "pauses": [
+    "clarification_required",
+    "recovery_required"
+  ],
+  "error": null,
+  "brief": {
+    "schema_version": 1,
+    "research_question": "As of today (2026-10-04), how many monthly active developers (i.e., developers who used/actively worked with the LangGraph library) were using LangGraph in September 2026, using any public, citable figure that exists? If there is no direct public metric for “monthly active developers using LangGraph” for September 2026, what is the closest publicly available proxy metric for developer activity for that month (e.g., GitHub monthly active contributors to the LangGraph repository(s), monthly active contributors on related official org repos, or another defensible publicly reported telemetry/engagement metric), and what exact source(s), inclusion criteria, and methodology were used to calculate/derive it for September 2026? Provide the figure (or clearly state that it cannot be determined from public sources) along with full citations to the underlying public data."
+  },
+  "todos": [
+    {
+      "research_question": "For September 2026, are there any public, citable figures that directly report the number of monthly active developers using the LangGraph library (i.e., developers who used/actively worked with LangGraph) worldwide or by a defined scope? Identify the metric name, the exact figure for September 2026, the reporting organization/publisher, the time window definition used for “monthly active developers,” and provide full citations (URLs, titles, and publication/access dates). If no such direct metric exists publicly, report that finding with citations to sources stating the metric is not available.",
+      "evidence_needed": null,
+      "status": "completed",
+      "research_attempt": 2
+    },
+    {
+      "research_question": "If no direct “monthly active developers using LangGraph” metric exists publicly for September 2026, what is the closest publicly available proxy for developer activity in September 2026 for LangGraph (e.g., GitHub monthly active contributors to the official LangGraph repository(s), monthly active contributors on related official organization repositories, or another defensible publicly reported engagement/telemetry metric)? Determine the specific official repo(s)/org(s) covered, the exact inclusion criteria for counting “active” contributors (e.g., activity types like commits/PRs/issues, and what qualifies as “active” within the month), the exact methodology used to obtain the September 2026 value from public data, and provide the resulting figure with full citations to the underlying public data sources used for the calculation/derivation.",
+      "evidence_needed": null,
+      "status": "completed",
+      "research_attempt": 2
+    }
+  ],
+  "plan": null,
+  "research_status": "INSUFFICIENT",
+  "research_limitations": [
+    "The provided evidence does not include any month-specific (September 2026) MAU developer metric for LangGraph, nor any public, citable statement confirming its unavailability.",
+    "The provided evidence does not include the necessary month-granular public event data extraction/calculation (Sep 2026) and does not establish an official repository/org scope or an exact definition of “active” contributors for a proxy metric."
+  ],
+  "verification_passed": null,
+  "verification_outcome": null,
+  "failed_checks": [],
+  "verifier_error": "Report judge must return every requested criterion exactly once",
+  "last_error": "Report verifier unavailable",
+  "faithfulness_score": null,
+  "draft_version": 1,
+  "improvement_cycles": 0,
+  "repair_history": [],
+  "model_calls_by_role": {
+    "guardrail": 2,
+    "scope": 3,
+    "planner": 1,
+    "researcher": 8,
+    "research_compressor": 4,
+    "research_verify": 2,
+    "synthesizer": 1,
+    "verify": 2
+  },
+  "tokens_by_role": {
+    "guardrail": {
+      "input": 685,
+      "output": 36
+    },
+    "scope": {
+      "input": 1300,
+      "output": 1002
+    },
+    "planner": {
+      "input": 515,
+      "output": 787
+    },
+    "researcher": {
+      "input": 11019,
+      "output": 2164
+    },
+    "research_compressor": {
+      "input": 9742,
+      "output": 2309
+    },
+    "research_verify": {
+      "input": 12221,
+      "output": 2080
+    },
+    "synthesizer": {
+      "input": 7420,
+      "output": 1164
+    },
+    "verify": {
+      "input": 17260,
+      "output": 11012
+    }
+  },
+  "tavily_searches": 4,
+  "vector_retrievals": 1,
+  "ragas_faithfulness_runs": 0,
+  "node_runs": {
+    "clarify_with_user": 2,
+    "await_clarification": 2,
+    "write_research_brief": 1,
+    "planning": 1,
+    "researching": 2,
+    "research_complete": 2,
+    "prepare_gap_research": 1,
+    "synthesizing": 1,
+    "verifying": 2,
+    "retry_verifier": 1,
+    "needs_review": 1,
+    "await_recovery": 1
+  },
+  "node_seconds": {
+    "clarify_with_user": 6.2,
+    "await_clarification": 0.0,
+    "write_research_brief": 3.1,
+    "planning": 4.7,
+    "researching": 31.6,
+    "research_complete": 13.7,
+    "prepare_gap_research": 0.0,
+    "synthesizing": 7.5,
+    "verifying": 57.9,
+    "retry_verifier": 0.0,
+    "needs_review": 0.0
+  },
+  "elapsed_seconds": 124.8,
+  "models": {
+    "reasoning": "gpt-5.4-nano",
+    "standard": "gpt-5.4-nano",
+    "faithfulness": "gpt-4.1-mini"
+  }
+}

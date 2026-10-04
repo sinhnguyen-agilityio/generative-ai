@@ -10,6 +10,7 @@ similarity search, happens locally.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Protocol
 
@@ -18,6 +19,14 @@ from intelligence_collector.contracts import IndexedChunk
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-2"
 DEFAULT_EMBEDDING_PROVIDER = "google_genai"
 DEFAULT_COLLECTION = "research_chunks"
+
+
+def collection_for(provider: str, model: str) -> str:
+    """One collection per embedding provider and model. A collection holds vectors of a single
+    dimension: reusing one name after switching models (observed: gemini-embedding-2, 3072
+    dimensions -> text-embedding-3-small, 1536) made every upsert fail."""
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{provider}-{model}").strip("._-")
+    return f"{DEFAULT_COLLECTION}_{slug}"[:512]
 
 
 class Embeddings(Protocol):
@@ -64,14 +73,14 @@ class ChromaVectorIndex:
         embeddings: Embeddings | None = None,
         model: str = DEFAULT_EMBEDDING_MODEL,
         provider: str = DEFAULT_EMBEDDING_PROVIDER,
-        collection_name: str = DEFAULT_COLLECTION,
+        collection_name: str | None = None,
     ):
         import chromadb  # lazy: keeps the dependency edge local to this adapter
 
         Path(path).mkdir(parents=True, exist_ok=True)
         self._embeddings = embeddings or default_embeddings(model, provider)
         self._collection = chromadb.PersistentClient(path=str(path)).get_or_create_collection(
-            collection_name
+            collection_name or collection_for(provider, model)
         )
 
     def index(self, chunks: list[IndexedChunk]) -> list[str]:

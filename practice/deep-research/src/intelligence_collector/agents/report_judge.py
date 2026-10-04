@@ -1,78 +1,72 @@
-"""LLM-as-judge report verification: the sole "Verify" step of Build-Verify-Fix.
+"""Coverage gate: one reasoning-tier LLM call, with no search tools, that decides whether the
+report answers every required item of the brief and follows the output requirements.
 
-Replaces the deterministic ``source_verification`` script as the Verify gate. One reasoning-tier
-LLM call, with no search or scrape tools, re-reads the writer's report against the evidence the
-research step already gathered and checks two things:
-
-* fact check: does the report invent, distort or contradict anything relative to that evidence
-  (i.e. did the Writer hallucinate while synthesizing)? It does NOT re-verify the evidence itself
-  against the internet -- that was the researchers' job;
-* guidelines: does it follow the operator-configured report guidelines
-  (see ``config.DEFAULT_REPORT_GUIDELINES``)?
-
-The judge classifies failures as draft defects, missing evidence, or missing plan coverage;
-the graph selects the bounded repair loop for that classification.
+Coverage is the first of the three verification gates; citation resolution
+(``source_verification.citation_errors``) and RAGAS Faithfulness are the other two. Each
+criterion carries a stable id (``[C1]``), so the verdict is matched by id rather than by the
+model copying long criterion text verbatim. Duplicates keep the first verdict; criteria the
+model omits get one supplemental call; anything still missing is a technical ERROR, never a
+FAIL.
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections import Counter
+import re
+from dataclasses import dataclass
 
-from intelligence_collector.agents.prompts import (
-    REPORT_JUDGE_TEMPLATE,
-)
+from intelligence_collector.agents.prompts import REPORT_JUDGE_TEMPLATE
 from intelligence_collector.contracts import (
+    ReportJudgeCriterion,
     ReportJudgeVerdict,
     ResearchBrief,
     VerificationCheck,
     VerificationResult,
 )
 
+_ID = re.compile(r"^\s*\[?(C\d+)\]?[\s:.)-]*", re.IGNORECASE)
+
 
 def _bullets(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items) if items else "(none)"
 
 
-FACT_CHECK_CRITERION = (
-    "Contains no factual inaccuracies, hallucinations, or internal inconsistencies. Read the "
-    "whole report as one continuous piece -- introduction through conclusion -- and check every "
-    "claim for truthfulness against the evidence above, not merely whether it carries a "
-    "citation; if you find any inaccuracy, name each one specifically."
-)
+@dataclass(frozen=True)
+class CoverageCriterion:
+    """One coverage criterion: a required answer (``kind="answer"``) or an output constraint."""
+
+    criterion_id: str
+    text: str
+    kind: str  # "answer" | "output"
+
+    @property
+    def label(self) -> str:
+        return f"[{self.criterion_id}] {self.text}"
 
 
-def build_report_judge_criteria(guidelines: list[str] = ()) -> list[str]:
-    """The checklist handed to the judge: the fixed fact-check criterion, then the
-    operator-configured guideline checklist (formatting/language rules)."""
-    return [FACT_CHECK_CRITERION, *guidelines]
+def build_coverage_criteria(brief: ResearchBrief, guidelines: list[str] = (),
+                            reviewer_requests: list[str] = ()) -> list[CoverageCriterion]:
+    """Required answers first, then explicit output requirements, operator guidelines and
+    reviewer requests."""
+    texts = [("answer", f"Answers: {item}") for item in brief.checklist]
+    texts += [("output", f"Output requirement: {item}") for item in brief.output_requirements]
+    texts += [("output", item) for item in guidelines]
+    texts += [("output", f"Satisfies this reviewer request: {item}") for item in reviewer_requests]
+    return [CoverageCriterion(f"C{index}", text, kind)
+            for index, (kind, text) in enumerate(texts, start=1)]
 
 
 class ReportJudge:
-    """The Verify step: one LLM call (role ``verify``) that judges a report against the fact-check
-    criterion and the report guidelines.
-    """
+    """The coverage gate (role ``verify``)."""
 
     def __init__(self, router):
         self.router = router
 
-    def verify(
-        self,
-        brief: ResearchBrief,
-        criteria: list[str],
-        report: str,
-        evidence: str,
-        *,
-        reviewer_requests: list[str] = (),
-        run_id: str = "",
-        thread_id: str = "",
-    ) -> ReportJudgeVerdict:
-        """Judge `report` against each of `criteria`, using `evidence` (the formatted catalog).
-        `reviewer_requests` are the human reviewer's change requests the report applies; they
-        override conflicting formatting guidelines, never the evidence rules."""
+    def _ask(self, brief, criteria, report, evidence, reviewer_requests, run_id, thread_id):
         messages = REPORT_JUDGE_TEMPLATE.format_messages(
+            original_question=brief.original_question or brief.research_question,
             brief=brief.research_question,
-            criteria=_bullets(criteria),
+            criteria=_bullets([c.label for c in criteria]),
             reviewer_note=(
                 f"Reviewer requests (applied to the report):\n{_bullets(list(reviewer_requests))}\n\n"
                 if reviewer_requests else ""
@@ -80,45 +74,77 @@ class ReportJudge:
             evidence=evidence,
             report=report,
         )
-        messages[0].content += (
-            "\nUse draft_defect for claims that can be removed, corrected or narrowed using "
-            "existing evidence. Use evidence_gap only when the main requested answer cannot "
-            "be supported; explain what remains unverified. Never require automatic replanning. "
-            "An honestly labeled incomplete answer can pass if it states supported facts and "
-            "discloses unavailable answers. Do not fail solely because all planned topics are "
-            "not answered. Still reject fabricated claims or false statements of completeness."
+        return self.router.invoke_messages(
+            "verify", messages, ReportJudgeVerdict, run_id=run_id, thread_id=thread_id,
         )
-        verdict = self.router.invoke_messages(
-            "verify",
-            messages,
-            ReportJudgeVerdict,
-            run_id=run_id,
-            thread_id=thread_id,
-        )
-        if Counter(item.criterion for item in verdict.results) != Counter(criteria):
-            raise ValueError("Report judge must return every requested criterion exactly once")
-        return verdict
+
+    @staticmethod
+    def _match(verdict: ReportJudgeVerdict, criteria: list[CoverageCriterion],
+               found: dict[str, ReportJudgeCriterion]) -> None:
+        by_text = {c.text.strip().casefold(): c.criterion_id for c in criteria}
+        wanted = {c.criterion_id for c in criteria}
+        for item in verdict.results:
+            match = _ID.match(item.criterion)
+            criterion_id = match.group(1).upper() if match else by_text.get(
+                item.criterion.strip().casefold())
+            if criterion_id in wanted and criterion_id not in found:
+                found[criterion_id] = item
+
+    def assess(
+        self,
+        brief: ResearchBrief,
+        criteria: list[CoverageCriterion],
+        report: str,
+        evidence: str,
+        *,
+        reviewer_requests: list[str] = (),
+        run_id: str = "",
+        thread_id: str = "",
+    ) -> list[tuple[CoverageCriterion, ReportJudgeCriterion]]:
+        """Judge every criterion; raises ``ValueError`` (a technical ERROR) when the model cannot
+        produce a verdict for each criterion after one supplemental call."""
+        found: dict[str, ReportJudgeCriterion] = {}
+        self._match(self._ask(brief, criteria, report, evidence, reviewer_requests,
+                              run_id, thread_id), criteria, found)
+        missing = [c for c in criteria if c.criterion_id not in found]
+        if missing:
+            self._match(self._ask(brief, missing, report, evidence, reviewer_requests,
+                                  run_id, thread_id), missing, found)
+        missing = [c.criterion_id for c in criteria if c.criterion_id not in found]
+        if missing:
+            raise ValueError("Coverage judge returned no verdict for " + ", ".join(missing))
+        return [(c, found[c.criterion_id]) for c in criteria]
 
 
-def judge_verdict_to_result(verdict: ReportJudgeVerdict, artifact_hash: str) -> VerificationResult:
-    """Build a fresh ``VerificationResult`` straight from the judge's verdict — there is no
-    deterministic result to merge onto; this verdict is the entire Verify outcome.
+def _affected_id(text: str) -> str:
+    return f"criterion:{hashlib.sha1(text.strip().casefold().encode()).hexdigest()[:8]}"
 
-    ``affected_ids`` is a hash of the criterion's own text, not its position in the list — the
-    same criterion failing on a later attempt (even with different justification wording) must
-    produce the same fingerprint (see ``failure_fingerprint``), so the BVF loop's no-progress
-    stall detection still works; a different criterion failing must produce a different one."""
-    checks = [
-        VerificationCheck(
-            name=f"criterion_{index}",
-            passed=item.met,
-            details=[] if item.met else [f"{item.criterion} — {item.justification}"],
-            affected_ids=[] if item.met else [
-                f"criterion:{hashlib.sha1(item.criterion.strip().casefold().encode()).hexdigest()[:8]}"
-            ],
-        )
-        for index, item in enumerate(verdict.results, start=1)
-    ]
+
+def coverage_checks(pairs) -> list[VerificationCheck]:
+    """Coverage verdicts as gate checks. A required answer judged "presentation" stays a
+    draft defect: an unanswered question is never only a layout problem."""
+    checks = []
+    for criterion, verdict in pairs:
+        issue = verdict.issue_type
+        if criterion.kind == "answer" and issue == "presentation":
+            issue = "draft_defect"
+        item = criterion.text.removeprefix("Answers: ")
+        checks.append(VerificationCheck(
+            name=f"coverage_{criterion.criterion_id}",
+            passed=verdict.met,
+            gate="coverage",
+            issue_type=issue if not verdict.met else "draft_defect",
+            item=item,
+            missing_points=[] if verdict.met else list(verdict.missing_points),
+            details=[] if verdict.met else [f"{criterion.text} — {verdict.justification}" + (
+                " Missing: " + "; ".join(verdict.missing_points) if verdict.missing_points else "")],
+            affected_ids=[] if verdict.met else [_affected_id(criterion.text)],
+        ))
+    return checks
+
+
+def verification_result(checks: list[VerificationCheck], artifact_hash: str) -> VerificationResult:
+    """One verification record for the exact draft, from every gate's checks."""
     failed = [check for check in checks if not check.passed]
     return VerificationResult(
         artifact_hash=artifact_hash,

@@ -1,0 +1,234 @@
+{
+  "case_id": "explicit_subquestions",
+  "label": "after",
+  "run_id": "bf37719d-230f-4f92-8c6c-cc4e5fb3c367",
+  "question": "For HTTP status 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?",
+  "stage": "NEEDS_REVIEW",
+  "pauses": [
+    "plan_approval",
+    "recovery_required"
+  ],
+  "error": null,
+  "brief": {
+    "schema_version": 1,
+    "research_question": "In HTTP, for status code 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?",
+    "required_answers": [
+      "the RFC that defines HTTP 429 Too Many Requests",
+      "what HTTP 429 Too Many Requests means",
+      "the response header that tells the client how long to wait before retrying"
+    ],
+    "output_requirements": [],
+    "original_question": "For HTTP status 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?"
+  },
+  "todos": [
+    {
+      "research_question": "In HTTP, for status code 429 \"Too Many Requests\": which RFC defines the status code, what does the status code mean, and which response header tells the client how long to wait before retrying?",
+      "evidence_needed": "RFC text defining HTTP 429 (including the definition/meaning and explicit mention of the retry delay via the Retry-After response header).",
+      "status": "completed",
+      "research_attempt": 1
+    }
+  ],
+  "plan": {
+    "kind": "initial",
+    "original_question": "For HTTP status 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?",
+    "research_question": "In HTTP, for status code 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?",
+    "required_answers": [
+      "the RFC that defines HTTP 429 Too Many Requests",
+      "what HTTP 429 Too Many Requests means",
+      "the response header that tells the client how long to wait before retrying"
+    ],
+    "output_requirements": [],
+    "tasks": [
+      {
+        "todo_id": "ac73c137-1c6f-4964-82c4-3a0e05eef97c",
+        "question": "In HTTP, for status code 429 \"Too Many Requests\": which RFC defines the status code, what does the status code mean, and which response header tells the client how long to wait before retrying?",
+        "evidence_needed": "RFC text defining HTTP 429 (including the definition/meaning and explicit mention of the retry delay via the Retry-After response header)."
+      }
+    ],
+    "report_shape": "Provide a direct answer naming the defining RFC for HTTP 429, summarize what it means, and name the specific response header the client uses to determine the retry delay, with the RFC cited.",
+    "plan_hash": "27bf10f654f6eb22c129aac4045dff2daf49aac84e374580e73d34c0f0eae7a9"
+  },
+  "research_status": "READY",
+  "research_limitations": [],
+  "verification_passed": false,
+  "verification_outcome": "FAIL",
+  "failed_checks": [
+    {
+      "schema_version": 1,
+      "name": "faithfulness",
+      "passed": false,
+      "details": [
+        "RAGAS Faithfulness 0.83 is not above 0.90. Unsupported statements: Section 4.2 of RFC 6585 specifically defines HTTP status 429 Too Many Requests."
+      ],
+      "affected_ids": [
+        "faithfulness"
+      ],
+      "gate": "faithfulness",
+      "issue_type": "draft_defect",
+      "item": "",
+      "missing_points": [
+        "Section 4.2 of RFC 6585 specifically defines HTTP status 429 Too Many Requests."
+      ]
+    }
+  ],
+  "verifier_error": "",
+  "last_error": "[faithfulness] RAGAS Faithfulness 0.83 is not above 0.90. Unsupported statements: Section 4.2 of RFC 6585 specifically defines HTTP status 429 Too Many Requests.",
+  "faithfulness_score": 0.8333333333333334,
+  "draft_version": 4,
+  "improvement_cycles": 3,
+  "repair_history": [
+    {
+      "attempt": 1,
+      "draft_version": 1,
+      "route": "presentation",
+      "failed_checks": [
+        "coverage_C5",
+        "citation_resolution"
+      ],
+      "issues": [
+        {
+          "check": "coverage_C5",
+          "gate": "coverage",
+          "issue_type": "presentation",
+          "item": "Every body section (each '## ' section except '## Scope', '## Limitations' and '## Sources') MUST support its claims with inline source citations such as [S1] that match entries in the '## Sources' list, which gives each source's title and hyperlink. If no source supports a section, remove it or merge it into the previous section.",
+          "missing_points": [
+            "Adds a '## Sources' section that lists the cited sources (e.g., S1, S4, S5) with titles and hyperlinks so inline citations can be validated."
+          ],
+          "detail": "Every body section (each '## ' section except '## Scope', '## Limitations' and '## Sources') MUST support its claims with inline source citations such as [S1] that match entries in the '## Sources' list, which gives each source's title and hyperlink. If no source supports a section, remove it or merge it into the previous section. — Although inline citations are present, the report does not include a required '## Sources' section listing the cited sources with their titles and hyperlinks, so the citations cannot be matched to that list. Missing: Adds a '## Sources' section that lists the cited sources (e.g., S1, S4, S5) with titles and hyperlinks so inline citations can be validated.",
+          "route": "presentation",
+          "todo_id": ""
+        },
+        {
+          "check": "citation_resolution",
+          "gate": "citation",
+          "issue_type": "presentation",
+          "item": "",
+          "missing_points": [],
+          "detail": "Missing Sources section",
+          "route": "presentation",
+          "todo_id": ""
+        }
+      ],
+      "fingerprint": "78ac491f39eb27e693aeb023419cb548c312824bc965cad43dbb00925be4dc9a"
+    },
+    {
+      "attempt": 2,
+      "draft_version": 2,
+      "route": "vfs",
+      "failed_checks": [
+        "faithfulness"
+      ],
+      "issues": [
+        {
+          "check": "faithfulness",
+          "gate": "faithfulness",
+          "issue_type": "draft_defect",
+          "item": "",
+          "missing_points": [
+            "Section 4.2 of RFC 6585 specifically defines HTTP status 429."
+          ],
+          "detail": "RAGAS Faithfulness 0.86 is not above 0.90. Unsupported statements: Section 4.2 of RFC 6585 specifically defines HTTP status 429.",
+          "route": "vfs",
+          "todo_id": ""
+        }
+      ],
+      "fingerprint": "0c447060fd3d334feb3834f2441b10028b907ffd5a5a2973be609d07559c4825"
+    },
+    {
+      "attempt": 3,
+      "draft_version": 3,
+      "route": "vfs",
+      "failed_checks": [
+        "faithfulness"
+      ],
+      "issues": [
+        {
+          "check": "faithfulness",
+          "gate": "faithfulness",
+          "issue_type": "draft_defect",
+          "item": "",
+          "missing_points": [
+            "Section 4.2 of RFC 6585 specifically defines HTTP status 429 Too Many Requests."
+          ],
+          "detail": "RAGAS Faithfulness 0.86 is not above 0.90. Unsupported statements: Section 4.2 of RFC 6585 specifically defines HTTP status 429 Too Many Requests.",
+          "route": "vfs",
+          "todo_id": ""
+        }
+      ],
+      "fingerprint": "0c447060fd3d334feb3834f2441b10028b907ffd5a5a2973be609d07559c4825"
+    }
+  ],
+  "model_calls_by_role": {
+    "guardrail": 1,
+    "scope": 2,
+    "planner": 1,
+    "researcher": 2,
+    "research_compressor": 1,
+    "synthesizer": 4,
+    "verify": 7
+  },
+  "tokens_by_role": {
+    "guardrail": {
+      "input": 364,
+      "output": 18
+    },
+    "scope": {
+      "input": 1073,
+      "output": 490
+    },
+    "planner": {
+      "input": 528,
+      "output": 389
+    },
+    "researcher": {
+      "input": 2677,
+      "output": 156
+    },
+    "research_compressor": {
+      "input": 2184,
+      "output": 239
+    },
+    "synthesizer": {
+      "input": 14050,
+      "output": 912
+    },
+    "verify": {
+      "input": 23509,
+      "output": 2694
+    }
+  },
+  "tavily_searches": 1,
+  "vector_retrievals": 0,
+  "ragas_faithfulness_runs": 3,
+  "node_runs": {
+    "clarify_with_user": 1,
+    "write_research_brief": 1,
+    "planning": 1,
+    "await_plan_approval": 2,
+    "researching": 1,
+    "research_complete": 1,
+    "synthesizing": 4,
+    "verifying": 4,
+    "fixing": 3,
+    "needs_review": 1,
+    "await_recovery": 1
+  },
+  "node_seconds": {
+    "clarify_with_user": 2.2,
+    "write_research_brief": 2.4,
+    "planning": 2.4,
+    "await_plan_approval": 0.0,
+    "researching": 9.1,
+    "research_complete": 0.0,
+    "synthesizing": 8.1,
+    "verifying": 38.7,
+    "fixing": 0.0,
+    "needs_review": 0.0
+  },
+  "elapsed_seconds": 63.1,
+  "models": {
+    "reasoning": "gpt-5.4-nano",
+    "standard": "gpt-5.4-nano",
+    "faithfulness": "gpt-4.1-mini"
+  }
+}

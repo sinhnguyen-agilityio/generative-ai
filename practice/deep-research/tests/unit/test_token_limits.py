@@ -4,6 +4,13 @@ from pydantic import BaseModel
 from intelligence_collector.models.token_limits import capped_model, output_limits_from_env
 
 
+@pytest.fixture(autouse=True)
+def _isolated_cap_settings(monkeypatch):
+    # Other tests load the developer's .env into os.environ; these tests own these variables.
+    monkeypatch.delenv("INTELLIGENCE_DISABLE_OUTPUT_CAPS", raising=False)
+    monkeypatch.delenv("INTELLIGENCE_NODE_OUTPUT_TOKENS", raising=False)
+
+
 class Provider(BaseModel):
     max_tokens: int | None = None
 

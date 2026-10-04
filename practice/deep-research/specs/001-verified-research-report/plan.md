@@ -126,11 +126,11 @@ alternatives that would violate the constitution or clarified specification.
    second structured call with its own prompt, validates a dedicated single-question
    `ResearchBrief`,
    writes `scope/brief_summary.v1.json`, and enters Planning without a brief approval interrupt.
-4. Planning runs the Planner Agent: a structured LLM call decomposes the brief's
-   research question into 1–5 standalone, non-overlapping research questions (`TodoPlan.questions`).
-   The planner no longer defines acceptance criteria (removed 2026-09-30). The system turns each
-   question into a `planned` todo and persists the list via `write_todos`. A non-empty, valid,
-   durably stored todo list is required before any Research/retrieval edge.
+4. Planning runs the Planner Agent: a structured LLM call returns the fewest standalone research
+   questions (one for a simple question or comparison), the evidence each needs and the expected
+   report shape. The system persists `planned` todos via `write_todos` and the hash-bound
+   `planning/plan.v<n>.json`, then `await_plan_approval` interrupts; retrieval starts only after
+   the exact plan is approved (FR-040).
 5. The Research Supervisor delegates each planned todo to its own research sub-agent, running up to
    `INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS` (default 3) in parallel. Each sub-agent gets a fresh
    Tavily MCP client and runs the loop `llm_call` → (`tool_node` → `llm_call`)* →
@@ -147,29 +147,19 @@ alternatives that would violate the constitution or clarified specification.
 6. `think_tool` creates a progress assessment with explicit blockers. The Supervisor may issue
    `ResearchComplete` only if every todo is completed and all VFS/index prerequisites are present.
    This ends Research only.
-7. **Build**: for each research question, `select_relevant_evidence` retrieves its top-K most
-   relevant sources (`INTELLIGENCE_EVIDENCE_TOP_K`, default 6) from the Chroma vector index —
-   Gemini embeddings by default (`INTELLIGENCE_EMBEDDING_MODEL`, default `gemini-embedding-2`;
-   `INTELLIGENCE_EMBEDDING_PROVIDER`, default `google_genai`; set to `openai` with an OpenAI
-   model name to switch providers), persisted
-   locally under `INTELLIGENCE_CHROMA_PATH` — scoped to that question so no question's sources can
-   be crowded out by another's; a bundle at or under top-K, or a retrieval failure, is left
-   unfiltered. The Report Writer (structured LLM call) then drafts the report
-   from that narrowed evidence, citing the (unchanged, still-complete) per-run source catalog as
-   `[S<n>]`, and persists `reports/draft.v<n>.md`, `reports/previous.md`, and `reports/latest.md`.
-8. **Verify**: `ReportJudge` (`agents/report_judge.py`, role `verify`) is the sole Verify gate: one
-   LLM call with no search/scrape tools re-reads the report against the already-gathered evidence
-   and checks the fact-check criterion plus the configured report guidelines. Each criterion gets
-   met/unmet and a justification; failures are not classified. Only a report passing every
-   criterion leaves the loop.
-9. **Fix** (self-improving, rewrite only): each failure increments the visible attempt counter. A
-   reflection call diagnoses the root cause, adds reusable lessons to an accumulating lesson
-   memory, and plans a strategy; the next Build rewrites the report from the same evidence,
-   receiving the failed checks, all lessons, the strategy, and the previous draft. No new research
-   happens inside the loop: an unsupported claim is removed, narrowed, or disclosed under
-   `## Limitations`. A failure fingerprint detects no progress: the first repeat tells the
-   reflection to change approach; two consecutive repeats, or reaching
-   `INTELLIGENCE_RECOVERY_ATTEMPTS` (default 3), end in `needs_review` (`NEEDS_REVIEW`).
+7. **Build**: the Report Writer receives the original question, required answers, output
+   requirements, report shape, the `[S<n>]` source catalog and known gaps, and writes an
+   answer-first draft (FR-044). A question's evidence is read directly when its excerpts fit
+   12,000 characters; larger corpora are narrowed to `INTELLIGENCE_EVIDENCE_TOP_K` with Chroma.
+8. **Verify**: three gates on the exact draft — coverage (`agents/report_judge.py`, id-tagged
+   criteria), citation resolution (`source_verification.citation_errors`), RAGAS Faithfulness
+   > 0.90 — with PASS, FAIL and ERROR outcomes (FR-039, FR-041). PASS leaves the loop at once.
+9. **Fix**: `fixing` diagnoses the smallest correction (`repair.py`, no model call) and routes to
+   a targeted rewrite (`vfs`, `chroma`, `presentation`), `prepare_repair_research` → research of
+   only the affected tasks, or `replan` → `await_plan_approval`. The writer gets every issue, the
+   answers that already passed and the previous draft. Repeating the same failure twice or
+   reaching `INTELLIGENCE_RECOVERY_ATTEMPTS` (default 3) ends in `needs_review`; ERROR never
+   rewrites (FR-042).
 10. A passing result enters `Awaiting Approval` and LangGraph interrupts. The user approves or
     rejects the exact artifact hash. Approval resumes the graph; rejection records the decision and
     leaves permanent output unchanged.
@@ -195,7 +185,7 @@ alternatives that would violate the constitution or clarified specification.
 | Evidence catalog (`source_verification.py`) | Loads a run's evidence bundles into a catalog with stable `[S<n>]` source ids and the sub-agents' unresolved gaps; cited-excerpt lookup for RAGAS; failure fingerprint for BVF stall detection (the deterministic checker was removed) | Catalog built only from stored bundles | Evidence bundles in VFS, `verification/catalog_state.json` |
 | Model Router (`models/router.py`, `models/factory.py`, `models/redaction.py`) | `ModelFactory.create_routers` builds two `ModelRouter` tiers and each agent is constructed with the tier it needs: reasoning (Scope, Planner, Report Judge) or standard (Researcher, Report Writer, Feedback classifier, and the scope guardrail via `ScopeAgent(guardrail_router=...)`) — the "Reasoning Sandwich": a high-effort model plans and verifies around standard-tier implementation work. Live app default: Gemini for both tiers (`INTELLIGENCE_REASONING_MODEL/PROVIDER` = `gemini-3.8-flash`/`google_genai` at `reasoning_effort=high`, the ceiling `ChatGoogleGenerativeAI` accepts — neither Gemini nor OpenAI's SDK has an "xhigh" literal, that word is only this tier's name; `INTELLIGENCE_STANDARD_MODEL/PROVIDER` = `gemini-3.5-flash-lite`/`google_genai` at `reasoning_effort=low`), each with a Groq fallback (`openai/gpt-oss-120b` for reasoning, `openai/gpt-oss-20b` for standard), built once via `app._get_model_routers`; the fallback is LangChain `with_fallbacks` | Structured-output retries bounded per profile; fallback model run is visible in the Langfuse `model.<role>` span; final failure is visible | All model-using nodes, Langfuse |
 | Checkpointer | Persist typed graph state and resume points | Atomic checkpoint; invalid latest checkpoint falls back or NEEDS_REVIEW | LangGraph, VFS metadata |
-| Approval/Publisher (`graph/nodes.py::ApprovalNodes`, `publication.py`, `agents/feedback_router.py`) | Human review flow, wired only when `with_approval=True`: `evaluating_quality` -> `Node.APPROVE` (LangGraph `interrupt()`/`Command(resume={"reply": ...})`; an explicit `{"approved": True}` goes straight to publishing). Every approval binds to the hash of the verified report shown. A reply goes to `Node.CLASSIFY_FEEDBACK`, a separate LLM node (a failed classification never re-runs the interrupt), where `FeedbackRouter` returns `"approve"` -> `Node.PUBLISH` (atomic write to `{output_dir}/{run_id}.md`), `"revise"` -> the request joins `reviewer_requests`, counters restart, and `Node.SYNTHESIZE` rewrites the reviewed report from the same evidence (the requests override conflicting layout guidelines for the writer and the judge, never the evidence rules) before Verify runs again, or `"scope"` -> the feedback becomes the next user turn and the run re-enters `Node.CLARIFY` -> `write_research_brief` -> `Node.PLAN` -> research, with reviewer requests cleared and counters restarted; unclear, empty or unclassified replies are `"revise"` | Reject/stale-hash/unverified `publish()` writes nothing permanent; routing is `route_after_approval` (over `approval.approved`) then `route_after_feedback` (over `feedback_route`) | LangGraph interrupt/resume, VFS, output path, Streamlit chat |
+| Approval/Publisher (`graph/nodes.py::ApprovalNodes`, `publication.py`, `agents/feedback_router.py`) | Human review flow, wired only when `with_approval=True`: `evaluating_quality` -> `Node.APPROVE` (LangGraph `interrupt()`/`Command(resume={"reply": ...})`; an explicit `{"approved": True}` goes straight to publishing). Every approval binds to the hash of the verified report shown. A reply goes to `Node.CLASSIFY_FEEDBACK`, a separate LLM node (a failed classification never re-runs the interrupt), where `FeedbackRouter` returns `"approve"` -> `Node.PUBLISH` (atomic write to `{output_dir}/{run_id}.md`), `"revise"` -> the request joins `reviewer_requests`, counters restart, and `Node.SYNTHESIZE` rewrites the reviewed report from the same evidence (the requests override conflicting layout guidelines for the writer and the judge, never the evidence rules) before Verify runs again, `"extend"` (FR-045) -> the request joins `reviewer_requests` and `Node.LOCATE_EXTENSION` (`BVFNodes.locate_extension_evidence`) retrieves up to 8 stored passages for the router's `topic` from the run's vector index; `ExtensionJudge` (`agents/extension_judge.py`, role `extension_judge`, standard tier) returns `ExtensionEvidenceVerdict`; enough evidence adds a COMPLETED task whose bundle holds only the relevant passages and goes to `Node.SYNTHESIZE`, otherwise a PLANNED task with the missing points goes to `Node.RESEARCH`; both add an auto-approved plan revision of kind `extension` and record `extension/<n>.json`, or `"scope"` -> the feedback becomes the next user turn and the run re-enters `Node.CLARIFY` -> `write_research_brief` -> `Node.PLAN` -> research, with reviewer requests cleared and counters restarted; unclear, empty or unclassified replies are `"revise"` | Reject/stale-hash/unverified `publish()` writes nothing permanent; routing is `route_after_approval` (over `approval.approved`) then `route_after_feedback` (over `feedback_route`) | LangGraph interrupt/resume, VFS, output path, Streamlit chat |
 | Tracing/Evaluation | Create root execution traces grouped by thread, nested node spans, model generations (including fallback model runs), and validation events | Missing live tracing config blocks execution; export/flush failure is surfaced without exposing credentials | Langfuse v4 SDK and LangChain callback |
 | Faithfulness Evaluator (`observability/evaluation.py`, `graph/nodes.py::BVFNodes.evaluating_faithfulness`) | `make_faithfulness_evaluator` scores a whole passing report's RAGAS Faithfulness (`ragas.metrics.collections.Faithfulness`) against `source_verification.cited_source_excerpts` (the excerpt text of every source the report cites), judged by the Gemini API (`INTELLIGENCE_FAITHFULNESS_MODEL`, default `gemini-3.7-flash`) via a `google.genai.Client` patched async through `instructor.from_genai(..., use_async=True)` — bypassing `ragas.llms.llm_factory` directly, whose Google path always patches synchronously (`instructor.from_genai(client)`, no `use_async`) and breaks `Faithfulness.ascore()` with `TypeError: Cannot use agenerate() with a synchronous client` (verified against the real API) | Its own graph node (`Node.EVALUATE_FAITHFULNESS`), reached only via the `VERIFY` node's PASSED conditional edge — never as part of a build/verify/fix attempt, so a draft that fails and gets rewritten is never scored, only the one report that actually left the BVF loop (`VERIFY --PASSED--> EVALUATE_FAITHFULNESS --> APPROVE\|END`, see `build.py`); a judge-LLM failure is caught and recorded (`faithfulness_error`), never raised into the graph; score/error persist to `verification/faithfulness.<verification_id>.json` and render in the UI next to the report; judged by `INTELLIGENCE_FAITHFULNESS_MODEL`/`_PROVIDER` (default OpenAI `gpt-4.1-mini` via an `AsyncOpenAI` client; `google_genai` also supported), disabled (`None`) unless that provider's key (`OPENAI_API_KEY`/`GOOGLE_API_KEY`) is set — independent of the reasoning/standard tier providers | `ragas`, `instructor[google-genai]` (needs the `jsonref` package), `google-genai` |
 | Context Precision and Response Relevancy (`observability/evaluation.py`, `graph/nodes.py::BVFNodes.evaluating_quality`) | `synthesizing` persists the per-question ranked source ids the writer saw (`writer_evidence`, `synthesis/retrieval.v<n>.json`). `make_context_precision_evaluator` scores `ContextPrecisionWithoutReference` per research question on those excerpts in rank order against the report body (mean over questions, per-question details kept); `make_response_relevancy_evaluator` scores `AnswerRelevancy` of the report body against the brief, with the vector index's LangChain embeddings adapted to RAGAS's `BaseRagasEmbedding`. Same judge LLM as Faithfulness | One `evaluating_quality` node (renamed from `evaluating_faithfulness`) runs every metric in `INTELLIGENCE_EVAL_METRICS` (default all); each failure is recorded as `<metric>_error` without affecting the others; all scores persist to `verification/quality.<verification_id>.json`, render in the UI and become Langfuse trace scores | `ragas` collections metrics, `langchain_google_genai`/`langchain_openai` embeddings |
@@ -225,7 +215,8 @@ src/intelligence_collector/
 │   ├── worker.py           # persist a sub-agent outcome to VFS + vector index
 │   ├── report_writer.py    # BVF Build/Fix drafts, reviewer revisions, reflection
 │   ├── report_judge.py     # BVF Verify: LLM-as-judge
-│   ├── feedback_router.py  # classifies the reviewer's chat reply (approve / revise / scope)
+│   ├── feedback_router.py  # classifies the reviewer's chat reply (approve / revise / extend / scope)
+│   ├── extension_judge.py  # judges whether stored passages cover a section the reviewer added
 │   └── synthesis.py        # report version persistence (draft.vN / previous / latest)
 ├── tools/
 │   ├── write_todos.py

@@ -1,0 +1,46 @@
+{
+  "sources": {
+    "S1": {
+      "url": "https://tech-insider.org/langchain-vs-langgraph-2026",
+      "title": "LangChain vs LangGraph 2026: Full Comparison",
+      "excerpt": "patterns. Microsoft’s AutoGen focuses on conversational multi-agent patterns where agents communicate through structured message-passing, which overlaps conceptually with LangGraph’s graph model but leans more heavily on a chat-style interaction pattern between agents rather than an explicit state object. Download data backs up LangGraph’s lead over these role-based alternatives: Uvik put LangGraph at roughly 34.5 million monthly PyPI downloads in September 2026, more than three times OpenAI’s [...] From a hiring standpoint, LangChain experience is far more common in the current job market simply because it’s been around longer and has a much larger user base, reflected directly in its 145,287 GitHub stars versus LangGraph’s 40,713 — though the exact gap depends on who’s counting: Uvik put it closer to 100,000 versus 34,000 stars by September 2026, while Recatools measured 141,800 versus 37,200 stars alongside 2,624,144 weekly LangChain npm downloads against LangGraph’s 2,344,977 as of [...] times OpenAI’s Agents SDK at 10.3 million and nearly seven times CrewAI’s 5.2 million, while Alphacorp measured LangChain itself pulling around 319 million monthly PyPI downloads against LangGraph’s 71 million as of August 2026."
+    },
+    "S2": {
+      "url": "https://uvik.net/blog/langchain-vs-langgraph",
+      "title": "LangChain vs LangGraph: 2026 Decision Guide | Uvik Software",
+      "excerpt": "|  |  |\n --- |\n| ~34.5M / mo | LangGraph monthly PyPI downloads — the most-installed agent framework (Firecrawl, 2026) |\n| ~400 | Companies running agents on LangGraph Platform, incl. Klarna, Uber, LinkedIn, JPMorgan (Firecrawl, 2026) |\n| 4 vs 17 | Lines of code for a working agent: create\\_agent vs hand-built StateGraph (Uvik measurement, 2026) |\n| ~100k vs ~34k | GitHub stars: LangChain vs LangGraph (GitHub, mid-2026) | [...] By monthly PyPI installs, LangGraph is the most-installed agent framework in 2026 — ahead of the OpenAI Agents SDK, CrewAI, and AutoGen (directional figures).\n\n## Use LangChain when / Use LangGraph when [...] LangGraph is the durable runtime underpinning production agents at scale. Roughly 400 companies run agents on LangGraph Platform — including Klarna, Uber, LinkedIn, Replit, Elastic, Cisco, BlackRock, and JPMorgan. And while it ranks third among agent frameworks by GitHub stars, it is the most-installed by a wide margin, at roughly 34.5 million monthly PyPI downloads."
+    },
+    "S3": {
+      "url": "https://www.taskade.com/blog/langchain-history",
+      "title": "What Is LangChain? Complete History & LangGraph Guide (2026)",
+      "excerpt": "| Commercial product | LangSmith (observability & tracing) |\n| Key sub-project | LangGraph (stateful multi-agent framework) |\n| Monthly PyPI downloads | 10M+ |\n| Enterprise users | Elastic, GitLab, Rakuten, Morningstar | [...] | 90,000+ GitHub stars | Mid-2024 |\n| 95,000+ GitHub stars | Mid-2026 | [...] When ChatGPT launched, millions of developers immediately started asking: How do I build something like this on my own data? LangChain was the answer sitting at the top of a Google search.\n\nThe growth was unlike anything the open-source community had seen:"
+    },
+    "S4": {
+      "url": "https://www.truefoundry.com/blog/langgraph-pricing",
+      "title": "LangGraph Pricing: A Complete Breakdown for 2026",
+      "excerpt": "1 user seat\n Up to 5,000 base traces per month\n 14-day base trace retention\n Community support\n\nOnce you exceed the included trace allowance, usage is billed pay-as-you-go after adding a payment method.\n\nFor individual developers experimenting with LangGraph and LangSmith, this is generally enough to get started without a monthly subscription.\n\n### Plus\n\nThe Plus plan costs $39 per seat per month and is intended for teams building and deploying agents.\n\nIt includes: [...] No items found.\n\nNo items found.\n\n## Recent Blogs\n\n.png)\n\n### Data Loss Prevention for LLM Traffic: Where It Has to Sit\n\nSeptember 28, 2026\n\nAshish Dubey\n\n.png)\n\n### Data Masking in the AI Gateway: What Actually Works\n\nSeptember 28, 2026\n\nAshish Dubey\n\n.png)\n\n### API Rate Limiting for LLMs: Count Tokens, Not Requests\n\nSeptember 28, 2026\n\nAshish Dubey\n\n.png)\n\n### Envoy AI Gateway (Now Agent Router): An Honest Review\n\nSeptember 28, 2026\n\nAshish Dubey\n\n.png) [...] September 28, 2026\n\nSahajmeet Kaur\n\nComparing Obot AI and Requesty AI governance paths.webp)\n\n### Obot AI vs Requesty AI: A Practical Comparison for Enterprise Teams in 2026\n\nSeptember 24, 2026\n\nAshish Dubey\n\nAnalyzing the differences between Mint MCP and Vercel AI governance.webp)\n\n### Mint MCP vs. Vercel AI Gateway: Which Platform Fits Enterprise AI Teams?\n\nSeptember 24, 2026\n\nAshish Dubey\n\nComparing Solo.io and Mint MCP gateways.webp)"
+    },
+    "S5": {
+      "url": "https://www.langchain.com/blog/langgraph-cloud",
+      "title": "Announcing LangGraph v0.1 & LangGraph Cloud: Running agents at scale, reliably",
+      "excerpt": "LangChain\n\n#### Building a Harness with Jev\n\nSydney Runkle\n\nHunter Lovell\n\nSeptember 17, 2026\n\nmin\n\nThank you! Your submission has been received!\n\nOops! Something went wrong while submitting the form.\n\n### See what your agent is really doing\n\nLangSmith, our agent engineering platform, helps developers debug every agent decision, eval changes, and deploy in one click.\n\nTry LangSmithGet a demo [...] LangGraph docs\n LangGraph Cloud docs\n LangGraph webpage (with FAQs)\n\n### Related content\n\nHow to Build a Model Router in the Harness\n\nOpen Source\n\nAgent Architecture\n\nLangChain\n\n#### How to Build a Model Router in the Harness\n\nSydney Runkle\n\nEugene Yurtsev\n\nOctober 1, 2026\n\n12\n\nmin\n\nLangSmith\n\nCompany Announcements\n\n#### New in LangSmith: Engine v2, Managed Deep Agents, Fine-Tuning, and More\n\nJacob Talbot\n\nSeptember 25, 2026\n\n7\n\nmin\n\nOpen Source\n\nAgent Architecture\n\nLangChain [...] To tackle this, a few months ago, we introduced LangGraph — a framework for building agentic and multi-agent applications. Separate from the langchain package, LangGraph’s core design philosophy is to help developers add better precision and control into agentic workflows, suitable for the complexity of real-world systems."
+    }
+  },
+  "bundles": [
+    {
+      "question": "For the LangGraph library (as published by the LangGraph/LangChain ecosystem) there a public, citable metric for the number of monthly active developers using LangGraph in September 2026; if no direct MA developer figure exists, what is the closest available public proxy metric for September 2026 (e.g., monthly active contributors/authors on GitHub or monthly download-based developer proxy)?",
+      "source_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "summary": "## Direct “monthly active developers (MA devs)” for LangGraph in Sep 2026\n- No direct, public, citable MA-developer metric for LangGraph in **September 2026** was found in the provided search results.\n\n## Closest available public proxy (Sep 2026)\n- **Monthly PyPI downloads for LangGraph** are reported as approximately **34.5M/month** for **September 2026** in a third-party comparison write-up. [https://tech-insider.org/langchain-vs-langgraph-2026] [https://uvik.net/blog/langchain-vs-langgraph]\n\n## Evidence quality / source limitations\n- The PyPI-download figure appears in **unofficial blog/comparison pages** rather than an official LangGraph/LangChain metrics publication or a standard provider metric page. [https://tech-insider.org/langchain-vs-langgraph-2026] [https://uvik.net/blog/langchain-vs-langgraph]\n\n## Related (not MA developers)\n- Other non-MA-developer indicators mentioned alongside the proxy include **GitHub stars** and **monthly npm/PyPI download comparisons**, but these do not answer the MA-developer metric request. [https://tech-insider.org/langchain-vs-langgraph-2026] [https://uvik.net/blog/langchain-vs-langgraph]",
+      "gaps": [
+        "Find a primary/publicly citable source that directly reports **monthly active developers** for LangGraph for **September 2026** (e.g., GitHub “active developers/contributors” or an official LangGraph/LangChain metrics publication).",
+        "Validate whether any September 2026 MA-dev figure exists at all in a standard metrics provider; current results only provide a third-party proxy (monthly PyPI downloads) rather than MA dev counts."
+      ]
+    }
+  ]
+}

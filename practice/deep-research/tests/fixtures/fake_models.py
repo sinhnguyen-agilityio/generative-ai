@@ -120,8 +120,10 @@ class FakeAcceptanceModel:
         for item in scripted["results"]:
             label = item["criterion"]
             index = (1 if label == "Fairly represents the gathered evidence" else
-                     2 if label == "Explains uncertainty and evidence gaps" else 0)
-            criterion = label if label in criteria else criteria[min(index, len(criteria) - 1)]
+                     2 if label == "Explains uncertainty and evidence gaps" else
+                     int(label[2:-1]) - 1 if label.startswith("[C") and label.endswith("]") else 0)
+            matches = [c for c in criteria if label in c]
+            criterion = matches[0] if matches else criteria[min(index, len(criteria) - 1)]
             selected.append({**item, "criterion": criterion})
         used = {item["criterion"] for item in selected}
         selected.extend({"criterion": criterion, "met": True, "justification": "Satisfied."}

@@ -159,6 +159,26 @@ evidence-backed technical report from a user's research request."
   loop. Unresolved gaps the research sub-agents report are disclosed by the writer. This
   supersedes the issue-type answers above (FR-016, FR-016c, FR-017, FR-017a).
 
+### Session 2026-10-04
+
+- Q: Simple questions produced hedged or unanswered reports. Where did they fail? → A: Traced on
+  real runs (`.tmp/lt/be7d9fc2`, `evals/runs/before/`): the brief inflated "latest stable Python
+  version" into "which sources explicitly confirm it is the newest GA release"; research then
+  marked the evidence PARTIAL, the writer labeled the answer INCOMPLETE, and the judge either
+  passed a report that never stated what 403 means or returned ERROR because criteria were not
+  echoed verbatim. Fixes target those stages (FR-037b, FR-040–FR-044); details in
+  `docs/research-workflow.md` and `evals/results.md`.
+- Q: When may retrieval start? → A: Only after a human approves the exact plan (initial or
+  replacement), bound by plan hash (FR-040).
+- Q: Which gates decide verification? → A: Exactly three: coverage, citation resolution, RAGAS
+  Faithfulness strictly greater than 0.90; PASS, FAIL and ERROR are distinct and ERROR never
+  rewrites the report (FR-041, FR-039). This supersedes the observational-only Faithfulness rule
+  and the fact-check criterion of Session 2026-09-29.
+- Q: How is a failed verification repaired? → A: Deterministic diagnosis picks the smallest
+  correction (stored evidence, Chroma-located evidence, targeted research, replacement plan, or
+  presentation) for at most `INTELLIGENCE_RECOVERY_ATTEMPTS` cycles (FR-042). This supersedes the
+  2026-09-30 rewrite-only answer.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Complete a Verified Research Run (Priority: P1)
@@ -367,7 +387,8 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-002b**: Before the Scope Agent's clarification model runs, a pre-model content-safety
   guardrail MUST classify the user's latest message on the standard model tier and block it, without
   invoking the Scope Agent's model, when the message itself contains vulgar/obscene language or
-  directly requests prohibited content; legitimate research about a sensitive real-world topic MUST
+  directly requests prohibited content, or attempts prompt injection (overriding the assistant's
+  instructions or extracting its system prompt); legitimate research about a sensitive real-world topic MUST
   remain allowed.
 - **FR-003**: The Scope Agent MUST consider a request ready for Planning only when its objective,
   research boundaries, constraints, success criteria, and deliverable format are explicit,
@@ -657,16 +678,13 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   model observations MUST contain the complete rendered instructions and conversation supplied to
   the model plus the validated response serialized as JSON text. Hashes, IDs, and
   dispatch statuses MAY remain metadata but MUST NOT replace semantic input or output content.
-- **FR-039**: Once a draft passes verification (FR-016c), the system MUST score the report's RAGAS
-  Faithfulness against the excerpt text of every source the report actually cites, using an LLM
-  judge. Every body section is scored; `## Scope`, `## Limitations` and `## Sources` are excluded
-  because they make no evidence-backed claims. The score is supported statements divided by all
-  statements, judged per section and in bounded batches so no judge call is truncated by its
-  output-token limit. The system MUST then record the resulting
-  score (or, on judge failure, the error) as a durable per-run artifact. This score is
-  observational: a missing, low, or failed score MUST NOT alter verification's pass/fail
-  determination, the workflow stage, or publication eligibility (`can_request_approval` remains
-  keyed only to `VerificationResult.passed`).
+- **FR-039**: RAGAS Faithfulness is the third verification gate (FR-041): it is scored on every
+  draft that passed coverage and citation resolution, against the title and excerpt of every
+  source the report cites. Title lines, `## Scope`, `## Limitations`, `## Sources`, sentences
+  using the gap wording "could not be established from the collected sources" and sentences
+  labeled `Assessment:` are not scored. The score must be strictly greater than 0.90 to pass; a
+  missing, NaN or out-of-range score, an evaluator exception, or an unconfigured evaluator in the
+  live app is ERROR. Unsupported statements are recorded for targeted repair.
 - **FR-039a**: The quality scores (FR-039, FR-039d, FR-039e), when present, MUST be displayed to
   the user alongside the report.
 - **FR-039b**: The quality scores MUST also be inspectable in Langfuse: attached to the execution
@@ -682,10 +700,50 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   per-question scores MUST be recorded. The ranked evidence behind every draft MUST be persisted.
 - **FR-039e**: Alongside FR-039, the system MUST score RAGAS Response Relevancy of the final report
   body against the research brief's question, using the same embedding model as the vector index.
-- **FR-039f**: FR-039, FR-039d and FR-039e share FR-039's rules: scored once on the report that
-  passed verification, body sections only, informational only, each metric's failure recorded
+- **FR-039f**: FR-039d and FR-039e are scored once on the report that passed verification, body
+  sections only, informational only, each metric's failure recorded
   without affecting the others, and every score/error persisted in one per-run artifact. The
   metrics to run MUST be configurable (`INTELLIGENCE_EVAL_METRICS`, default all three).
+
+- **FR-037b**: The research brief MUST keep the user's question without adding requirements:
+  `research_question`, `required_answers` (the acceptance checklist, one item per explicit
+  question), explicitly stated `output_requirements`, and a system-owned verbatim
+  `original_question`. The planner MUST use the fewest standalone tasks (one for a simple
+  question or comparison) and record `evidence_needed` per task and the expected `report_shape`.
+- **FR-040**: Planning MUST persist `planning/plan.v<n>.json` (original question, required answers,
+  output requirements, tasks, report shape, plan hash) and pause at `await_plan_approval` before
+  any retrieval. Approval binds to the plan hash; `researching` MUST refuse to run without it.
+  "cancel" ends the run; any other reply rescopes and produces a new plan needing approval.
+- **FR-041**: Verification MUST run exactly three gates on the exact draft: (1) coverage — each
+  required answer is answered, not merely mentioned, plus output requirements, guidelines and
+  reviewer requests, judged with id-tagged criteria; failed items record the item and missing
+  answer points; (2) citation resolution against sources collected in this run; (3) FR-039.
+  A coverage verdict missing after one supplemental call is ERROR. ERROR retries the same draft
+  once (reusing saved coverage checks) and then escalates; it MUST NOT rewrite the report.
+- **FR-042**: A FAIL opens an improvement cycle whose deterministic diagnosis chooses `vfs`,
+  `chroma`, `research` (reopen only affected approved tasks), `replan` (replacement plan through
+  FR-040) or `presentation`, keeping answers that passed. A passing draft MUST stop the loop at
+  once; cycles are a maximum, never a target.
+- **FR-043**: Every new draft MUST clear the previous verification, report approval and
+  publication. A report that passes verification always goes to human report approval, also
+  when it discloses evidence gaps.
+- **FR-044**: The writer MUST answer every required item first (`## Answer`), state conclusions
+  rather than narrate the evidence, word gaps exactly as "could not be established from the
+  collected sources", label its own judgment `Assessment:`, and read a question's stored
+  evidence directly when it fits 12,000 characters (vector retrieval only for larger corpora).
+- **FR-045**: A reviewer reply that asks to add a section or aspect within the same research
+  question (e.g. "Add a section on checkpointing specifically") MUST keep the original question,
+  the brief, the existing tasks and the verified report. The system MUST first search the run's
+  vector index for the topic and let a standard-tier LLM judge decide whether the stored passages
+  explain it. If they do, the section MUST be written from those passages without new research;
+  otherwise only one added task MUST be researched, targeting the missing points. The added task
+  is approved by the reviewer's request (a plan revision of kind `extension`), the request is
+  verified as a reviewer requirement, and a judge failure or an empty index MUST fall back to
+  research, never to an unsupported section.
+- **FR-046**: A research task that failed technically (provider or sub-agent error) MUST become a
+  disclosed limitation when other tasks produced usable evidence. When no task produced usable
+  evidence, the run MUST go to review at once: a stored technical failure is not re-assessed,
+  and the recovery `research` action reopens exactly the failed tasks.
 
 ### Key Entities *(include if feature involves data)*
 

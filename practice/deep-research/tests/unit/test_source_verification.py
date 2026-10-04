@@ -2,6 +2,7 @@ from intelligence_collector.contracts import VerificationCheck, VerificationResu
 from intelligence_collector.source_verification import (
     catalog_from_bundles,
     cited_source_excerpts,
+    source_context,
     failure_fingerprint,
 )
 from tests.fixtures.fake_models import cited_report
@@ -64,14 +65,14 @@ def test_cited_source_excerpts_returns_only_the_excerpts_the_report_actually_cit
 
     report = cited_report([GOOD_CLAIM], {"S1": URL})  # cites only S1, never S2
 
-    assert cited_source_excerpts(report, catalog) == [catalog.sources["S1"].excerpt]
+    assert cited_source_excerpts(report, catalog) == [source_context(catalog.sources["S1"])]
 
 
 def test_cited_source_excerpts_deduplicates_repeated_citations():
     catalog = catalog_from_bundles([_bundle()])
     report = cited_report([GOOD_CLAIM, "Version 3.13 added 2 storage tiers [S1]."], {"S1": URL})
 
-    assert cited_source_excerpts(report, catalog) == [catalog.sources["S1"].excerpt]
+    assert cited_source_excerpts(report, catalog) == [source_context(catalog.sources["S1"])]
 
 
 def test_cited_source_excerpts_is_empty_when_nothing_is_cited():

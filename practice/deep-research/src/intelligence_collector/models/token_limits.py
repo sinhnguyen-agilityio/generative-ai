@@ -15,6 +15,7 @@ DEFAULT_OUTPUT_LIMITS = {
     "verify": 3072,
     "research_verify": 2048,
     "feedback_router": 256,
+    "extension_judge": 512,
 }
 
 

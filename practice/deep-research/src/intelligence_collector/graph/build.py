@@ -16,6 +16,7 @@ from intelligence_collector.graph.nodes import (
     RecoveryNodes,
     approval,
     await_clarification,
+    await_plan_approval,
     await_recovery,
     stage_only,
 )
@@ -24,13 +25,21 @@ from intelligence_collector.graph.routing import (
     FIX,
     NEEDS_REVIEW,
     PASSED,
+    PLAN_APPROVED,
+    PLAN_CHANGE,
+    PLAN_DECLINED,
     REJECTED,
+    REPLACEMENT_DECLINED,
+    TO_EXTEND,
     TO_PUBLISH,
     TO_REVISE,
     TO_SCOPE,
     route_after_approval,
     route_after_clarify,
+    route_after_extension,
     route_after_feedback,
+    route_after_fix,
+    route_after_plan_approval,
     route_after_verify,
     route_after_recovery,
     route_after_research,
@@ -60,6 +69,7 @@ def build_graph(
     run_registry=None,
     output_dir: str = "exports",
     feedback_router=None,
+    extension_judge=None,
 ):
     """Build the research workflow graph.
 
@@ -69,11 +79,16 @@ def build_graph(
             START -> clarify_with_user --(needs clarification)--> await_clarification (interrupt)
                                        <--(validated human reply)--/
                                        \\-> write_research_brief -> planning
+                  -> await_plan_approval (interrupt; nothing is retrieved before approval)
                   -> researching -> research_complete -> synthesizing -> verifying
-            verifying --(all checks pass)--> evaluating_quality
-                          -> approval (complete, with_approval) | END (complete)
-                          -> finish_incomplete -> END (partial/insufficient)
-                      --(failed, budget left)--> fixing (reflect) -> synthesizing (rewrite)
+            await_plan_approval --(change)--> clarify_with_user  --(decline)--> END
+            verifying --(PASS: coverage, citations, Faithfulness > 0.90)--> evaluating_quality
+                          -> approval (with_approval) | END
+                      --(FAIL, cycle budget left)--> fixing (diagnosis)
+                          -> synthesizing (vfs / chroma / presentation repair)
+                          | prepare_repair_research -> researching (targeted Tavily research)
+                          | replan -> await_plan_approval (replacement strategy)
+                      --(ERROR)--> retry_verifier (no rewrite) | needs_review
                       --(budget exhausted / no progress)--> needs_review
                           -> await_recovery (interrupt) -> apply_recovery_decision
                           -> authorized repair, research, rescope, export, or cancellation
@@ -81,6 +96,9 @@ def build_graph(
                      --(chat reply / reject)--> classify_feedback (LLM reads the reply)
             classify_feedback --(approve)--> publishing -> END
                               --(revise)--> synthesizing (rewrite with the request, re-verified)
+                              --(extend)--> locate_extension_evidence
+                                  --(stored evidence enough)--> synthesizing
+                                  --(missing points)--> researching (only the added task)
                               --(scope)--> clarify_with_user -> brief -> planning
                                            (fresh plan, discards prior draft/verification)
 
@@ -112,10 +130,10 @@ def build_graph(
 
     # ===== SCOPE AND PLANNING =====
 
+    planner_agent = planner_agent or (PlannerAgent(scope_agent.router) if scope_agent else None)
     if scope_agent is not None:
         scope = ScopeNodes(scope_agent, vfs)
-        planner = PlannerNodes(
-            planner_agent or PlannerAgent(scope_agent.router), vfs)
+        planner = PlannerNodes(planner_agent, vfs)
         add_node(Node.CLARIFY, scope.clarify_with_user)
         add_node(Node.AWAIT_CLARIFICATION, await_clarification)
         add_node(Node.WRITE_BRIEF, scope.write_research_brief)
@@ -151,7 +169,17 @@ def build_graph(
 
     add_node(Node.RESEARCH, research_nodes.researching)
     add_node(Node.ASSESS_RESEARCH, research_nodes.research_complete)
-    _chain(graph, Node.PLAN, Node.RESEARCH, Node.ASSESS_RESEARCH)
+    if scope_agent is not None:
+        # A real plan exists: retrieval waits for its explicit approval.
+        add_node(Node.AWAIT_PLAN, await_plan_approval)
+        graph.add_edge(Node.PLAN, Node.AWAIT_PLAN)
+        graph.add_conditional_edges(Node.AWAIT_PLAN, route_after_plan_approval, {
+            PLAN_APPROVED: Node.RESEARCH, PLAN_CHANGE: Node.CLARIFY, PLAN_DECLINED: END,
+            REPLACEMENT_DECLINED: Node.NEEDS_REVIEW})
+    else:
+        # Stage-only planning stub: todos are injected by the caller, no plan record exists.
+        graph.add_edge(Node.PLAN, Node.RESEARCH)
+    graph.add_edge(Node.RESEARCH, Node.ASSESS_RESEARCH)
     graph.add_conditional_edges(Node.ASSESS_RESEARCH, route_after_research, {
         Node.SYNTHESIZE: Node.SYNTHESIZE,
         Node.PREPARE_GAP_RESEARCH: Node.PREPARE_GAP_RESEARCH,
@@ -164,10 +192,19 @@ def build_graph(
 
     # ===== BUILD-VERIFY-FIX LOOP =====
     bvf = research_nodes.bvf
+    bvf.planner = planner_agent if scope_agent is not None else None
+    bvf.extension_judge = extension_judge
     add_node(Node.SYNTHESIZE, bvf.synthesizing)
     add_node(Node.VERIFY, bvf.verifying)
     add_node(Node.EVALUATE_QUALITY, bvf.evaluating_quality)
     add_node(Node.FIX, bvf.fixing)
+    add_node(Node.PREPARE_REPAIR_RESEARCH, bvf.prepare_repair_research)
+    graph.add_edge(Node.PREPARE_REPAIR_RESEARCH, Node.RESEARCH)
+    fix_targets = [Node.SYNTHESIZE, Node.PREPARE_REPAIR_RESEARCH]
+    if scope_agent is not None:
+        add_node(Node.REPLAN, bvf.replan)
+        graph.add_edge(Node.REPLAN, Node.AWAIT_PLAN)
+        fix_targets.append(Node.REPLAN)
     add_node(Node.NEEDS_REVIEW, bvf.needs_review)
     add_node(Node.AWAIT_RECOVERY, lambda state: await_recovery(
         state, can_rescope=scope_agent is not None))
@@ -176,25 +213,18 @@ def build_graph(
     add_node(Node.RETRY_VERIFIER, lambda state: state)
     graph.add_edge(Node.RETRY_VERIFIER, Node.VERIFY)
 
-    add_node(Node.FINISH_INCOMPLETE, bvf.finish_incomplete)
-    graph.add_edge(Node.FINISH_INCOMPLETE, END)
-
     graph.add_edge(Node.SYNTHESIZE, Node.VERIFY)
     passed_target = Node.APPROVE if with_approval else END
-    # RAGAS quality scoring (evaluating_quality) runs only on this PASSED edge — once, on the
-    # final report that actually left the BVF loop — never on a draft that gets fixed and
-    # reverified.
+    # Optional quality observations run only on this PASSED edge, on the exact report that
+    # left the loop; a passing first draft goes straight there without an improvement cycle.
     graph.add_conditional_edges(
         Node.VERIFY,
         route_after_verify,
         {PASSED: Node.EVALUATE_QUALITY, FIX: Node.FIX, NEEDS_REVIEW: Node.NEEDS_REVIEW,
          Node.RETRY_VERIFIER: Node.RETRY_VERIFIER},
     )
-    graph.add_conditional_edges(Node.EVALUATE_QUALITY,
-                                lambda state: Node.FINISH_INCOMPLETE if state.get("result_incomplete") else passed_target,
-                                [Node.FINISH_INCOMPLETE, passed_target])
-    # Draft defects rewrite existing evidence; evidence and plan gaps use their own loop.
-    graph.add_edge(Node.FIX, Node.SYNTHESIZE)
+    graph.add_edge(Node.EVALUATE_QUALITY, passed_target)
+    graph.add_conditional_edges(Node.FIX, route_after_fix, fix_targets)
     graph.add_edge(Node.NEEDS_REVIEW, Node.AWAIT_RECOVERY)
     graph.add_edge(Node.AWAIT_RECOVERY, Node.APPLY_RECOVERY)
     graph.add_conditional_edges(Node.APPLY_RECOVERY, route_after_recovery, {
@@ -223,6 +253,9 @@ def build_graph(
         approval_nodes = ApprovalNodes(vfs, output_dir, feedback_router)
         add_node(Node.APPROVE, approval_nodes.approval)
         add_node(Node.CLASSIFY_FEEDBACK, approval_nodes.classify_feedback)
+        add_node(Node.LOCATE_EXTENSION, bvf.locate_extension_evidence)
+        graph.add_conditional_edges(Node.LOCATE_EXTENSION, route_after_extension,
+                                    [Node.SYNTHESIZE, Node.RESEARCH])
         add_node(Node.PUBLISH, approval_nodes.publishing)
         graph.add_conditional_edges(
             Node.APPROVE,
@@ -238,6 +271,7 @@ def build_graph(
             {
                 TO_PUBLISH: Node.PUBLISH,
                 TO_REVISE: Node.PREPARE_REVISION,
+                TO_EXTEND: Node.LOCATE_EXTENSION,
                 # A scope change re-enters scoping (the stub scope node when no scope agent).
                 TO_SCOPE: Node.CLARIFY if scope_agent is not None else Node.STUB_SCOPE,
             },

@@ -112,6 +112,9 @@ class ScopeAgent:
             run_id=run_id,
             thread_id=thread_id,
         )
+        # System-owned: the user's own turns, so later stages can see what was actually asked.
+        turns = [str(m.content) for m in conversation if isinstance(m, HumanMessage)] or [request]
+        brief = brief.model_copy(update={"original_question": "\n".join(turns).strip()})
         if vfs and run_id:
             vfs.write_json(
                 run_id,

@@ -1,0 +1,118 @@
+{
+  "sources": {
+    "S1": {
+      "url": "https://blog.postman.com/http-error-429",
+      "title": "HTTP Error 429 (Too Many Requests) – How to Fix",
+      "excerpt": "HTTP 429 Too Many Requests is a client error status code indicating you’ve exceeded the allowed request rate. It’s part of the 4xx family of status codes that signal client-side problems rather than server errors.\n\nRate limiting acts as traffic control. Just as highways have speed limits, APIs enforce request limits to maintain stability for all users. When you exceed these limits, the server responds with 429 instead of processing your request. [...] The 429 Too Many Requests error code (or HTTP error 429) means you’ve hit the API’s rate limit, where the server temporarily blocks requests to protect itself from overload. This guide shows you how to understand, prevent, and handle 429 errors with practical retry strategies and code examples.\n\n## What is HTTP 429 Too Many Requests? [...] # HTTP Error 429 (Too Many Requests) – How to Fix\n\nImage 7: User Avatar\n\nThe Postman Team\n\nNovember 19, 2025\n\n### HTTP Error 429 Explained:\n\nHTTP 429 Too Many Requests means you’ve exceeded the API’s rate limit. Solutions include implementing exponential backoff, respecting `Retry-After` headers, using request queuing, caching responses, and distributing load over time."
+    },
+    "S2": {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429",
+      "title": "429 Too Many Requests - HTTP | MDN",
+      "excerpt": "The HTTP `429 Too Many Requests` client error response status code indicates the client has sent too many requests in a given amount of time. This mechanism of asking the client to slow down the rate of requests is commonly called \"rate limiting\".\n\nA `Retry-After` header may be included to this response to indicate how long a client should wait before making the request again. [...] http\n\n```\nGET /reports/mdn HTTP/1.1 Host: example.com \n```\n\nIn this example, server-wide rate limiting is active when a client exceeds a set threshold of requests per minute. A 429 response is returned with a `Retry-After` header that indicates requests will be allowed for this client again after 3600 seconds (60 minutes):\n\nhttp\n\n```\nHTTP/1.1 429 Too Many Requests Content-Type: text/html Retry-After: 3600   Too Many Requests\n\n# Too Many Requests\n\nYou're doing that too often! Try again later. [...] Implementations of rate limiting vary; restrictions may be server-wide or per resource. Typically, rate-limiting restrictions are based on a client's IP but can be specific to users or authorized applications if requests are authenticated or contain a cookie.\n\n## Status\n\nhttp\n\n```\n429 Too Many Requests \n```\n\n## Examples\n\n### Response containing Retry-After header\n\nThe following request is being sent repeatedly in a loop by a client that is misconfigured:\n\nhttp"
+    },
+    "S3": {
+      "url": "https://http.dev/429",
+      "title": "429 Too Many Requests - HTTP status code explained",
+      "excerpt": "# 429 Too Many Requests\n\nExceeding the allowed request rate triggers the 429 Too Many Requests status code, also known as \"rate limiting\".\n\nTable of Contents\n\n Usage\n Crawlers and rate limiting\n Example\n How to fix\n Code references\n See also\n\n## Usage\n\nThe 429 Too Many Requests status code indicates the number of HTTP requests has exceeded the allowed threshold. This happens, for example, when the server wants to limit the number of API calls in an hour. [...] Queue outgoing requests on the client side. A request queue with a controlled dispatch rate prevents bursts from exceeding the limit. Batch multiple operations into a single API call when the endpoint supports bulk operations.\n\nCache responses for data not expected to change between requests. Redundant identical calls are the most common source of unnecessary rate-limit consumption. [...] To slow Googlebot down, 429 is the correct status code. 401 and 403 leave the crawl rate unchanged. For Bingbot, a `Crawl-delay` directive in `robots.txt` paces the crawler directly, the alternative Bing documents to status-code throttling.\n\n## Example\n\nThe client requests a resource and the server responds with 429 Too Many Requests.\n\nRequest\n\n```\nCopied !\n```\n\nResponse\n\n```\nHTTP/1.1 429 Too Many Requests Retry-After: 1800 Content-Type: text/html Content-Length: 168 Request Limit Exceeded"
+    },
+    "S4": {
+      "url": "https://www.olostep.com/glossary/web-scraping-apis/what-is-429-error-web-scraping",
+      "title": "What is HTTP Status 429? | Olostep",
+      "excerpt": "HTTP 429 is a client-side requests status code that tells you the client has sent too many requests in a given amount of time. HTTP 429 indicates exceeding the API's rate limit - not that something is broken on the server, and not that you are permanently blocked. The status code indicates that access is allowed, but the request rate has exceeded what the server permits within a defined time window. [...] Status line. The response begins with 429 Too Many Requests, a 4xx-class http error confirming it is a client-side issue (request rate), not a server malfunction. The server is not temporarily unable to handle the request - it is actively refusing excessive requests. [...] ## 429 Too Many Requests in Web Scraping and AI Data Pipelines\n\nLarge-scale web scraping for e-commerce monitoring, LLM grounding, and agentic research routinely runs into strict rate limits. When your pipeline needs to pull data from thousands of pages across many domains, 429 errors are the primary bottleneck."
+    },
+    "S5": {
+      "url": "https://stackoverflow.com/questions/22786068/how-to-avoid-http-error-429-too-many-requests-python",
+      "title": "How to avoid HTTP error 429 (Too Many Requests) python",
+      "excerpt": "Receiving a status 429 is not an error, it is the other server \"kindly\" asking you to please stop spamming requests."
+    },
+    "S6": {
+      "url": "https://httpwg.org/specs/rfc6585.html",
+      "title": "RFC 6585 - Additional HTTP Status Codes",
+      "excerpt": "Value: 428\n Description: Precondition Required\n Reference: [RFC6585]\n\n Value: 429\n Description: Too Many Requests\n Reference: [RFC6585]\n\n Value: 431\n Description: Request Header Fields Too Large\n Reference: [RFC6585]\n\n Value: 511\n Description: Network Authentication Required\n Reference: [RFC6585]\n\n## 9. References\n\n### 9.1. Normative References\n\n[RFC2119]\n:   Bradner, S., “Key words for use in RFCs to Indicate Requirement Levels”, BCP 14, RFC 2119, March 1997. [...] ```\nHTTP/1.1 428 Precondition Required Content-Type: text/html   Precondition Required\n\n# Precondition Required\n\nThis request is required to be conditional; try using \"If-Match\".\n\n```\n\nResponses with the 428 status code MUST NOT be stored by a cache.\n\n## 4. 429 Too Many Requests\n\nThe 429 status code indicates that the user has sent too many requests in a given amount of time (\"rate limiting\"). [...] The response representations SHOULD include details explaining the condition, and MAY include a Retry-After header indicating how long to wait before making a new request.\n\nFor example:\n\n```\nHTTP/1.1 429 Too Many Requests Content-Type: text/html Retry-After: 3600   Too Many Requests\n\n# Too Many Requests\n\nI only allow 50 requests per hour to this Web site per logged in user. Try again soon.\n\n```"
+    },
+    "S7": {
+      "url": "https://www.thestatuscode.com/4xx/429",
+      "title": "429 Too Many Requests — The Status Code",
+      "excerpt": "> Example: Like when you’re at the library and can only check out 5 books at a time. If you try to check out a 6th book, the librarian says “You’ve hit your limit! Return some books first, then you can check out more.”\n\n## Jr. Developer\n\n429 Too Many Requests indicates you’ve exceeded the rate limit for an API or service. Rate limiting is a crucial technique to prevent abuse, ensure fair usage, and protect servers from being overwhelmed.\n\nWhy rate limiting exists: [...] RFC 6585 Definition: “The 429 status code indicates that the user has sent too many requests in a given amount of time (‘rate limiting’). The response representations SHOULD include details explaining the condition, and MAY include a Retry-After header indicating how long to wait before making a new request.”\n\nRate Limiting Algorithms:\n\n1. Token Bucket [...] ```\n\n## Deep Dive\n\nHTTP 429 Too Many Requests represents a critical control mechanism in modern API design, balancing resource protection, fair usage, and business model enforcement. Effective rate limiting requires careful consideration of algorithm choice, distributed consistency, and client interaction patterns.\n\nAlgorithm Comparison and Trade-offs:\n\nToken Bucket:"
+    },
+    "S8": {
+      "url": "https://www.requesty.ai/blog/429-too-many-requests",
+      "title": "429 Too Many Requests: LLM API Causes and Fixes | Requesty",
+      "excerpt": "What does 429 Too Many Requests mean?\n:   HTTP 429 Too Many Requests means a server is limiting requests made in a period of time. On LLM APIs, the same status can also indicate token limits, concurrency limits, exhausted credits, spend caps or shared-capacity contention. Read the error body to identify the cause. [...] Requesty\n\nBack|SEP '26BEST PRACTICES / ROUTING\n\n21 MIN READ|\n\n# 429 Too Many Requests: Causes and Fixes for LLM APIs\n\nLast updated\n\nHTTP 429 Too Many Requests means the server is limiting requests made in a period of time. A `Retry-AfterRetry-After` header may tell you when to try again. RFC 6585 defines the status, but leaves the counting method and client identity to the server. [...] On LLM APIs, read the error body too. A 429 can indicate request, token or concurrency pressure, exhausted credits, a spend cap or shared-capacity contention. The fix depends on which layer rejected the request and which limit it enforced.\n\n## What does 429 Too Many Requests mean?"
+    },
+    "S9": {
+      "url": "https://zuplo.com/learning-center/http-429-too-many-requests-guide",
+      "title": "HTTP 429 Too Many Requests: Causes, Headers & Retry ...",
+      "excerpt": "The HTTP 429 Too Many Requests status code signals that a client has exceeded the rate limit of requests allowed by a server API."
+    },
+    "S10": {
+      "url": "https://www.rfc-editor.org/info/rfc6585",
+      "title": "RFC 6585: Additional HTTP Status Codes | RFC Editor",
+      "excerpt": "```\n RFC 6585 Additional HTTP Status Codes April 20124. 429 Too Many RequestsNottingham & Fielding Standards Track [Page 3]\n```\n\n```\n RFC 6585 Additional HTTP Status Codes April 20125. 431 Request Header Fields Too Large6. 511 Network Authentication RequiredNottingham & Fielding Standards Track [Page 4]\n```\n\n```\n RFC 6585 Additional HTTP Status Codes April 20126.1. The 511 Status Code and Captive PortalsNottingham & Fielding Standards Track [Page 5]\n``` [...] ```\n RFC 6585 Additional HTTP Status Codes April 20127. Security Considerations7.1. 428 Precondition Required7.2. 429 Too Many Requests7.3. 431 Request Header Fields Too Large7.4. 511 Network Authentication RequiredNottingham & Fielding Standards Track [Page 6]\n```\n\n```\n RFC 6585 Additional HTTP Status Codes April 20128. IANA Considerations9. References9.1. Normative References9.2. Informative ReferencesNottingham & Fielding Standards Track [Page 7]\n``` [...] ## In this section\n\n 1. Introduction\n 2. Requirements\n 3. 428 Precondition Required\n 4. 429 Too Many Requests\n 5. 431 Request Header Fields Too Large\n 6. 511 Network Authentication Required\n\n  + 6.1. The 511 Status Code and Captive Portals\n 7. Security Considerations\n\n  + 7.1. 428 Precondition Required\n  + 7.2. 429 Too Many Requests\n  + 7.3. 431 Request Header Fields Too Large\n  + 7.4. 511 Network Authentication Required\n 8. IANA Considerations\n 9. References"
+    },
+    "S11": {
+      "url": "https://community.tyk.io/t/how-to-send-back-a-retry-after-response-header-with-429/7472",
+      "title": "How to send back a Retry-After response header with 429 - API platform engineering - Tyk API Management Community Forum",
+      "excerpt": "I was looking at the docs and it’s pretty clear how to configure an API to send back some additional headers and how to use the plugin middleware to modify the response as well, but it doesn’t look like there’s any obvious way to just set a retry-after header that indicates how many seconds the client should  \nwait before retrying their request. I would like it to look something like this, with the 10 indicating 10 seconds:\n\n`\"Retry-After\": \"10\"`\n\nI ran into a couple of problems with testing. [...] Well you can modify the request within the Pre-Request Middleware (Plugin) level but there is no way to change the response header when it hits the rate limiter.\n\nYou can use the errors template to modify the body or message if you are interested\n\nWe have an enhancement request internally to populate `Retry-After` header when 429 is issued in the backlog. The internal reference is TT-6084. I can update this thread once the feature has been implemented.\n\n`Retry-After` [...] @timothy\\_park On second thought you may want to check out if request throttling can handle what you want\n\nPowered by Discourse, best viewed with JavaScript enabled"
+    },
+    "S12": {
+      "url": "https://discourse.gohugo.io/t/handling-of-retry-after-for-429-in-resources-getremote/57066",
+      "title": "Handling of `Retry-After` for 429 in `resources.GetRemote` - support - HUGO",
+      "excerpt": "Wikipedia returns seconds, I’ve seen up to a lower three-digit range (around 2 to 3 minutes). I would argue that those should only be respected if lower then the timeout setting otherwise fail with a message displaying both, like “ERROR: API expected to wait for X seconds, but timeout is Y seconds (which is less)”\n\n#### Handle Retry-After header in resources.GetRemote [...] `Retry-After`\n\nHas anyone here has an idea how to handle those? Since the isn’t a `wait` or `sleep` it might be hard to implement it in a template.\n\n`wait`\n`sleep`\n\nSince @irkode wrote this post on paged APIs, maybe he has an idea?\n\nlike the ones provided by Wikipedia. In those APIs a response with error 429 also has a `Retry-After`\n\n`Retry-After`\n\nWhat are the typical values returned there? Seconds or hours? If it’s the first, it would make sense to add some support for it inside Hugo. [...] But if it’s hours, I would probably go for a bash scripter that has some retry logic (e.g. run `hugo` until no error of a given type).\n\n`hugo`\n\nWhat are the typical values returned there? Seconds or hours? If it’s the first, it would make sense to add some support for it inside Hugo."
+    },
+    "S13": {
+      "url": "https://community.atlassian.com/forums/discussion/1656672/im-not-able-to-get-retry-after-header-on-getting-429",
+      "title": "I'm not able to get retry-after header on getting 429 - Atlassian",
+      "excerpt": "`429` responses may be accompanied by `Retry-After` and `X-RateLimit-Reset` headers.\n\n`429`\n`Retry-After`\n`X-RateLimit-Reset`\n\n`Retry-After` indicates how many seconds the app must wait before reissuing the request. If you reissue the request before the retry period expires, the request will fail and return the same or longer `Retry-After` period.\n\n`Retry-After`\n`Retry-After` [...] `X-RateLimit-Reset` indicates the date time when you can retry the request. It’s provided in the format: `yyyy-MM-ddTHH:mmZ`.\n\n`X-RateLimit-Reset`\n`yyyy-MM-ddTHH:mmZ`\n\nSome transient `5XX` errors are accompanied by a `Retry-After` header. For example, a `503` response may be returned when a resource limit has been reached. While these are not rate limit responses, they can be handled with similar logic as outlined below.\n\n`5XX`\n`Retry-After`\n`503` [...] 429  \n{  \nserver: 'AtlassianProxy/1.15.8.1',  \nvary: 'Accept-Encoding',  \n'content-type': 'text/html;charset=ISO-8859-1',  \n'strict-transport-security': 'max-age=315360000; includeSubDomains; preload',  \ndate: 'Tue, 06 Apr 2021 12:03:12 GMT',  \n'atl-traceid': 'caa2c0619953d843',  \n'x-xss-protection': '1; mode=block',  \n'x-envoy-upstream-service-time': '15',  \n'x-content-type-options': 'nosniff',  \nconnection: 'close',  \n'expect-ct': 'report-uri=\"\", enforce, max-age=86400',"
+    },
+    "S14": {
+      "url": "https://github.com/git-lfs/git-lfs/issues/6007",
+      "title": "Retry-After header wait time when HTTP 429 is received is not considered. Does not wait. · Issue #6007 · git-lfs/git-lfs · GitHub",
+      "excerpt": "Retrying with `git clone -c lfs.concurrenttransfers=1` or `-c lfs.concurrenttransfers=1 -c lfs.transfer.batchSize=1000` did not improve the situation.\n\n`git clone -c lfs.concurrenttransfers=1`\n`-c lfs.concurrenttransfers=1 -c lfs.transfer.batchSize=1000`\n\nExpected behavior  \nWhen a HTTP 429 is received by a single worker and it contains the `Retry-After` response header with a number, `git-lfs` should wait for the specified amount of time and therefore respect `Retry-After` sent by the server. [...] `git-lfs`\n\nWhat actually happens is that `git-lfs` retries HTTP 429 as often as possible, which puts additional load on the git server.\n\n`git-lfs`\n\nTo Reproduce  \nSteps to reproduce the behavior:\n\n`git lfs`\n`GIT_CURL_VERBOSE=1 GIT_TRANSFER_TRACE=1 git clone  > trace.txt 2>&1`\n`trace.txt`\n`git-lfs`\n\nIn the `trace.txt` below you can see the `Retry-After` number counting down, clearly indicating that its not waiting for the rate limit to pass.\n\n`trace.txt`\n`Retry-After` [...] ## Navigation Menu\n\n# Retry-After header wait time when HTTP 429 is received is not considered. Does not wait. #6007\n\nchrisd8088\n\n## Description\n\n@max-wittig\n\nDescribe the bug  \nWhen using a git server with git-lfs support, and the rate limit when requesting files is it and HTTP 429 is emitted would expect `git-lfs` to wait the correct number of time, specified in Retry-After header.\n\n`git-lfs`"
+    },
+    "S15": {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After",
+      "title": "Retry-After header - HTTP | MDN",
+      "excerpt": "In a `503 Service Unavailable` response, this indicates how long the service is expected to be unavailable.\n In a `429 Too Many Requests` response, this indicates how long to wait before making a new request.\n In a redirect response, such as `301 Moved Permanently`, this indicates the minimum time that the user agent is asked to wait before issuing the redirected request.\n\n|  |  |\n --- |\n| Header type | Response header |\n\n## Syntax\n\nhttp\n\n```\nRetry-After:  Retry-After:  \n```\n\n## Directives [...] ## Directives\n\n:   A date after which to retry. See the `Date` header for more details on the HTTP date format.\n:   A non-negative decimal integer indicating the seconds to delay after the response is received.\n\n## Examples\n\n### Dealing with scheduled downtime [...] Skip to search\n\nToggle sidebar \n\n1. Web\n2. HTTP\n3. Reference\n4. Headers\n5. Retry-After\n\n \n\nRemember language   Learn more\n\n Deutsch\n English (US)\n Français\n 日本語\n 한국어\n Português (do Brasil)\n Русский\n 中文 (简体)\n\n# Retry-After header\n\nThe HTTP `Retry-After` response header indicates how long the user agent should wait before making a follow-up request. There are three main cases this header is used:"
+    }
+  },
+  "bundles": [
+    {
+      "question": "For HTTP status code 429 Too Many Requests, which RFC defines this status code (including its name/meaning and status definition)?",
+      "source_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6"
+      ],
+      "summary": "HTTP status code **429 Too Many Requests** is defined by **RFC 6585 – Additional HTTP Status Codes** [https://httpwg.org/specs/rfc6585.html].\n\n- **Name/meaning:** **429 Too Many Requests** [https://httpwg.org/specs/rfc6585.html].\n- **Status definition (RFC 6585, Section 4 “429 Too Many Requests”):** The **429** status code indicates that the **user has sent too many requests in a given amount of time (“rate limiting”)** [https://httpwg.org/specs/rfc6585.html]. The response **SHOULD** include details explaining the condition and **MAY** include a **`Retry-After`** header indicating how long to wait before making a new request [https://httpwg.org/specs/rfc6585.html].",
+      "gaps": []
+    },
+    {
+      "question": "For HTTP status code 429 Too Many Requests, what does this status code mean in HTTP (rate limiting / client request handling semantics)?",
+      "source_ids": [
+        "S2",
+        "S7",
+        "S8",
+        "S9",
+        "S10"
+      ],
+      "summary": "- **Meaning (HTTP semantics):** `429 Too Many Requests` is a **client error** indicating the client has sent **too many requests in a given amount of time**, and the server is **rate limiting** the client. [https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429]\n- **Standard requirements (RFC 6585):** The `429` condition corresponds to **rate limiting**; the response **SHOULD** include explanatory details, and **MAY** include a **`Retry-After`** header telling the client **how long to wait before making another request**. [https://www.rfc-editor.org/info/rfc6585]\n- **Practical usage:** The response is commonly used to tell clients to **slow down and retry later**. The specific limiting policy/counting method is **implementation-defined** (e.g., could be server-wide, per resource, or based on client identity such as IP). [https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429]",
+      "gaps": []
+    },
+    {
+      "question": "For HTTP responses with status code 429 Too Many Requests, which response header tells the client how long to wait before retrying (and what is it called)?",
+      "source_ids": [
+        "S11",
+        "S12",
+        "S13",
+        "S14",
+        "S15"
+      ],
+      "summary": "For HTTP **429 Too Many Requests**, the client should use the **`Retry-After`** response header, i.e., it is called the **“Retry-After” header**. MDN states that in a **429** response it **indicates how long to wait before making a new request**. [https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After]",
+      "gaps": []
+    }
+  ]
+}

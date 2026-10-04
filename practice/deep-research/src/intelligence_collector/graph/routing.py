@@ -16,8 +16,13 @@ PASSED, FIX, NEEDS_REVIEW = "passed", "fix", "needs_review"
 # Outcomes of route_after_approval; build.py maps these to PUBLISH or CLASSIFY_FEEDBACK.
 APPROVED, REJECTED = "approved", "rejected"
 
-# Outcomes of route_after_feedback; build.py maps these to PUBLISH, SYNTHESIZE or CLARIFY.
-TO_PUBLISH, TO_REVISE, TO_SCOPE = "approve", "revise", "scope"
+# Outcomes of route_after_feedback; build.py maps these to PUBLISH, PREPARE_REVISION,
+# LOCATE_EXTENSION or CLARIFY.
+TO_PUBLISH, TO_REVISE, TO_EXTEND, TO_SCOPE = "approve", "revise", "extend", "scope"
+
+# Outcomes of route_after_plan_approval.
+PLAN_APPROVED, PLAN_CHANGE, PLAN_DECLINED, REPLACEMENT_DECLINED = (
+    "approve", "change", "decline", "replacement_declined")
 
 # ===== CONDITIONAL EDGE ROUTERS =====
 
@@ -35,8 +40,21 @@ def route_after_clarify(state: GraphState) -> str:
     return Node.WRITE_BRIEF
 
 
+def route_after_plan_approval(state: GraphState) -> str:
+    """Approved plans start retrieval; a change request rescopes; a declined initial plan ends
+    the run and a declined replacement plan goes to review with the latest draft."""
+    approval = state.get("plan_approval") or {}
+    outcome = approval.get("outcome")
+    if outcome == "approve" and approval.get("approved"):
+        return PLAN_APPROVED
+    if outcome == "change":
+        return PLAN_CHANGE
+    return REPLACEMENT_DECLINED if approval.get("kind") == "replacement" else PLAN_DECLINED
+
+
 def route_after_verify(state: GraphState) -> str:
-    """BVF gate: only a fully passing report leaves the loop; otherwise fix or escalate."""
+    """PASS leaves the loop at once. ERROR is retried, then escalated; it never rewrites the
+    report. FAIL opens an improvement cycle while the budget lasts and progress is made."""
     verification = state.get("verification") or {}
     if verification.get("passed"):
         return PASSED
@@ -51,7 +69,21 @@ def route_after_verify(state: GraphState) -> str:
     return FIX
 
 
+def route_after_fix(state: GraphState) -> str:
+    """Follow the diagnosed repair route."""
+    route = (state.get("repair") or {}).get("route")
+    if route == "research":
+        return Node.PREPARE_REPAIR_RESEARCH
+    if route == "replan":
+        return Node.REPLAN
+    return Node.SYNTHESIZE
+
+
 def route_after_research(state: GraphState) -> str:
+    """A technical failure with no usable evidence goes to review at once; only a failed
+    research assessor (an LLM call) is worth one retry."""
+    if state.get("verification_issue") == "research_failure":
+        return Node.NEEDS_REVIEW
     if state.get("verification_issue") == "research_verifier_failure":
         return (Node.RETRY_RESEARCH_ASSESSMENT if state.get("research_verifier_attempt", 0) < 2
                 else Node.NEEDS_REVIEW)
@@ -74,4 +106,12 @@ def route_after_feedback(state: GraphState) -> str:
     route = state.get("feedback_route")
     if route == "approve" and (state.get("approval") or {}).get("approved"):
         return TO_PUBLISH
-    return TO_SCOPE if route == "scope" else TO_REVISE
+    if route in {TO_EXTEND, TO_SCOPE}:
+        return route
+    return TO_REVISE
+
+
+def route_after_extension(state: GraphState) -> str:
+    """Stored evidence covers the requested section -> write it; otherwise research the one
+    added task first."""
+    return Node.SYNTHESIZE if (state.get("extension") or {}).get("sufficient") else Node.RESEARCH

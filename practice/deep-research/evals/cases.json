@@ -1,0 +1,112 @@
+{
+  "description": "Small report-quality evaluation set. Rubrics are judged by a human against the saved report and the evidence collected in that run; the workflow's own verification verdict is recorded but is not the rubric outcome.",
+  "cases": [
+    {
+      "id": "simple_factual",
+      "kind": "simple factual question",
+      "question": "What is the latest stable version of Python?",
+      "clarification_reply": "Use python.org as the source. Report only the latest stable (not pre-release) version and its release date.",
+      "rubric": {
+        "required_answer_points": [
+          "States one exact latest stable version number (major.minor.patch) in the first body section.",
+          "States that version's release date as given by python.org.",
+          "Does not present a pre-release (alpha, beta, rc) as the stable version."
+        ],
+        "acceptable_evidence": [
+          "python.org Downloads, Source Releases, Windows/macOS release listings or the matching 'Python X.Y.Z' release page.",
+          "The Python Developer's Guide status-of-versions page."
+        ],
+        "output_constraints": [
+          "English Markdown report.",
+          "Short: a direct answer, no background history or feature tour.",
+          "Every body claim cites a source collected in this run."
+        ],
+        "honest_gap": "Only if no python.org listing was collected: say the latest stable version could not be confirmed from the collected sources and name what was found instead. If a listing with the version and date was collected, labeling the answer INCOMPLETE or refusing to name the version is a failure.",
+        "failure_markers": [
+          "No version number stated as the answer.",
+          "Answer labeled INCOMPLETE although the collected listing shows the version and date.",
+          "Meta-narration such as 'the provided evidence states' instead of a conclusion."
+        ]
+      }
+    },
+    {
+      "id": "simple_comparison",
+      "kind": "simple comparison",
+      "question": "Compare HTTP status codes 401 Unauthorized and 403 Forbidden: what does each mean, and when should a server return one rather than the other?",
+      "clarification_reply": "Use the HTTP specification (RFC 9110) and MDN. A short comparison is enough.",
+      "rubric": {
+        "required_answer_points": [
+          "401: the request lacks valid authentication credentials for the target resource.",
+          "401 responses carry a WWW-Authenticate header with at least one challenge.",
+          "403: the server understood the request but refuses to fulfill it; supplying (other) credentials will not help, or access is denied for the authenticated client.",
+          "A clear rule for choosing: 401 when authentication is missing/invalid and could succeed; 403 when the identity is known (or irrelevant) but not permitted."
+        ],
+        "acceptable_evidence": [
+          "RFC 9110 sections 15.5.2 and 15.5.4 (rfc-editor.org, datatracker.ietf.org, httpwg.org).",
+          "MDN Web Docs pages for 401 and 403."
+        ],
+        "output_constraints": [
+          "English Markdown report.",
+          "Comparison is easy to scan (short sections or a table).",
+          "Every body claim cites a source collected in this run."
+        ],
+        "honest_gap": "If WWW-Authenticate was not in any collected excerpt, the report should not assert it without a citation; it may omit it and note the gap.",
+        "failure_markers": [
+          "Only defines the codes without the decision rule.",
+          "Mentions 'authentication' and 'authorization' without saying which code applies when."
+        ]
+      }
+    },
+    {
+      "id": "explicit_subquestions",
+      "kind": "question with three explicit subquestions",
+      "question": "For HTTP status 429 Too Many Requests: (1) which RFC defines it, (2) what does it mean, and (3) which response header tells the client how long to wait before retrying?",
+      "clarification_reply": "Use IETF RFCs and MDN. Answer the three numbered questions directly.",
+      "rubric": {
+        "required_answer_points": [
+          "(1) RFC 6585 (Additional HTTP Status Codes), section 4.",
+          "(2) The user/client has sent too many requests in a given amount of time (rate limiting).",
+          "(3) The Retry-After header (optional, MAY be included) indicates how long to wait."
+        ],
+        "acceptable_evidence": [
+          "RFC 6585 (rfc-editor.org or datatracker).",
+          "MDN 429 page; RFC 9110 Retry-After definition (section 10.2.3)."
+        ],
+        "output_constraints": [
+          "English Markdown report.",
+          "One clearly identifiable answer per numbered subquestion.",
+          "Every body claim cites a source collected in this run."
+        ],
+        "honest_gap": "If RFC 6585 itself was not collected, the report may cite MDN's statement that 429 is defined in RFC 6585, and say the RFC text was not read directly.",
+        "failure_markers": [
+          "Subquestion (2) is answered only by describing the RFC or the header rules, never by stating the meaning (observed in exports/11f6c300-f72a-4371-b393-e5713236592c.md).",
+          "Body sentences narrate the evidence ('the provided evidence includes an excerpt...') instead of answering."
+        ]
+      }
+    },
+    {
+      "id": "uncertain_no_evidence",
+      "kind": "genuinely uncertain question / evidence likely missing",
+      "question": "How many monthly active developers used the LangGraph library in September 2026?",
+      "clarification_reply": "Any public, citable figure is fine; if there is none, say so and give the closest public proxy metric if one exists.",
+      "rubric": {
+        "required_answer_points": [
+          "States plainly that no authoritative public monthly-active-developer figure for September 2026 was found in the collected sources (unless one was actually collected and cited).",
+          "If a proxy (e.g. package downloads, GitHub stars, company-reported usage) is given, it is labeled as a proxy, cited, and not presented as the requested figure."
+        ],
+        "acceptable_evidence": [
+          "LangChain/LangGraph official announcements or docs, PyPI statistics pages, GitHub repository pages."
+        ],
+        "output_constraints": [
+          "English Markdown report.",
+          "No invented numbers; uncertainty stated in the answer itself, not only in Limitations."
+        ],
+        "honest_gap": "'No public monthly-active-developer figure for LangGraph in September 2026 was found in the collected sources; the closest public signal is ... [Sx]' followed by a Limitations entry.",
+        "failure_markers": [
+          "A specific monthly-active-developer number without a source that states exactly that metric.",
+          "A long feature overview of LangGraph that never addresses the requested figure."
+        ]
+      }
+    }
+  ]
+}

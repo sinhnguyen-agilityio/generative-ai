@@ -46,6 +46,19 @@ _CONFUSABLES = str.maketrans({
 })
 
 
+# Prompt-injection patterns. Each allows a few filler words ("all previous", "your", "the above")
+# between the verb and its target so trivial rewording cannot slip past.
+_INJECTION_RE = re.compile(
+    r"\b(?:ignore|disregard|forget|override|bypass)\b(?:\s+\w+){0,4}?\s+"
+    r"(?:instructions?|prompts?|rules|directives|guidelines)\b"
+    r"|\b(?:reveal|show|print|display|repeat|output|leak|tell\s+me|give\s+me|what\s+(?:is|are))\b"
+    r"(?:\s+\w+){0,4}?\s+(?:system|hidden|initial|original|developer)\s+"
+    r"(?:prompt|instructions?|message)s?\b"
+    r"|\bjailbreak|\bDAN\s+mode\b|\bdeveloper\s+mode\b",
+    re.I,
+)
+
+
 def normalize_text(text: str) -> str:
     """Fold homoglyphs, invisible characters, and Unicode compatibility forms to a
     canonical form before any guardrail check, storage, or model call sees the text.
@@ -82,8 +95,7 @@ def validate_request(text: str) -> GuardrailDecision:
             False,
             "Remove credentials from the request and configure them through the environment.",
         )
-    injection = r"ignore\s+(all|previous)\s+instructions|reveal\s+(the\s+)?system\s+prompt|jailbreak"
-    if re.search(injection, text, re.I):
+    if _INJECTION_RE.search(text):
         return GuardrailDecision(False, "Request contains an unsafe instruction pattern.")
     if re.search(r"\b(kill|murder|bomb|terrorist attack)\b", text, re.I):
         return GuardrailDecision(False, "This request is not supported.")

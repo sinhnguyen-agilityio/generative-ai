@@ -150,7 +150,8 @@ No vendor data.
 def test_report_sections_drop_scope_limitations_and_sources():
     sections = evaluation.report_sections(REPORT)
 
-    assert [s.splitlines()[0] for s in sections] == ["# HTTP 429", "## Meaning", "## Retry-After"]
+    # The title line is not a claim; the intro sentence under it still is.
+    assert [s.splitlines()[0] for s in sections] == ["Intro sentence.", "## Meaning", "## Retry-After"]
     assert not any("RFC 6585 - https" in s or "No vendor data" in s for s in sections)
 
 
@@ -192,9 +193,10 @@ def test_score_is_computed_per_section_and_in_nli_batches(monkeypatch):
         "q", REPORT, ["ctx"], model="m", api_key="k",
     ))
 
-    assert sorted(calls["sections"]) == ["# HTTP 429", "## Meaning", "## Retry-After"]
+    assert sorted(calls["sections"]) == ["## Meaning", "## Retry-After", "Intro sentence."]
     assert calls["batches"] == [4, 4, 4, 3]
-    assert score == 10 / 15
+    assert score["score"] == 10 / 15
+    assert len(score["unsupported"]) == 5 and all("Retry-After" in s for s in score["unsupported"])
 
 
 def test_score_is_none_when_no_statements_are_extracted(monkeypatch):
@@ -323,3 +325,21 @@ def test_ragas_exposes_the_metric_classes_we_build():
     assert callable(ContextPrecisionWithoutReference.ascore)
     assert callable(AnswerRelevancy.ascore)
     assert isinstance(evaluation._ragas_embeddings(object()), BaseRagasEmbedding)
+
+
+def test_title_and_gap_disclosures_are_not_scored_as_claims():
+    report = ("# Latest stable Python\n\n## Answer\n- The latest stable version is 3.14.7 [S1].\n"
+              "- Its release date could not be established from the collected sources [S1].\n")
+
+    sections = evaluation.report_sections(report)
+
+    assert sections == ["## Answer\n- The latest stable version is 3.14.7 [S1]."]
+    assert evaluation.report_sections("# Title only\n") == []
+
+
+def test_labeled_assessment_is_not_scored_but_the_cited_facts_are():
+    report = ("## Answer\nLangGraph has about 34.5 million monthly PyPI downloads [S2]. "
+              "Assessment: this is the closest public proxy, not a developer count.\n")
+
+    assert evaluation.report_sections(report) == [
+        "## Answer\nLangGraph has about 34.5 million monthly PyPI downloads [S2]."]

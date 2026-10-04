@@ -163,7 +163,7 @@ def test_revise_rewrites_from_the_evidence_reverifies_then_publishes(stores, tmp
     assert "Please use bullet points." in write_prompts[1]
     assert "take precedence over the layout rules" in write_prompts[1]
     assert "Current report to revise" in write_prompts[1]
-    assert "Research findings and source catalog data" in write_prompts[1]
+    assert "Source catalog with research findings" in write_prompts[1]
     # ...and verified again, with the judge told about the request.
     assert paused_again["draft"] == BULLETED
     assert paused_again["verification"]["verification_id"] != first_verification
@@ -174,8 +174,11 @@ def test_revise_rewrites_from_the_evidence_reverifies_then_publishes(stores, tmp
     assert "Please use bullet points." in judge_prompts[1]
     assert paused_again["recovery_attempt"] == 0
     chat = [(m.type, m.content) for m in paused_again["messages"]]
-    assert chat[-2] == ("human", "Please use bullet points.")
-    assert chat[-1][0] == "ai" and "verified again" in chat[-1][1]
+    assert chat[-3] == ("human", "Please use bullet points.")
+    assert chat[-2][0] == "ai" and "verified again" in chat[-2][1]
+    # ...and the chat says when the rewritten report is back and verified.
+    assert chat[-1] == ("ai", "Report draft v2 passed verification (coverage, citations, "
+                              "faithfulness) and is ready for your review below.")
     human_entries = [e for e in paused_again["bvf_history"] if e.get("kind") == "HUMAN_FEEDBACK"]
     assert human_entries and human_entries[0]["route"] == "revise"
 
@@ -199,9 +202,9 @@ def test_reviewer_request_stays_in_force_through_a_bvf_fix(stores, tmp_path):
     assert paused_again["stage"] == "Awaiting Approval"
     assert paused_again["recovery_attempt"] == 1
     fix_prompt = report_model.prompts("write")[2]
-    assert "BVF fix attempt 1" in fix_prompt
+    assert "REPAIR of draft v2" in fix_prompt
     assert "Please use bullet points." in fix_prompt
-    assert "Current report to revise" not in fix_prompt  # the fix block already has the draft
+    assert "Current report to revise" not in fix_prompt  # the repair block already has the draft
 
 
 def test_review_flow_graph_structure(stores, tmp_path):
@@ -278,18 +281,22 @@ def test_reject_with_scope_route_goes_back_through_scoping_and_replans(stores, t
     )
     config = {"configurable": {"thread_id": "planner-run"}}
 
-    paused = graph.invoke(
+    planned = graph.invoke(
         {"run_id": "planner-run", "thread_id": "planner-run",
          "request": "Compare local software caches"},
         config,
     )
+    assert planned["stage"] == "Planning"  # paused for plan approval before any retrieval
+    paused = graph.invoke(Command(resume={"approved": True}), config)
     assert paused.get("__interrupt__")
     assert paused["stage"] == "Awaiting Approval"
 
-    paused_again = graph.invoke(
+    replanned = graph.invoke(
         Command(resume={"approved": False, "feedback": "Also cover the wrong angle: eviction policies."}),
         config,
     )
+    assert replanned["plan_approval"] is None  # the new plan needs its own approval
+    paused_again = graph.invoke(Command(resume={"approved": True}), config)
 
     assert paused_again.get("__interrupt__")
     assert paused_again["stage"] == "Awaiting Approval"

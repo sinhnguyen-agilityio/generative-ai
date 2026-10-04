@@ -74,9 +74,12 @@ def test_report_judge_rejects_incomplete_or_duplicate_checklists():
             return ReportJudgeVerdict(results=[
                 {"criterion": "Only one", "met": True, "justification": "Okay"}])
 
-    with pytest.raises(ValueError, match="every requested criterion"):
-        ReportJudge(Router()).verify(ResearchBrief(research_question="Research the local cache behavior"),
-                                     ["Only one", "Omitted"], "Report", "Evidence")
+    from intelligence_collector.agents.report_judge import CoverageCriterion
+
+    criteria = [CoverageCriterion("C1", "Only one", "output"), CoverageCriterion("C2", "Omitted", "output")]
+    with pytest.raises(ValueError, match="no verdict for C2"):
+        ReportJudge(Router()).assess(ResearchBrief(research_question="Research the local cache behavior"),
+                                     criteria, "Report", "Evidence")
 
 
 def test_recovery_ui_submits_explicit_action_and_retains_identity(tmp_path, monkeypatch):
@@ -98,13 +101,19 @@ def test_recovery_ui_submits_explicit_action_and_retains_identity(tmp_path, monk
         def caption(self, text):
             pass
 
-        def selectbox(self, label, choices):
+        def expander(self, label, expanded=False):
+            from contextlib import nullcontext
+            return nullcontext()
+
+        spinner = expander
+
+        def selectbox(self, label, choices, **kwargs):
             return "revise"
 
         def text_area(self, *args, **kwargs):
             return "Use a simple paragraph"
 
-        def button(self, label):
+        def button(self, label, **kwargs):
             return label == "Apply recovery action"
 
         def rerun(self):

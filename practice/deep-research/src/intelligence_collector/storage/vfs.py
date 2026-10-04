@@ -25,11 +25,18 @@ SECRET_KEYS = (
 )
 
 
+def _secret_field(key: Any) -> bool:
+    """A credential-shaped field name. URL-keyed maps (the URL registry) hold data, not fields:
+    a page path containing "oauth-token" must not erase that page's capture record."""
+    text = str(key).lower()
+    return "://" not in text and any(marker in text for marker in SECRET_KEYS)
+
+
 def _artifact_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {
             key: "[REDACTED]"
-            if any(marker in key.lower() for marker in SECRET_KEYS)
+            if _secret_field(key)
             else _artifact_safe(item)
             for key, item in value.items()
         }

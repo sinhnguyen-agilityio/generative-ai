@@ -1,0 +1,231 @@
+{
+  "case_id": "simple_comparison",
+  "label": "after",
+  "run_id": "258c1d78-86e8-49b4-9665-fa366c8be7f6",
+  "question": "Compare HTTP status codes 401 Unauthorized and 403 Forbidden: what does each mean, and when should a server return one rather than the other?",
+  "stage": "NEEDS_REVIEW",
+  "pauses": [
+    "plan_approval",
+    "recovery_required"
+  ],
+  "error": null,
+  "brief": {
+    "schema_version": 1,
+    "research_question": "What do the HTTP status codes 401 Unauthorized and 403 Forbidden mean, and when should a server return 401 versus 403?",
+    "required_answers": [
+      "Explain what 401 Unauthorized means.",
+      "Explain what 403 Forbidden means.",
+      "Describe when a server should return 401 instead of 403 (and vice versa)."
+    ],
+    "output_requirements": [],
+    "original_question": "Compare HTTP status codes 401 Unauthorized and 403 Forbidden: what does each mean, and when should a server return one rather than the other?"
+  },
+  "todos": [
+    {
+      "research_question": "In HTTP, what does the status code 401 Unauthorized mean according to HTTP semantics standards, including any header/auth expectations (e.g., WWW-Authenticate)?",
+      "evidence_needed": "RFC/HTTP semantics source defining 401 Unauthorized and its required or recommended headers (such as WWW-Authenticate)",
+      "status": "completed",
+      "research_attempt": 1
+    },
+    {
+      "research_question": "In HTTP, what does the status code 403 Forbidden mean according to HTTP semantics standards, including any authorization-related expectations?",
+      "evidence_needed": "RFC/HTTP semantics source defining 403 Forbidden and the conditions under which it is used",
+      "status": "completed",
+      "research_attempt": 1
+    },
+    {
+      "research_question": "According to HTTP standards, when should a server return 401 Unauthorized versus 403 Forbidden (e.g., unauthenticated/invalid credentials vs authenticated but insufficient permissions), and how should the server behavior differ between the two?",
+      "evidence_needed": "RFC/HTTP semantics source(s) describing the decision rule for using 401 vs 403 (unauthorized due to authentication vs forbidden due to authorization/permissions), ideally with explicit examples or wording",
+      "status": "completed",
+      "research_attempt": 1
+    }
+  ],
+  "plan": {
+    "kind": "initial",
+    "original_question": "Compare HTTP status codes 401 Unauthorized and 403 Forbidden: what does each mean, and when should a server return one rather than the other?",
+    "research_question": "What do the HTTP status codes 401 Unauthorized and 403 Forbidden mean, and when should a server return 401 versus 403?",
+    "required_answers": [
+      "Explain what 401 Unauthorized means.",
+      "Explain what 403 Forbidden means.",
+      "Describe when a server should return 401 instead of 403 (and vice versa)."
+    ],
+    "output_requirements": [],
+    "tasks": [
+      {
+        "todo_id": "714cdc12-171b-48a2-ba16-36ee6d2763fa",
+        "question": "In HTTP, what does the status code 401 Unauthorized mean according to HTTP semantics standards, including any header/auth expectations (e.g., WWW-Authenticate)?",
+        "evidence_needed": "RFC/HTTP semantics source defining 401 Unauthorized and its required or recommended headers (such as WWW-Authenticate)"
+      },
+      {
+        "todo_id": "b6e1e2af-6311-4bca-86c7-3c88e831c578",
+        "question": "In HTTP, what does the status code 403 Forbidden mean according to HTTP semantics standards, including any authorization-related expectations?",
+        "evidence_needed": "RFC/HTTP semantics source defining 403 Forbidden and the conditions under which it is used"
+      },
+      {
+        "todo_id": "5f619a93-3857-4f88-8aca-e6b3d1d827b1",
+        "question": "According to HTTP standards, when should a server return 401 Unauthorized versus 403 Forbidden (e.g., unauthenticated/invalid credentials vs authenticated but insufficient permissions), and how should the server behavior differ between the two?",
+        "evidence_needed": "RFC/HTTP semantics source(s) describing the decision rule for using 401 vs 403 (unauthorized due to authentication vs forbidden due to authorization/permissions), ideally with explicit examples or wording"
+      }
+    ],
+    "report_shape": "Provide three concise sections: definitions for 401 and 403, then a clear rule for when to return 401 instead of 403 (and vice versa), each backed by the cited HTTP RFC language and header/behavior expectations.",
+    "plan_hash": "585e960d819cf5bed41450b00ae819dac333dfa7d71fbb866957ba11a94c9d11"
+  },
+  "research_status": "PARTIAL",
+  "research_limitations": [
+    "Direct RFC 9110 normative quotation for the specific `401 Unauthorized` definition was not retrieved in the provided sources; only an RFC-editor pointer to the (now obsolete) RFC 7235 authentication section is available, while the captured normative details about `WWW-Authenticate` come from MDN and a non-RFC explainer [https://www.rfc-editor.org/info/rfc7235, https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/WWW-Authenticate].",
+    "Whether `WWW-Authenticate` is strictly required in *every* 401 case per RFC 9110 text (vs commonly required practice) cannot be confirmed from the provided sources; one external discussion reports real-world cases where 401 is missing `WWW-Authenticate` (but this is not normative RFC text) [https://community.developers.lseg.com/discussion/52787/missing-www-authenticate-header-when-receiving-401-responses].",
+    "The provided sources do not include the exact RFC 9110 (sections 15.5.2 and 15.5.4) text that explicitly states the 401-vs-403 decision criteria and behavioral requirements; IANA only provides the section mapping, not the detailed RFC wording. [https://www.iana.org/assignments/http-status-codes]",
+    "The sources include MDN guidance for `WWW-Authenticate` with 401 and a definition for 403, but the specific statement about what the server should do *not* do in 403 responses (e.g., “do not include `WWW-Authenticate` / do not issue an auth challenge”) is not directly quoted from RFC 9110 in the provided results; it is implied via MDN semantics rather than explicitly evidenced in RFC language. [https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/403] [https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/WWW-Authenticate]",
+    "Evidence completeness not established for: According to HTTP standards, when should a server return 401 Unauthorized versus 403 Forbidden (e.g., unauthenticated/invalid credentials vs authenticated but insufficient permissions), and how should the server behavior differ between the two?"
+  ],
+  "verification_passed": false,
+  "verification_outcome": "FAIL",
+  "failed_checks": [
+    {
+      "schema_version": 1,
+      "name": "faithfulness",
+      "passed": false,
+      "details": [
+        "RAGAS Faithfulness 0.78 is not above 0.90. Unsupported statements: HTTP status code 401 Unauthorized means the client has provided invalid or insufficient credentials for the target resource. | A server should return HTTP status code 401 Unauthorized instead of 403 Forbidden when the client authentication is not adequate."
+      ],
+      "affected_ids": [
+        "faithfulness"
+      ],
+      "gate": "faithfulness",
+      "issue_type": "draft_defect",
+      "item": "",
+      "missing_points": [
+        "HTTP status code 401 Unauthorized means the client has provided invalid or insufficient credentials for the target resource.",
+        "A server should return HTTP status code 401 Unauthorized instead of 403 Forbidden when the client authentication is not adequate."
+      ]
+    }
+  ],
+  "verifier_error": "",
+  "last_error": "[faithfulness] RAGAS Faithfulness 0.78 is not above 0.90. Unsupported statements: HTTP status code 401 Unauthorized means the client has provided invalid or insufficient credentials for the target resource. | A server should return HTTP status code 401 Unauthorized instead of 403 Forbidden when the client authentication is not adequate.",
+  "faithfulness_score": 0.7777777777777778,
+  "draft_version": 3,
+  "improvement_cycles": 2,
+  "repair_history": [
+    {
+      "attempt": 1,
+      "draft_version": 1,
+      "route": "vfs",
+      "failed_checks": [
+        "faithfulness"
+      ],
+      "issues": [
+        {
+          "check": "faithfulness",
+          "gate": "faithfulness",
+          "issue_type": "draft_defect",
+          "item": "",
+          "missing_points": [
+            "HTTP status code 401 Unauthorized means the client has provided invalid or insufficient credentials for the target resource.",
+            "A server should return HTTP status code 401 Unauthorized instead of 403 Forbidden when the supplied authentication is not adequate or accepted yet."
+          ],
+          "detail": "RAGAS Faithfulness 0.86 is not above 0.90. Unsupported statements: HTTP status code 401 Unauthorized means the client has provided invalid or insufficient credentials for the target resource. | A server should return HTTP status code 401 Unauthorized instead of 403 Forbidden when the supplied authentication is not adequate or accepted yet.",
+          "route": "vfs",
+          "todo_id": ""
+        }
+      ],
+      "fingerprint": "0c447060fd3d334feb3834f2441b10028b907ffd5a5a2973be609d07559c4825"
+    },
+    {
+      "attempt": 2,
+      "draft_version": 2,
+      "route": "vfs",
+      "failed_checks": [
+        "faithfulness"
+      ],
+      "issues": [
+        {
+          "check": "faithfulness",
+          "gate": "faithfulness",
+          "issue_type": "draft_defect",
+          "item": "",
+          "missing_points": [
+            "HTTP status code 401 Unauthorized means the client has provided invalid or insufficient credentials for the target resource.",
+            "A server should return HTTP status code 401 Unauthorized instead of 403 Forbidden when the supplied authentication is not adequate or accepted yet."
+          ],
+          "detail": "RAGAS Faithfulness 0.80 is not above 0.90. Unsupported statements: HTTP status code 401 Unauthorized means the client has provided invalid or insufficient credentials for the target resource. | A server should return HTTP status code 401 Unauthorized instead of 403 Forbidden when the supplied authentication is not adequate or accepted yet.",
+          "route": "vfs",
+          "todo_id": ""
+        }
+      ],
+      "fingerprint": "0c447060fd3d334feb3834f2441b10028b907ffd5a5a2973be609d07559c4825"
+    }
+  ],
+  "model_calls_by_role": {
+    "guardrail": 1,
+    "scope": 2,
+    "planner": 1,
+    "researcher": 9,
+    "research_compressor": 3,
+    "synthesizer": 3,
+    "verify": 5
+  },
+  "tokens_by_role": {
+    "guardrail": {
+      "input": 350,
+      "output": 18
+    },
+    "scope": {
+      "input": 1034,
+      "output": 442
+    },
+    "planner": {
+      "input": 505,
+      "output": 496
+    },
+    "researcher": {
+      "input": 10351,
+      "output": 1410
+    },
+    "research_compressor": {
+      "input": 5470,
+      "output": 1511
+    },
+    "synthesizer": {
+      "input": 20655,
+      "output": 1102
+    },
+    "verify": {
+      "input": 29022,
+      "output": 3383
+    }
+  },
+  "tavily_searches": 6,
+  "vector_retrievals": 0,
+  "ragas_faithfulness_runs": 3,
+  "node_runs": {
+    "clarify_with_user": 1,
+    "write_research_brief": 1,
+    "planning": 1,
+    "await_plan_approval": 2,
+    "researching": 1,
+    "research_complete": 1,
+    "synthesizing": 3,
+    "verifying": 3,
+    "fixing": 2,
+    "needs_review": 1,
+    "await_recovery": 1
+  },
+  "node_seconds": {
+    "clarify_with_user": 2.1,
+    "write_research_brief": 2.4,
+    "planning": 3.1,
+    "await_plan_approval": 0.0,
+    "researching": 35.0,
+    "research_complete": 0.0,
+    "synthesizing": 7.9,
+    "verifying": 45.5,
+    "fixing": 0.0,
+    "needs_review": 0.0
+  },
+  "elapsed_seconds": 96.1,
+  "models": {
+    "reasoning": "gpt-5.4-nano",
+    "standard": "gpt-5.4-nano",
+    "faithfulness": "gpt-4.1-mini"
+  }
+}

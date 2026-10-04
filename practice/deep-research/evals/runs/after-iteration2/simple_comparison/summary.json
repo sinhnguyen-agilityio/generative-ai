@@ -1,0 +1,167 @@
+{
+  "case_id": "simple_comparison",
+  "label": "after",
+  "run_id": "3786df98-f137-4916-870e-2e703ef35e24",
+  "question": "Compare HTTP status codes 401 Unauthorized and 403 Forbidden: what does each mean, and when should a server return one rather than the other?",
+  "stage": "Awaiting Approval",
+  "pauses": [
+    "plan_approval",
+    "publication_approval"
+  ],
+  "error": null,
+  "brief": {
+    "schema_version": 1,
+    "research_question": "What do the HTTP status codes 401 Unauthorized and 403 Forbidden mean, and when should a server return 401 versus 403?",
+    "required_answers": [
+      "What does 401 Unauthorized mean?",
+      "What does 403 Forbidden mean?",
+      "When should a server return 401 Unauthorized rather than 403 Forbidden (and vice versa)?"
+    ],
+    "output_requirements": [],
+    "original_question": "Compare HTTP status codes 401 Unauthorized and 403 Forbidden: what does each mean, and when should a server return one rather than the other?"
+  },
+  "todos": [
+    {
+      "research_question": "In HTTP/1.1 semantics, what does the status code 401 Unauthorized mean, according to the relevant HTTP specification (e.g., RFC 9110) including any required headers/conditions such as WWW-Authenticate?",
+      "evidence_needed": "RFC 9110 (HTTP Semantics) section defining 401 Unauthorized and describing the meaning and conditions (including WWW-Authenticate guidance).",
+      "status": "completed",
+      "research_attempt": 1
+    },
+    {
+      "research_question": "In HTTP/1.1 semantics, what does the status code 403 Forbidden mean, according to the relevant HTTP specification (e.g., RFC 9110)?",
+      "evidence_needed": "RFC 9110 (HTTP Semantics) section defining 403 Forbidden and describing the meaning and conditions.",
+      "status": "completed",
+      "research_attempt": 1
+    },
+    {
+      "research_question": "According to the relevant HTTP specification (e.g., RFC 9110) and/or widely used authoritative guidance, when should a server return 401 Unauthorized rather than 403 Forbidden (and when should it return 403 instead of 401), including distinctions such as authentication vs authorization and whether re-authentication is possible?",
+      "evidence_needed": "RFC 9110 (HTTP Semantics) comparison/guidance text for choosing 401 vs 403 (authentication vs authorization, whether credentials/authentication can change the outcome), ideally backed by additional authoritative documentation if the RFC is not fully explicit.",
+      "status": "completed",
+      "research_attempt": 1
+    }
+  ],
+  "plan": {
+    "kind": "initial",
+    "original_question": "Compare HTTP status codes 401 Unauthorized and 403 Forbidden: what does each mean, and when should a server return one rather than the other?",
+    "research_question": "What do the HTTP status codes 401 Unauthorized and 403 Forbidden mean, and when should a server return 401 versus 403?",
+    "required_answers": [
+      "What does 401 Unauthorized mean?",
+      "What does 403 Forbidden mean?",
+      "When should a server return 401 Unauthorized rather than 403 Forbidden (and vice versa)?"
+    ],
+    "output_requirements": [],
+    "tasks": [
+      {
+        "todo_id": "f0fa9728-da89-47e1-9368-8117a8fa29b5",
+        "question": "In HTTP/1.1 semantics, what does the status code 401 Unauthorized mean, according to the relevant HTTP specification (e.g., RFC 9110) including any required headers/conditions such as WWW-Authenticate?",
+        "evidence_needed": "RFC 9110 (HTTP Semantics) section defining 401 Unauthorized and describing the meaning and conditions (including WWW-Authenticate guidance)."
+      },
+      {
+        "todo_id": "c696a8cd-b41f-4563-8b2a-3538ab4017a6",
+        "question": "In HTTP/1.1 semantics, what does the status code 403 Forbidden mean, according to the relevant HTTP specification (e.g., RFC 9110)?",
+        "evidence_needed": "RFC 9110 (HTTP Semantics) section defining 403 Forbidden and describing the meaning and conditions."
+      },
+      {
+        "todo_id": "4aeac66c-b31b-4f9f-ab89-b2a1b2364dbb",
+        "question": "According to the relevant HTTP specification (e.g., RFC 9110) and/or widely used authoritative guidance, when should a server return 401 Unauthorized rather than 403 Forbidden (and when should it return 403 instead of 401), including distinctions such as authentication vs authorization and whether re-authentication is possible?",
+        "evidence_needed": "RFC 9110 (HTTP Semantics) comparison/guidance text for choosing 401 vs 403 (authentication vs authorization, whether credentials/authentication can change the outcome), ideally backed by additional authoritative documentation if the RFC is not fully explicit."
+      }
+    ],
+    "report_shape": "A short, direct answer stating the meanings of HTTP 401 and 403, then a clear rule-of-thumb comparison for when to use 401 versus 403, each backed by cited authoritative specification text.",
+    "plan_hash": "834e38fb82fd7029c2b19ef89507e0a99b4bac0637bc6539be75e80fb969837e"
+  },
+  "research_status": "PARTIAL",
+  "research_limitations": [
+    "The provided results do not include direct, authoritative quoted text from RFC 9110 itself—only secondary quotations/assertions about it (e.g., references to “Section 11.6.1” and MUST-level requirements).",
+    "No complete list of any other `401`-related required headers/conditions from RFC 9110 is present in the retrieved results (beyond `WWW-Authenticate`).",
+    "The results do not show RFC 9110’s exact wording about the `WWW-Authenticate` challenge contents/format (e.g., whether any specific parameters are mandatory for particular authentication schemes).",
+    "No clarification is provided in the retrieved results about how `401` interacts with other HTTP semantics (e.g., whether a `WWW-Authenticate` header is required when authentication credentials are missing vs invalid, beyond the general MUST statement).",
+    "Evidence completeness not established for: In HTTP/1.1 semantics, what does the status code 401 Unauthorized mean, according to the relevant HTTP specification (e.g., RFC 9110) including any required headers/conditions such as WWW-Authenticate?",
+    "The provided sources do not include the specific RFC 9110 subsection text explicitly contrasting 403 with 401 Unauthorized; no direct RFC excerpt for that distinction is included in the search results.",
+    "The provided sources do not contain the exact RFC 9110 wording or specific section references explaining the precise decision rules for when to choose 401 vs 403 (e.g., any explicit conditions for use of 401 with/without `WWW-Authenticate`, and any explicit authorization-failure cases). [https://workos.com/blog/http-error-codes]",
+    "Unclear whether any source distinguishes cases where the user is authenticated but access is forbidden (authorization) vs cases where authentication is incomplete/invalid, in a way that fully maps to RFC 9110 requirements; some sources blur “not logged in” with authorization denial. [https://stackoverflow.com/questions/3297048/403-forbidden-vs-401-unauthorized-http-responses]",
+    "No provided source explicitly covers whether the server is required to include `WWW-Authenticate` (or not) when returning 401, nor how that affects client re-authentication, as described in RFC 9110. (Not present in search results.)",
+    "No provided source states explicit guidance on caching, idempotency, or retry behavior differences between 401 and 403 beyond general re-authentication implication. (Not present in search results.)",
+    "Evidence completeness not established for: According to the relevant HTTP specification (e.g., RFC 9110) and/or widely used authoritative guidance, when should a server return 401 Unauthorized rather than 403 Forbidden (and when should it return 403 instead of 401), including distinctions such as authentication vs authorization and whether re-authentication is possible?"
+  ],
+  "verification_passed": true,
+  "verification_outcome": "PASS",
+  "failed_checks": [],
+  "verifier_error": "",
+  "last_error": "",
+  "faithfulness_score": 1.0,
+  "draft_version": 1,
+  "improvement_cycles": 0,
+  "repair_history": [],
+  "model_calls_by_role": {
+    "guardrail": 1,
+    "scope": 2,
+    "planner": 1,
+    "researcher": 6,
+    "research_compressor": 3,
+    "synthesizer": 1,
+    "verify": 1
+  },
+  "tokens_by_role": {
+    "guardrail": {
+      "input": 350,
+      "output": 18
+    },
+    "scope": {
+      "input": 1028,
+      "output": 388
+    },
+    "planner": {
+      "input": 506,
+      "output": 402
+    },
+    "researcher": {
+      "input": 5721,
+      "output": 492
+    },
+    "research_compressor": {
+      "input": 4191,
+      "output": 1298
+    },
+    "synthesizer": {
+      "input": 6170,
+      "output": 602
+    },
+    "verify": {
+      "input": 5343,
+      "output": 1192
+    }
+  },
+  "tavily_searches": 3,
+  "vector_retrievals": 0,
+  "ragas_faithfulness_runs": 1,
+  "node_runs": {
+    "clarify_with_user": 1,
+    "write_research_brief": 1,
+    "planning": 1,
+    "await_plan_approval": 2,
+    "researching": 1,
+    "research_complete": 1,
+    "synthesizing": 1,
+    "verifying": 1,
+    "evaluating_quality": 1,
+    "approval": 1
+  },
+  "node_seconds": {
+    "clarify_with_user": 2.0,
+    "write_research_brief": 2.7,
+    "planning": 3.3,
+    "await_plan_approval": 0.0,
+    "researching": 13.0,
+    "research_complete": 0.0,
+    "synthesizing": 3.9,
+    "verifying": 16.3,
+    "evaluating_quality": 0.0
+  },
+  "elapsed_seconds": 41.2,
+  "models": {
+    "reasoning": "gpt-5.4-nano",
+    "standard": "gpt-5.4-nano",
+    "faithfulness": "gpt-4.1-mini"
+  }
+}

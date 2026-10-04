@@ -1,0 +1,46 @@
+{
+  "sources": {
+    "S1": {
+      "url": "https://www.python.org/downloads/windows",
+      "title": "Python Releases for Windows | Python.org",
+      "excerpt": "## Stable Releases\n\n Python 3.14.8 - Sept. 30, 2026\n\n  Download using the Python install manager.\n\n  + Download Windows installer (64-bit)\n  + Download Windows installer (32-bit)\n  + Download Windows installer (ARM64)\n  + Download Windows embeddable package (64-bit)\n  + Download Windows embeddable package (32-bit)\n  + Download Windows embeddable package (ARM64)\n  + Download Windows release manifest\n Python 3.13.16 - Sept. 30, 2026 [...] Notice: This page displays a fallback because interactive scripts did not run. Possible causes include disabled JavaScript or failure to load scripts or stylesheets.\n\npython™\n\nDonate\n\n≡ Menu\n\n A A\n  + Smaller\n  + Larger\n  + Reset\n\n Socialize\n  + LinkedIn\n  + Mastodon\n  + Chat on IRC\n  + Twitter\n\n Python>>>\n Downloads>>>\n Windows\n\n# Python Releases for Windows\n\n Latest Python install manager - Python install manager 26.3\n Latest Python 3 Release - Python 3.14.8\n\n## Stable Releases [...] + Download Windows release manifest\n Python 3.15.0b4 - July 18, 2026\n  + Download Windows installer (64-bit)\n  + Download Windows installer (32-bit)\n  + Download Windows installer (ARM64)\n  + Download Windows embeddable package (64-bit)\n  + Download Windows embeddable package (32-bit)\n  + Download Windows embeddable package (ARM64)\n  + Download Windows release manifest\n Python 3.15.0b3 - June 23, 2026\n  + Download Windows installer (64-bit)\n  + Download Windows installer (32-bit)"
+    },
+    "S2": {
+      "url": "https://www.python.org/downloads/source",
+      "title": "Python Source Releases | Python.org",
+      "excerpt": "Python 3.7.3 - March 25, 2019\n  + Download Gzipped source tarball\n  + Download XZ compressed source tarball\n Python 3.4.10 - March 18, 2019\n  + Download Gzipped source tarball\n  + Download XZ compressed source tarball\n Python 3.5.7 - March 18, 2019\n  + Download Gzipped source tarball\n  + Download XZ compressed source tarball\n Python 2.7.16 - March 4, 2019\n  + Download Gzipped source tarball\n  + Download XZ compressed source tarball\n Python 3.7.2 - Dec. 24, 2018 [...] Notice: This page displays a fallback because interactive scripts did not run. Possible causes include disabled JavaScript or failure to load scripts or stylesheets.\n\nDonate\n\n≡ Menu\n\n A A\n  + Smaller\n  + Larger\n  + Reset\n\n Socialize\n  + LinkedIn\n  + Mastodon\n  + Chat on IRC\n  + Twitter\n\n Python>>>\n Downloads>>>\n Source code\n\n# Python Source Releases\n\n Latest Python 3 Release - Python 3.14.7\n\n## Stable Releases [...] Python 3.6.5 - March 28, 2018\n  + Download Gzipped source tarball\n  + Download XZ compressed source tarball\n Python 3.4.8 - Feb. 5, 2018\n  + Download Gzipped source tarball\n  + Download XZ compressed source tarball\n Python 3.5.5 - Feb. 5, 2018\n  + Download Gzipped source tarball\n  + Download XZ compressed source tarball\n Python 3.6.4 - Dec. 19, 2017\n  + Download Gzipped source tarball\n  + Download XZ compressed source tarball\n Python 3.6.3 - Oct. 3, 2017\n  + Download Gzipped source tarball"
+    },
+    "S3": {
+      "url": "https://www.python.org/downloads",
+      "title": "Download Python | Python.org",
+      "excerpt": "Python version Maintenance status   First released End of support Release schedule\n\n1. 3.15 pre-release Download 2026-10-01 (planned) 2031-10 PEP 790\n2. 3.14 bugfix Download 2025-10-07 2030-10 PEP 745\n3. 3.13 bugfix Download 2024-10-07 2029-10 PEP 719\n4. 3.12 security Download 2023-10-02 2028-10 PEP 693\n5. 3.11 security Download 2022-10-24 2027-10 PEP 664\n6. 3.10 security Download 2021-10-04 2026-10 PEP 619\n7. 3.9 end-of-life, last release was 3.9.25 Download 2020-10-05 2025-10-31 PEP 596 [...] 147. Python 3.6.11 June 27, 2020  Download Release notes\n148. Python 3.6.10 Dec. 18, 2019  Download Release notes\n149. Python 3.6.9 July 2, 2019  Download Release notes\n150. Python 3.6.8 Dec. 24, 2018  Download Release notes\n151. Python 3.6.7 Oct. 20, 2018  Download Release notes\n152. Python 3.6.6 June 27, 2018  Download Release notes\n153. Python 3.6.5 March 28, 2018  Download Release notes\n154. Python 3.6.4 Dec. 19, 2017  Download Release notes [...] 163. Python 3.5.6 Aug. 2, 2018  Download Release notes\n164. Python 3.5.5 Feb. 5, 2018  Download Release notes\n165. Python 3.5.4 Aug. 8, 2017  Download Release notes\n166. Python 3.5.3 Jan. 17, 2017  Download Release notes\n167. Python 3.5.2 June 27, 2016  Download Release notes\n168. Python 3.5.1 Dec. 7, 2015  Download Release notes\n169. Python 3.5.0 Sept. 13, 2015  Download Release notes\n170. Python 3.4.10 March 18, 2019  Download Release notes"
+    },
+    "S4": {
+      "url": "https://www.python.org",
+      "title": "Welcome to Python.org",
+      "excerpt": "## Download\n\nPython source code and installers are available for download for all versions!\n\nLatest: Python 3.14.7\n\n## Docs\n\nDocumentation for Python's standard library, along with tutorials and guides, are available online.\n\ndocs.python.org\n\n## Jobs\n\nLooking for work or have a Python related position that you're trying to hire for? Our relaunched community-run job board is the place to go.\n\njobs.python.org\n\n## Latest News\n\nMore news"
+    },
+    "S5": {
+      "url": "https://www.python.org/doc/versions",
+      "title": "Python documentation by version | Python.org",
+      "excerpt": "### Python 3.4\n\n Python 3.4.10, released on 18 March 2019\n Python 3.4.9, released on 2 August 2018\n Python 3.4.8, released on 5 February 2018\n Python 3.4.7, released on 9 August 2017\n Python 3.4.6, released on 17 January 2017\n Python 3.4.5, released on 27 June 2016\n Python 3.4.4, released on 21 December 2015\n Python 3.4.3, released on 25 February 2015\n Python 3.4.2, released on 13 October 2014\n Python 3.4.1, released on 19 May 2014\n Python 3.4.0, released on 17 March 2014\n\n### Python 3.3 [...] ### Python 3.5\n\n Python 3.5.10, released on 5 September 2020\n Python 3.5.9, released on 2 November 2019\n Python 3.5.8, released on 29 October 2019\n Python 3.5.7, released on 18 March 2019\n Python 3.5.6, released on 2 August 2018\n Python 3.5.5, released on 5 February 2018\n Python 3.5.4, released on 8 August 2017\n Python 3.5.3, released on 17 January 2017\n Python 3.5.2, released on 27 June 2016\n Python 3.5.1, released on 7 December 2015\n Python 3.5.0, released on 13 September 2015 [...] Python 3.8.9, released on 2 April 2021\n Python 3.8.8, released on 19 February 2021\n Python 3.8.7, released on 21 December 2020\n Python 3.8.6, released on 24 September 2020\n Python 3.8.5, released on 20 July 2020\n Python 3.8.4, released on 13 July 2020\n Python 3.8.3, released on 13 May 2020\n Python 3.8.2, released on 24 February 2020\n Python 3.8.1, released on 18 December 2019\n Python 3.8.0, released on 14 October 2019"
+    }
+  },
+  "bundles": [
+    {
+      "question": "What is the latest stable (general availability) version number of the Python programming language as listed by the official Python release/download information? (Use the current latest stable/GA release on python.org, not betas/rcs.)",
+      "source_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "summary": "Official Python download pages show different “latest” values by page/component. The Windows “Stable Releases” section lists **Python 3.14.8** (Sept. 30, 2026) as the latest stable release [https://www.python.org/downloads/windows]. The main “Download Python” page shows **Latest: Python 3.14.7** [https://www.python.org]. The “Python Source Releases” page lists **Latest Python 3 Release - Python 3.14.7** [https://www.python.org/downloads/source]. Based on the Windows stable release listing, the latest stable/GA version number is **Python 3.14.8** [https://www.python.org/downloads/windows].",
+      "gaps": [
+        "The question asks for the latest stable/GA version as listed by the official Python release/download information; the main downloads page indicates “Latest: Python 3.14.7” [https://www.python.org], while the Windows stable releases page lists “Python 3.14.8” [https://www.python.org/downloads/windows]. Need confirmation of which specific “official Python release/download information” section the question intends (e.g., top-level downloads vs. platform-specific stable releases).",
+        "No single python.org download listing in the provided results explicitly states that Python 3.14.8 is the overall latest stable/GA release across all platforms; source releases page still shows Python 3.14.7 as latest [https://www.python.org/downloads/source]."
+      ]
+    }
+  ]
+}

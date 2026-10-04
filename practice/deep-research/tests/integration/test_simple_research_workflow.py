@@ -9,7 +9,7 @@ from intelligence_collector.models.router import ModelRouter
 from tests.fixtures.fake_models import FakeAcceptanceModel, FakeReportModel
 
 
-def test_exhausted_core_gap_finishes_incomplete_without_approval(stores, tmp_path):
+def test_exhausted_core_gap_presents_honest_report_for_approval(stores, tmp_path):
     vfs, index = stores
     draft = "# INCOMPLETE\nThe requested version could not be verified from available evidence.\n\n## Sources\nNone available."
     writer = FakeReportModel([draft])
@@ -41,15 +41,15 @@ def test_exhausted_core_gap_finishes_incomplete_without_approval(stores, tmp_pat
     result = graph.invoke({"run_id": "r", "thread_id": "r",
                            "scoped_request": {"research_question": "What is the latest stable Python version?"},
                            "todos": [ResearchTodo(todo_id="t", research_question="Official stable version?").model_dump()]}, config)
-    assert result["stage"] == "Incomplete"
+    # One pre-draft gap retry, then an honest draft that still requires human report approval.
+    assert result["stage"] == "Awaiting Approval"
+    assert result.get("__interrupt__")
     assert result["research_gap_attempt"] == 1 and empty.calls == 2
     assert result["verification"]["passed"]
     assert result["approval"] is None and result["publication"] is None
-    assert not result.get("__interrupt__")
-    assert b"INCOMPLETE" in vfs.read("r", "reports/incomplete.md")
     assert not (tmp_path / "exports" / "r.md").exists()
-    # A fresh compiled graph reads the terminal checkpoint without starting a new run.
+    # A fresh compiled graph resumes the same paused checkpoint without starting a new run.
     restored = build_graph(research_nodes=nodes, vfs=vfs, checkpointer=saver, with_approval=True)
-    assert not restored.get_state(config).next
+    assert restored.get_state(config).next == ("approval",)
     assert restored.get_state(config).values["research_gap_attempt"] == 1
     assert len(writer.prompts("write")) == 1

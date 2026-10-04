@@ -1,48 +1,31 @@
-"""Report writer for the Build-Verify-Fix loop.
+"""Report writer: writes the first draft from stored evidence, repairs a draft that failed
+verification, and rewrites a report for a human reviewer's requests.
 
-* ``write``   Build (first draft) or Fix (revision) of the report from stored evidence. A fix
-              attempt sees the failed checks, every lesson learned so far, the planned strategy,
-              and the previous draft.
-* ``reflect`` Self-improvement: diagnose why verification failed and turn it into reusable
-              lessons and a strategy, instead of blindly retrying the same generation.
+A repair receives the diagnosed issues (see ``repair.py``), the answers that already passed and
+the previous draft, so it fixes the affected portion instead of rewriting blindly.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from datetime import date
 
 from intelligence_collector.agents.prompts import (
-    REFLECTION_TEMPLATE,
+    REPAIR_BLOCK,
+    REPAIR_ROUTE_INSTRUCTIONS,
     REPORT_WRITER_TEMPLATE,
     REVIEWER_BLOCK,
     REVIEWER_CURRENT_REPORT,
-    REVISION_BLOCK,
 )
-from intelligence_collector.contracts import (
-    DraftAssessment,
-    Reflection,
-    ResearchBrief,
-    VerificationResult,
-)
+from intelligence_collector.contracts import DraftAssessment, ResearchBrief
 from intelligence_collector.source_verification import EvidenceBundle, SourceCatalog
 from intelligence_collector.tools.url_tracking import normalize_url
 
 EXCERPT_CHARS = 1200
-MAX_LESSONS = 12
 DEFAULT_EVIDENCE_TOP_K = 6
-
-
-@dataclass
-class RevisionContext:
-    """What a Fix attempt must learn from."""
-
-    attempt: int
-    failures: str
-    previous_draft: str
-    lessons: list[str] = field(default_factory=list)
-    strategy: str = ""
+# A question's stored excerpts up to this size are read directly; only a larger corpus is
+# narrowed through vector retrieval (Chroma).
+DIRECT_READ_CHARS = 12_000
 
 
 def _bullets(items: list[str], empty: str = "(none)") -> str:
@@ -69,31 +52,32 @@ def format_evidence(catalog: SourceCatalog) -> str:
             "\n\n".join(blocks)) if blocks else "(no evidence)"
 
 
+def _readable_chars(catalog: SourceCatalog, bundle: EvidenceBundle) -> int:
+    return sum(min(len(catalog.sources[sid].excerpt), EXCERPT_CHARS) for sid in bundle.source_ids)
+
+
 def select_relevant_evidence(
     catalog: SourceCatalog,
     index,
     run_id: str,
     *,
     top_k: int = DEFAULT_EVIDENCE_TOP_K,
+    direct_read_chars: int = DIRECT_READ_CHARS,
 ) -> SourceCatalog:
     """Narrow each bundle to its top-K most relevant sources via vector retrieval.
 
-    Scoped *per research question* (bundle), never globally, so every question keeps
-    guaranteed representation in the Build/Fix prompt — a global top-K could let one
-    question's sources crowd out another's entirely, which would make the report unable to
-    cite that question and fail the verifier's ``question_coverage`` check for a reason that
-    has nothing to do with missing evidence.
+    A bundle whose excerpts fit in `direct_read_chars`, or that has at most `top_k` sources, is
+    read directly without calling the index. Scoped *per research question* (bundle), never
+    globally, so every question keeps representation in the writer's prompt.
 
-    Verification always reads the full, unfiltered catalog independently (``BVFNodes._catalog``
-    calls ``load_catalog`` directly); this narrowing affects only what the writer's prompt sees,
-    never what a claim is checked against. A bundle at or under ``top_k`` sources is left as-is,
-    and retrieval failures never block Build — they just leave the bundle unfiltered.
+    Verification always reads the full, unfiltered catalog independently; this narrowing affects
+    only what the writer's prompt sees. Retrieval failures leave the bundle unfiltered.
     """
     if index is None:
         return catalog
     narrowed = []
     for bundle in catalog.bundles:
-        if len(bundle.source_ids) <= top_k:
+        if len(bundle.source_ids) <= top_k or _readable_chars(catalog, bundle) <= direct_read_chars:
             narrowed.append(bundle)
             continue
         try:
@@ -129,21 +113,19 @@ def select_relevant_evidence(
     return SourceCatalog(sources=catalog.sources, bundles=narrowed)
 
 
-def merge_lessons(existing: list[str], new: list[str]) -> list[str]:
-    """Accumulate lessons across attempts, newest last, without duplicates."""
-    merged: dict[str, str] = {}
-    for lesson in [*existing, *new]:
-        key = lesson.strip().casefold()
-        if key:
-            merged.pop(key, None)
-            merged[key] = lesson.strip()
-    return list(merged.values())[-MAX_LESSONS:]
+def _issue_line(issue: dict) -> str:
+    points = list(issue.get("missing_points") or [])
+    if issue.get("gate") == "faithfulness":
+        # These are claims the cited excerpts do not support: never content to add.
+        return ("Unsupported statements (remove each one, or narrow it to exactly what a cited "
+                "excerpt states): " + " | ".join(points or [issue.get("detail", "")]))
+    target = issue.get("item") or issue.get("check", "")
+    missing = "; ".join(points)
+    return f"{target} — {issue.get('detail', '')}" + (f" Missing: {missing}" if missing else "")
 
 
 class ReportWriter:
-    """LLM report writer (role ``synthesizer``): writes and revises drafts from the evidence
-    catalog, applies a human reviewer's change requests, and reflects on failed verifications.
-    """
+    """LLM report writer (role ``synthesizer``)."""
 
     def __init__(self, router):
         self.router = router
@@ -153,56 +135,53 @@ class ReportWriter:
         brief: ResearchBrief,
         catalog: SourceCatalog,
         *,
-        revision: RevisionContext | None = None,
+        repair: dict | None = None,
+        previous_draft: str = "",
+        draft_version: int = 0,
+        report_shape: str = "",
         reviewer_requests: list[str] = (),
         reviewed_report: str = "",
-        research_status: str = "READY",
         research_limitations: list[str] = (),
         guidelines: list[str] = (),
         run_id: str = "",
         thread_id: str = "",
     ) -> str:
-        """Draft or revise the report from the evidence.
+        """Draft, repair or reviewer-rewrite the report from the evidence.
 
-        `revision` carries a failed verification (BVF fix). `reviewer_requests` are the human
-        reviewer's change requests: they win over the layout rules and guidelines when they
-        conflict, and stay in force through later BVF fixes. `reviewed_report` is the report the
-        reviewer just commented on, rewritten here (omitted during a BVF fix, whose `revision`
-        already carries the previous draft). `guidelines` are the operator's report guidelines,
-        shown up front so the first draft already follows what the judge will enforce.
+        `repair` is the diagnosed repair plan for `previous_draft`. `reviewer_requests` are the
+        human reviewer's change requests: they win over layout rules and guidelines when they
+        conflict. `reviewed_report` is the report the reviewer just commented on.
         """
         blocks = []
-        blocks.append(
-            "Research readiness: " + research_status + ".\n" +
-            "Answer only what the stored evidence supports. If readiness is PARTIAL or "
-            "INSUFFICIENT, explicitly label the answer INCOMPLETE, state what could not be "
-            "verified and why, and never guess the main answer. Lack of evidence is not "
-            "evidence of absence. Do not claim new research was performed. A short honest "
-            "answer is preferred to an exhaustive report. Keep a Sources section even when "
-            "no sources are available; say none in that case.\nKnown limitations: " +
-            json.dumps(list(research_limitations)))
-        if revision is not None:
-            blocks.append(REVISION_BLOCK.format(
-                attempt=revision.attempt,
-                failures=revision.failures,
-                lessons=_bullets(revision.lessons),
-                strategy=revision.strategy or "(fix every failed check)",
-                previous_draft=revision.previous_draft,
+        if repair is not None:
+            blocks.append(REPAIR_BLOCK.format(
+                version=draft_version,
+                cycle=repair.get("cycle", 1),
+                issues=_bullets([_issue_line(issue) for issue in repair.get("issues", [])]),
+                passing=_bullets(list(repair.get("passing", []))),
+                route_instruction=REPAIR_ROUTE_INSTRUCTIONS.get(repair.get("route"), ""),
+                previous_draft=previous_draft,
             ))
         if reviewer_requests:
             blocks.append(REVIEWER_BLOCK.format(
                 requests=_bullets(list(reviewer_requests)),
                 current_report=(
                     REVIEWER_CURRENT_REPORT.format(report=reviewed_report)
-                    if reviewed_report and revision is None else ""
+                    if reviewed_report and repair is None else ""
                 ),
             ))
+        gaps = [f"{gap.text} (question: {gap.question})" for gap in catalog.gaps]
+        gaps.extend(item for item in research_limitations if item not in gaps)
         messages = REPORT_WRITER_TEMPLATE.format_messages(
             date=date.today().isoformat(),
             guidelines=_bullets(list(guidelines)),
+            original_question=brief.original_question or brief.research_question,
             brief=brief.research_question,
+            required_answers=_bullets(brief.checklist),
+            output_requirements=_bullets(brief.output_requirements),
+            report_shape=report_shape or "(not specified)",
             evidence=format_evidence(catalog),
-            gaps=_bullets([f"{gap.text} (question: {gap.question})" for gap in catalog.gaps]),
+            gaps=_bullets(gaps),
             revision="\n\n".join(blocks),
         )
         draft = self.router.invoke_messages(
@@ -213,38 +192,3 @@ class ReportWriter:
             thread_id=thread_id,
         )
         return draft.report_markdown
-
-    def reflect(
-        self,
-        draft: str,
-        verification: VerificationResult,
-        *,
-        history: list[dict],
-        lessons: list[str],
-        stalled: bool,
-        run_id: str = "",
-        thread_id: str = "",
-    ) -> Reflection:
-        """Diagnose a failed verification and return lessons plus a fix strategy for the next draft.
-
-        `history` lists the earlier fix attempts and `lessons` what was already learned; `stalled`
-        means the same checks failed again after the last fix, so a different approach is needed.
-        """
-        previous = [
-            {key: entry.get(key) for key in ("attempt", "failed_checks", "diagnosis", "strategy")}
-            for entry in history
-        ]
-        messages = REFLECTION_TEMPLATE.format_messages(
-            failures=verification.repair_details,
-            history=json.dumps(previous, indent=2) if previous else "(first failure)",
-            lessons=_bullets(lessons),
-            stalled="yes" if stalled else "no",
-            draft=draft,
-        )
-        return self.router.invoke_messages(
-            "fixer",
-            messages,
-            Reflection,
-            run_id=run_id,
-            thread_id=thread_id,
-        )

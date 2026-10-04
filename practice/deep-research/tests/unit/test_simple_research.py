@@ -43,7 +43,9 @@ def test_optional_gap_does_not_override_ready_judge(tmp_path):
 def test_partial_skips_extra_research(tmp_path):
     nodes, state = make_nodes(tmp_path, "PARTIAL")
     result = nodes.research_complete(state)
-    assert result["result_incomplete"]
+    # Gaps reach the writer as limitations; they never mark the result incomplete by themselves.
+    assert result["research_status"] == "PARTIAL" and not result["result_incomplete"]
+    assert result["research_limitations"] == ["Main version not verified"]
     assert route_after_research(result) == "synthesizing"
 
 
@@ -54,7 +56,7 @@ def test_insufficient_gets_one_attempt_then_incomplete_synthesis(tmp_path):
     reopened = nodes.prepare_gap_research(assessed)
     exhausted = nodes.research_complete(reopened)
     assert exhausted["research_gap_attempt"] == 1
-    assert exhausted["result_incomplete"]
+    assert exhausted["research_status"] == "INSUFFICIENT"
     assert route_after_research(exhausted) == "synthesizing"
     with pytest.raises(ValueError, match="exhausted"):
         nodes.prepare_gap_research(exhausted)

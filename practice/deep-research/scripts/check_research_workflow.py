@@ -33,7 +33,6 @@ def main():
     from intelligence_collector.agents.scope import ScopeAgent
     from intelligence_collector.agents.researcher import ResearchAgent
     from intelligence_collector.agents.report_judge import ReportJudge
-    from intelligence_collector.agents.research_judge import ResearchEvidenceJudge
     from intelligence_collector.config import Settings, RoleModelSettings
     from intelligence_collector.graph.build import build_graph
     from intelligence_collector.graph.nodes import ResearchNodes
@@ -76,9 +75,9 @@ def main():
                                      os.environ["TAVILY_API_KEY"], max_calls=settings.max_search_calls),
         max_search_calls=settings.max_search_calls, max_sources=settings.max_sources_per_task)
     nodes = ResearchNodes(
-        vfs, ChromaVectorIndex(str(root / "chroma"), embeddings=embeddings), researcher,
-        report_judge=ReportJudge(routers.reasoning),
-        research_assessor=ResearchEvidenceJudge(routers.reasoning),
+        vfs, ChromaVectorIndex(str(root / "chroma"), embeddings=embeddings,
+                               model=settings.embedding_model, provider=settings.embedding_provider), researcher,
+        report_judge=ReportJudge(routers.reasoning), require_faithfulness=True,
         report_guidelines=settings.report_guidelines,
         max_concurrent_researchers=settings.max_concurrent_researchers,
         recovery_budget=settings.recovery_attempts, evidence_top_k=settings.evidence_top_k,

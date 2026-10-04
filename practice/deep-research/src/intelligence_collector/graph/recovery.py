@@ -15,6 +15,7 @@ from intelligence_collector.graph.migration import normalize_checkpoint
 from intelligence_collector.contracts import (
     ApprovalResumeDecision,
     ClarificationResumeDecision,
+    PlanApprovalDecision,
     RecoveryDecision,
     RecoverySnapshot,
     RunRecord,
@@ -187,6 +188,8 @@ class WorkflowRecoveryService:
                            "Exported Incomplete": WorkflowStatus.EXPORTED_INCOMPLETE}.get(stage)
         waiting_status = {"NEEDS_REVIEW": WorkflowStatus.WAITING_FOR_RECOVERY,
                           "Awaiting Approval": WorkflowStatus.WAITING_FOR_APPROVAL}.get(stage)
+        if self._interrupt_kind(interrupts) == "plan_approval":
+            waiting_status = WorkflowStatus.WAITING_FOR_PLAN_APPROVAL
         return RecoverySnapshot(
             run_id=record.run_id,
             thread_id=record.thread_id,
@@ -234,6 +237,8 @@ class WorkflowRecoveryService:
             model = ApprovalResumeDecision.model_validate(decision)
         elif kind == "clarification_required":
             model = ClarificationResumeDecision.model_validate(decision)
+        elif kind == "plan_approval":
+            model = PlanApprovalDecision.model_validate(decision)
         elif kind == "recovery_required":
             model = RecoveryDecision.model_validate(decision)
         else:
