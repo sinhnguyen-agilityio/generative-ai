@@ -56,16 +56,26 @@ def test_thread_identity_is_stable_across_streamlit_reruns():
 
 
 def test_graph_snapshot_renders_stage_and_task_progress():
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Researching",
-        "status": "active",
-        "todos": [
-            {"todo_id": "todo-1", "research_question": "Find primary sources", "status": "completed"},
-            {"todo_id": "todo-2", "research_question": "Compare findings", "status": "in_progress"},
-        ],
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Researching",
+            "status": "active",
+            "todos": [
+                {
+                    "todo_id": "todo-1",
+                    "research_question": "Find primary sources",
+                    "status": "completed",
+                },
+                {
+                    "todo_id": "todo-2",
+                    "research_question": "Compare findings",
+                    "status": "in_progress",
+                },
+            ],
+        }
+    )
 
     text = _visible_text(app)
     assert "Researching" in text
@@ -77,25 +87,27 @@ def test_graph_snapshot_renders_stage_and_task_progress():
 
 
 def test_graph_snapshot_renders_verification_evidence_links_and_report():
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Awaiting Approval",
-        "status": "paused",
-        "verification": {
-            "passed": True,
-            "artifact_hash": "verified-hash",
-            "checks": ["scope coverage", "claim evidence"],
-        },
-        "evidence": [
-            {
-                "source_id": "source-1",
-                "title": "SQLite transaction documentation",
-                "locator": "https://www.sqlite.org/lang_transaction.html",
-            }
-        ],
-        "report": "# Database comparison\n\nSQLite provides documented transaction semantics [source-1].",
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Awaiting Approval",
+            "status": "paused",
+            "verification": {
+                "passed": True,
+                "artifact_hash": "verified-hash",
+                "checks": ["scope coverage", "claim evidence"],
+            },
+            "evidence": [
+                {
+                    "source_id": "source-1",
+                    "title": "SQLite transaction documentation",
+                    "locator": "https://www.sqlite.org/lang_transaction.html",
+                }
+            ],
+            "report": "# Database comparison\n\nSQLite provides documented transaction semantics [source-1].",
+        }
+    )
 
     text = _visible_text(app)
     assert "Verification: passed" in text
@@ -109,13 +121,15 @@ def test_graph_snapshot_renders_verification_evidence_links_and_report():
 def test_review_happens_in_the_chat_while_awaiting_approval():
     """The report is posted in the chat with a prompt to reply; the chat input becomes the
     review reply (an LLM reads it as approve / format / scope) -- no separate approve/reject form."""
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Awaiting Approval",
-        "verification": {"passed": True, "artifact_hash": "verified-hash", "checks": []},
-        "report": "# Report",
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Awaiting Approval",
+            "verification": {"passed": True, "artifact_hash": "verified-hash", "checks": []},
+            "report": "# Report",
+        }
+    )
 
     report_bubble = app.chat_message[-1]
     assert report_bubble.name == "assistant"
@@ -130,17 +144,21 @@ def test_review_and_publish_section_hidden_once_published():
     """Once published, the (immutable) verification result still says passed=True -- the
     section must be gated on the live stage too, or a published report would keep offering
     another Approve/Reject decision forever."""
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Published",
-        "verification": {"passed": True, "artifact_hash": "verified-hash", "checks": []},
-        "publication": {
-            "destination": "exports/run-ui.md", "artifact_hash": "verified-hash",
-            "approval_id": "a1", "published": True,
-        },
-        "report": "# Report",
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Published",
+            "verification": {"passed": True, "artifact_hash": "verified-hash", "checks": []},
+            "publication": {
+                "destination": "exports/run-ui.md",
+                "artifact_hash": "verified-hash",
+                "approval_id": "a1",
+                "published": True,
+            },
+            "report": "# Report",
+        }
+    )
 
     text = _visible_text(app)
     assert "Reply **approve** to publish" not in text
@@ -149,18 +167,20 @@ def test_review_and_publish_section_hidden_once_published():
 
 
 def test_unverified_snapshot_never_renders_verified_or_publication_controls():
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Verifying",
-        "status": "active",
-        "verification": {
-            "passed": False,
-            "artifact_hash": "candidate-hash",
-            "repair_details": "A comparison claim has no source.",
-        },
-        "report": "# Unverified draft",
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Verifying",
+            "status": "active",
+            "verification": {
+                "passed": False,
+                "artifact_hash": "candidate-hash",
+                "repair_details": "A comparison claim has no source.",
+            },
+            "report": "# Unverified draft",
+        }
+    )
 
     text = _visible_text(app).lower()
     assert "verification: failed" in text
@@ -178,25 +198,27 @@ def test_ui_rejects_unsafe_input():
 
 
 def test_paused_clarification_is_static_and_activity_is_chronological():
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Scoping",
-        "status": "paused",
-        "scope_assessment": {
-            "need_clarification": True,
-            "question": "Which workload should be compared?",
-            "verification": "",
-        },
-        "messages": [
-            HumanMessage(content="Compare databases"),
-            AIMessage(content="Which workload should be compared?"),
-        ],
-        "activity": [
-            {"id": "scope", "label": "Evaluating scope", "status": "success"},
-            {"id": "brief", "label": "Generating brief", "status": "running"},
-        ],
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Scoping",
+            "status": "paused",
+            "scope_assessment": {
+                "need_clarification": True,
+                "question": "Which workload should be compared?",
+                "verification": "",
+            },
+            "messages": [
+                HumanMessage(content="Compare databases"),
+                AIMessage(content="Which workload should be compared?"),
+            ],
+            "activity": [
+                {"id": "scope", "label": "Evaluating scope", "status": "success"},
+                {"id": "brief", "label": "Generating brief", "status": "running"},
+            ],
+        }
+    )
 
     text = _visible_text(app)
     assert "Waiting for your response" in text
@@ -205,29 +227,33 @@ def test_paused_clarification_is_static_and_activity_is_chronological():
 
 
 def test_chat_first_transcript_has_one_plain_assistant_message_and_collapsed_details():
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Planning",
-        "status": "active",
-        "scope_assessment": {
-            "need_clarification": False,
-            "question": "",
-            "verification": "I have enough information and will begin research.",
-        },
-        "messages": [
-            HumanMessage(content="Compare PostgreSQL and SQLite"),
-            AIMessage(content="I have enough information and will begin research."),
-        ],
-        "activity": [{
-            "id": "planning",
-            "label": "Calling write_todos",
-            "agent": "Planner",
-            "tool": "write_todos",
-            "status": "success",
-            "duration_ms": 12,
-        }],
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Planning",
+            "status": "active",
+            "scope_assessment": {
+                "need_clarification": False,
+                "question": "",
+                "verification": "I have enough information and will begin research.",
+            },
+            "messages": [
+                HumanMessage(content="Compare PostgreSQL and SQLite"),
+                AIMessage(content="I have enough information and will begin research."),
+            ],
+            "activity": [
+                {
+                    "id": "planning",
+                    "label": "Calling write_todos",
+                    "agent": "Planner",
+                    "tool": "write_todos",
+                    "status": "success",
+                    "duration_ms": 12,
+                }
+            ],
+        }
+    )
 
     assert len(app.chat_message) == 2
     assert app.chat_message[0].name == "user"
@@ -242,17 +268,27 @@ def test_chat_first_transcript_has_one_plain_assistant_message_and_collapsed_det
 
 
 def test_pipeline_and_activity_log_live_in_a_framed_side_panel():
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Planning",
-        "messages": [HumanMessage(content="Compare databases")],
-        "activity": [{"id": "scope", "label": "Evaluating scope", "agent": "Scope Agent",
-                      "status": "success"}],
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Planning",
+            "messages": [HumanMessage(content="Compare databases")],
+            "activity": [
+                {
+                    "id": "scope",
+                    "label": "Evaluating scope",
+                    "agent": "Scope Agent",
+                    "status": "success",
+                }
+            ],
+        }
+    )
 
     chat_col, panel_col = app.columns[0], app.columns[1]
-    panel_text = "\n".join(str(e.value) for e in list(panel_col.subheader) + list(panel_col.markdown))
+    panel_text = "\n".join(
+        str(e.value) for e in list(panel_col.subheader) + list(panel_col.markdown)
+    )
     assert "Pipeline" in panel_text and "Activity log" in panel_text
     assert "Evaluating scope" in panel_text
     assert len(chat_col.chat_message) == 1 and not panel_col.chat_message
@@ -264,13 +300,15 @@ def test_chat_reply_while_awaiting_review_resumes_the_review(monkeypatch):
         "intelligence_collector.app._run_chat_turn",
         lambda st, text, **kwargs: calls.append((text, kwargs["reviewing"])),
     )
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Awaiting Approval",
-        "verification": {"passed": True, "artifact_hash": "verified-hash", "checks": []},
-        "report": "# Report",
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Awaiting Approval",
+            "verification": {"passed": True, "artifact_hash": "verified-hash", "checks": []},
+            "report": "# Report",
+        }
+    )
 
     app.chat_input[0].set_value("Looks good, publish it").run()
 

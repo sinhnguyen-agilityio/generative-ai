@@ -89,8 +89,11 @@ class ChromaVectorIndex:
         """Embed and upsert the chunks; returns their ids."""
         if not chunks:
             return []
-        with traced("vector_index.upsert", as_type="embedding", metadata={
-                "embedding_model": self._embedding_model, "chunks": len(chunks)}):
+        with traced(
+            "vector_index.upsert",
+            as_type="embedding",
+            metadata={"embedding_model": self._embedding_model, "chunks": len(chunks)},
+        ):
             self._upsert(chunks)
         return [chunk.chunk_id for chunk in chunks]
 
@@ -123,9 +126,12 @@ class ChromaVectorIndex:
         """Nearest chunks to `query`, optionally scoped to one run and one research question."""
         if self._collection.count() == 0:
             return []
-        with traced("vector_index.query", as_type="retriever", input={"query": query},
-                    metadata={"todo_id": todo_id, "limit": limit,
-                              "embedding_model": self._embedding_model}) as observation:
+        with traced(
+            "vector_index.query",
+            as_type="retriever",
+            input={"query": query},
+            metadata={"todo_id": todo_id, "limit": limit, "embedding_model": self._embedding_model},
+        ) as observation:
             result = self._collection.query(
                 query_embeddings=[self._embeddings.embed_query(query)],
                 n_results=limit,

@@ -89,10 +89,7 @@ class TavilyMCP:
         self.requests: list[dict[str, str]] = []
 
     def __repr__(self) -> str:
-        return (
-            f"TavilyMCP(server_name={self.server_name!r}, "
-            f"max_calls={self.max_calls!r})"
-        )
+        return f"TavilyMCP(server_name={self.server_name!r}, max_calls={self.max_calls!r})"
 
     async def _search(self, query: str, max_results: int):
         async with streamable_http_client(self._url) as streams:
@@ -109,7 +106,8 @@ class TavilyMCP:
         payload = getattr(result, "structured_content", None)
         if not payload:
             text = "\n".join(
-                block.text for block in getattr(result, "content", [])
+                block.text
+                for block in getattr(result, "content", [])
                 if getattr(block, "type", "") == "text"
             )
             try:
@@ -124,12 +122,14 @@ class TavilyMCP:
             if not isinstance(row, dict) or not str(row.get("url", "")).strip():
                 continue
             content = row.get("content") or row.get("raw_content") or row.get("title") or ""
-            normalized.append({
-                "url": str(row["url"]),
-                "content": str(content),
-                "title": str(row.get("title", "")),
-                "score": row.get("score"),
-            })
+            normalized.append(
+                {
+                    "url": str(row["url"]),
+                    "content": str(content),
+                    "title": str(row.get("title", "")),
+                    "score": row.get("score"),
+                }
+            )
         return normalized
 
     def search(self, query, *, server="tavily", tool="tavily_search", max_results=None):
@@ -140,7 +140,9 @@ class TavilyMCP:
             raise RuntimeError("search budget exhausted")
         if not str(query).strip():
             raise ValueError("Tavily MCP search query must not be blank")
-        limit = self.max_results if max_results is None else min(max(1, max_results), self.max_results)
+        limit = (
+            self.max_results if max_results is None else min(max(1, max_results), self.max_results)
+        )
         self.calls += 1
         self.requests.append({"query": str(query), "server": server, "tool": tool})
         return self._result_payload(anyio.run(self._search, str(query), limit))

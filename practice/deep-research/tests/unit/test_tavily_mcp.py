@@ -12,12 +12,14 @@ def test_tavily_adapter_normalizes_results_without_exposing_key(monkeypatch):
     async def fake_search(query, max_results):
         return SimpleNamespace(
             structured_content={
-                "results": [{
-                    "url": "https://docs.python.org/3/whatsnew/3.13.html",
-                    "title": "What's New In Python 3.13",
-                    "content": "Python 3.13 release information",
-                    "score": 0.9,
-                }]
+                "results": [
+                    {
+                        "url": "https://docs.python.org/3/whatsnew/3.13.html",
+                        "title": "What's New In Python 3.13",
+                        "content": "Python 3.13 release information",
+                        "score": 0.9,
+                    }
+                ]
             },
             content=[],
         )
@@ -27,11 +29,13 @@ def test_tavily_adapter_normalizes_results_without_exposing_key(monkeypatch):
 
     assert results[0]["url"].startswith("https://docs.python.org/")
     assert "sufficient" not in results[0]  # sufficiency is the research agent's LLM decision
-    assert adapter.requests == [{
-        "query": "Python 3.13 release",
-        "server": "tavily",
-        "tool": "tavily_search",
-    }]
+    assert adapter.requests == [
+        {
+            "query": "Python 3.13 release",
+            "server": "tavily",
+            "tool": "tavily_search",
+        }
+    ]
     assert secret not in repr(adapter)
     assert secret not in str(adapter.requests)
 

@@ -17,6 +17,7 @@ from intelligence_collector.guardrails import ContentSafetyVerdict, GuardrailVio
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from intelligence_collector.storage.vfs import VFS
 
+
 class ScopeAgent:
     """Turns the user's chat into a research brief. `router` runs the scope and brief calls;
     `guardrail_router` (default: the same router) runs the content-safety check.

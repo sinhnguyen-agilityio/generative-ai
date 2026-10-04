@@ -54,7 +54,8 @@ def node_wrapper(
     annotations.
 
     `lifecycle(node, status)` is called with "running", then "success" or "failure"; a
-    ``GraphInterrupt`` (the human-review pause) is re-raised without being marked failed. With a
+    ``GraphInterrupt`` (the human-review pause) reports "waiting" and is re-raised without being
+    marked failed. With a
     `tracer`, the node's observation gets correlation metadata and any score fields in its
     result (see ``SCORE_FIELDS``) are attached to the trace. Raises ``TypeError`` if the node
     returns something other than a mapping.
@@ -132,8 +133,10 @@ def node_wrapper(
             # An intentional pause for a human decision (see graph/nodes.py's ApprovalNodes),
             # not a failure — GraphInterrupt is a real Exception subclass (so a bare `except
             # Exception` below would catch it too), and LangGraph's own resume mechanism
-            # handles it; don't mark this node's lifecycle activity as failed.
+            # handles it; don't mark this node's lifecycle activity as failed. It still needs a
+            # terminal lifecycle event, or the UI keeps showing the node as running.
             update(state, interrupt_status())
+            notify(name, "waiting")
             raise
         except Exception:
             update(state, WorkflowStatus.FAILED)

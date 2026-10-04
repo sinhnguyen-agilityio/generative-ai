@@ -21,14 +21,19 @@ def test_research_agent_searches_broad_then_narrow_and_persists_provenance(store
     todo = ResearchTodo(research_question="Compare database transaction behavior")
     narrow = "database locking behavior primary documentation"
     model = FakeResearchModel(queries={todo.research_question: [todo.research_question, narrow]})
-    mcp = ControlledMCP([
-        [{"url": "https://primary.test/overview", "content": "Transaction overview"}],
-        [{"url": "https://primary.test/locking", "content": "Documented locking behavior"}],
-    ])
+    mcp = ControlledMCP(
+        [
+            [{"url": "https://primary.test/overview", "content": "Transaction overview"}],
+            [{"url": "https://primary.test/locking", "content": "Documented locking behavior"}],
+        ]
+    )
     traces = []
 
     completed, refs, chunks = run_worker(
-        vfs, index, "run", todo,
+        vfs,
+        index,
+        "run",
+        todo,
         _researcher(model, lambda: mcp, trace=lambda **event: traces.append(event)),
     )
 
@@ -38,10 +43,17 @@ def test_research_agent_searches_broad_then_narrow_and_persists_provenance(store
     # Only the first turn forces a search; later turns may finish without one.
     assert model.tool_choices == ["any", None, None]
     assert [event["role"] for event in traces] == [
-        "researcher", "researcher", "researcher", "research_compressor",
+        "researcher",
+        "researcher",
+        "researcher",
+        "research_compressor",
     ]
     assert {ref.kind for ref in refs} == {
-        "raw_capture", "url_registry", "notes", "excerpts", "evidence_bundle",
+        "raw_capture",
+        "url_registry",
+        "notes",
+        "excerpts",
+        "evidence_bundle",
     }
     evidence = json.loads(vfs.read("run", f"research/{todo.todo_id}/evidence/result.json"))
     assert evidence["sufficient"] is True
@@ -61,7 +73,9 @@ def test_research_agent_stops_when_llm_gives_final_answer(stores):
     todo = ResearchTodo(research_question="Find the transaction specification")
     mcp = ControlledMCP([{"url": "https://primary.test/spec", "content": "Complete specification"}])
 
-    completed, _, _ = run_worker(vfs, index, "early", todo, _researcher(FakeResearchModel(), lambda: mcp))
+    completed, _, _ = run_worker(
+        vfs, index, "early", todo, _researcher(FakeResearchModel(), lambda: mcp)
+    )
 
     assert completed.status == TodoStatus.COMPLETED
     assert mcp.calls == 1
@@ -72,11 +86,13 @@ def test_search_budget_is_a_hard_per_task_limit_and_gaps_are_recorded(stores):
     todo = ResearchTodo(research_question="Investigate an unresolved compatibility issue")
     model = FakeResearchModel(
         queries={todo.research_question: [f"query {n}" for n in range(8)]},
-        findings={todo.research_question: {
-            "summary": "Partial evidence [https://primary.test/partial]",
-            "sufficient": False,
-            "unresolved_gaps": ["cross-platform confirmation"],
-        }},
+        findings={
+            todo.research_question: {
+                "summary": "Partial evidence [https://primary.test/partial]",
+                "sufficient": False,
+                "unresolved_gaps": ["cross-platform confirmation"],
+            }
+        },
     )
     mcp = ControlledMCP([{"url": "https://primary.test/partial", "content": "Partial evidence"}])
 
@@ -98,7 +114,10 @@ def test_source_budget_caps_distinct_pages_per_todo_across_all_searches(stores):
     todo = ResearchTodo(research_question="What is the latest version of TypeScript?")
     model = FakeResearchModel(queries={todo.research_question: [f"query {n}" for n in range(4)]})
     pages = [
-        [{"url": f"https://page.test/{batch}-{n}", "content": f"page {batch}-{n}"} for n in range(5)]
+        [
+            {"url": f"https://page.test/{batch}-{n}", "content": f"page {batch}-{n}"}
+            for n in range(5)
+        ]
         for batch in range(4)
     ]
     mcp = ControlledMCP(pages)
@@ -124,10 +143,12 @@ def test_source_budget_requests_only_the_remaining_slots(stores):
     vfs, index = stores
     todo = ResearchTodo(research_question="Compare two release notes")
     model = FakeResearchModel(queries={todo.research_question: ["broad", "gap"]})
-    mcp = ControlledMCP([
-        [{"url": f"https://first.test/{n}", "content": "first"} for n in range(3)],
-        [{"url": f"https://second.test/{n}", "content": "second"} for n in range(5)],
-    ])
+    mcp = ControlledMCP(
+        [
+            [{"url": f"https://first.test/{n}", "content": "first"} for n in range(3)],
+            [{"url": f"https://second.test/{n}", "content": "second"} for n in range(5)],
+        ]
+    )
     requested_limits = []
     original_search = mcp.search
 
@@ -142,8 +163,11 @@ def test_source_budget_requests_only_the_remaining_slots(stores):
     evidence = json.loads(vfs.read("remaining", f"research/{todo.todo_id}/evidence/result.json"))
     assert requested_limits == [5, 2]
     assert [s["locator"] for s in evidence["sources"]] == [
-        "https://first.test/0", "https://first.test/1", "https://first.test/2",
-        "https://second.test/0", "https://second.test/1",
+        "https://first.test/0",
+        "https://first.test/1",
+        "https://first.test/2",
+        "https://second.test/0",
+        "https://second.test/1",
     ]
 
 
@@ -174,8 +198,10 @@ def test_supervisor_delegates_one_sub_agent_per_todo_in_parallel(stores):
     vfs, index = stores
     todos = [ResearchTodo(research_question=f"Question {n}") for n in range(3)]
     model = FakeResearchModel(
-        queries={todo.research_question: [f"{todo.research_question} q{i}" for i in range(4)]
-                 for todo in todos},
+        queries={
+            todo.research_question: [f"{todo.research_question} q{i}" for i in range(4)]
+            for todo in todos
+        },
     )
     clients, active, peak, lock = [], 0, 0, threading.Lock()
 
@@ -234,7 +260,9 @@ def test_research_sub_agents_inherit_the_calling_thread_context_for_tracing(stor
                 lambda: ControlledMCP([{"url": "https://primary.test/0", "content": "evidence"}]),
                 trace=capture_trace,
             ),
-            vfs, index, max_concurrent_researchers=3,
+            vfs,
+            index,
+            max_concurrent_researchers=3,
         )
 
         supervisor.delegate("context-probe", todos)
@@ -250,11 +278,22 @@ def test_sub_agent_does_not_repeat_a_url_it_already_retrieved(stores):
     todo = ResearchTodo(research_question="How do caches evict entries?")
     model = FakeResearchModel(queries={todo.research_question: ["broad cache", "narrow cache"]})
     page = {"url": "https://primary.test/cache", "content": "A cache evicts entries."}
-    mcp = ControlledMCP([
-        [page],
-        [{**page, "url": "https://PRIMARY.test/cache/#eviction", "content": "Different snippet"},
-         {"url": "https://primary.test/lru", "content": "LRU evicts the least recently used."}],
-    ])
+    mcp = ControlledMCP(
+        [
+            [page],
+            [
+                {
+                    **page,
+                    "url": "https://PRIMARY.test/cache/#eviction",
+                    "content": "Different snippet",
+                },
+                {
+                    "url": "https://primary.test/lru",
+                    "content": "LRU evicts the least recently used.",
+                },
+            ],
+        ]
+    )
     captured = []
     researcher = _researcher(model, lambda: mcp)
     original = researcher.research
@@ -267,14 +306,18 @@ def test_sub_agent_does_not_repeat_a_url_it_already_retrieved(stores):
     _, refs, chunks = run_worker(vfs, index, "seen", todo, researcher)
 
     assert [s["url"] for s in captured[0].sources] == [
-        "https://primary.test/cache", "https://primary.test/lru",
+        "https://primary.test/cache",
+        "https://primary.test/lru",
     ]
     assert len(chunks) == 2 and [r.kind for r in refs].count("raw_capture") == 2
 
 
 def test_url_found_by_several_tasks_is_captured_and_indexed_once(stores):
     vfs, index = stores
-    first, second = ResearchTodo(research_question="First"), ResearchTodo(research_question="Second")
+    first, second = (
+        ResearchTodo(research_question="First"),
+        ResearchTodo(research_question="Second"),
+    )
     shared = {"url": "https://primary.test/shared", "content": "Shared evidence"}
     supervisor = ResearchSupervisor(
         _researcher(FakeResearchModel(), lambda: ControlledMCP([shared])), vfs, index
@@ -296,7 +339,8 @@ def test_url_found_by_several_tasks_is_captured_and_indexed_once(stores):
         reused = bundle["sources"][0]
         assert reused["reused_from_task"] == first.todo_id
         assert (reused["source_id"], reused["artifact_id"]) == (
-            original["source_id"], original["artifact_id"],
+            original["source_id"],
+            original["artifact_id"],
         )
     registry = json.loads(vfs.read("shared", "research/url_registry.json"))
     assert list(registry) == ["https://primary.test/shared"]
@@ -307,13 +351,18 @@ def test_page_already_found_by_another_todo_is_linked_without_using_a_source_slo
     page is linked (not a new capture) and does not take a slot, so todo 2's second search still
     has one slot left to fill — ending with 5 pages of its own plus the linked one."""
     vfs, index = stores
-    first, second = ResearchTodo(research_question="First"), ResearchTodo(research_question="Second")
+    first, second = (
+        ResearchTodo(research_question="First"),
+        ResearchTodo(research_question="Second"),
+    )
     shared = {"url": "https://primary.test/shared", "content": "Shared evidence"}
     own = [{"url": f"https://second.test/{n}", "content": f"own {n}"} for n in range(5)]
-    clients = iter([  # one client per sub-agent, in plan order (one worker)
-        ControlledMCP([shared]),
-        ControlledMCP([[shared, *own[:4]], [own[4]]]),
-    ])
+    clients = iter(
+        [  # one client per sub-agent, in plan order (one worker)
+            ControlledMCP([shared]),
+            ControlledMCP([[shared, *own[:4]], [own[4]]]),
+        ]
+    )
     model = FakeResearchModel(queries={"Second": ["second q1", "second q2"]})
     requested = []
 
@@ -329,7 +378,9 @@ def test_page_already_found_by_another_todo_is_linked_without_using_a_source_slo
         return client
 
     supervisor = ResearchSupervisor(
-        _researcher(model, factory), vfs, index,
+        _researcher(model, factory),
+        vfs,
+        index,
         max_concurrent_researchers=1,  # deterministic: todo 1 claims the shared page first
     )
     results = supervisor.delegate("linked", [first, second])
@@ -337,7 +388,9 @@ def test_page_already_found_by_another_todo_is_linked_without_using_a_source_slo
     assert [todo.status for todo, _, _ in results] == [TodoStatus.COMPLETED] * 2
     # The linked page did not use a slot: after 4 own pages, the next search asks for 1 more.
     assert requested[1:] == [("second q1", 5), ("second q2", 1)]
-    second_bundle = json.loads(vfs.read("linked", f"research/{second.todo_id}/evidence/result.json"))
+    second_bundle = json.loads(
+        vfs.read("linked", f"research/{second.todo_id}/evidence/result.json")
+    )
     locators = [s["locator"] for s in second_bundle["sources"]]
     assert locators[0] == "https://primary.test/shared"
     assert second_bundle["sources"][0]["reused_from_task"] == first.todo_id
@@ -357,7 +410,10 @@ def test_failing_sub_agent_does_not_cancel_siblings(stores):
         index,
     )
 
-    results = {todo.research_question: todo.status for todo, _, _ in supervisor.delegate("mixed", [ok, broken])}
+    results = {
+        todo.research_question: todo.status
+        for todo, _, _ in supervisor.delegate("mixed", [ok, broken])
+    }
 
     assert results == {"Works": TodoStatus.COMPLETED, "Breaks": TodoStatus.FAILED}
     outcome = json.loads(vfs.read("mixed", f"research/{broken.todo_id}/outcome.json"))

@@ -71,13 +71,11 @@ class ApprovalNodes:
         """
         from langgraph.types import interrupt
 
-        decision = interrupt(
-            {"kind": "publication_approval", "run_id": state.get("run_id")})
+        decision = interrupt({"kind": "publication_approval", "run_id": state.get("run_id")})
         from intelligence_collector.contracts import ApprovalResumeDecision
 
         decision = ApprovalResumeDecision.model_validate(decision).model_dump(mode="json")
-        state = {
-            **state, "reviewer": str(decision.get("actor") or "local-user")}
+        state = {**state, "reviewer": str(decision.get("actor") or "local-user")}
         if decision.get("approved") is True:
             return {
                 **state,
@@ -109,11 +107,14 @@ class ApprovalNodes:
             VerificationResult.model_validate(state["verification"]),
         )
         ref = self.vfs.write_json(
-            run_id, "publication/record.json", record.model_dump(
-                mode="json"), "publication_record",
+            run_id,
+            "publication/record.json",
+            record.model_dump(mode="json"),
+            "publication_record",
         )
         outcome = (
-            f"Published to {destination}" if record.published
+            f"Published to {destination}"
+            if record.published
             else f"Publication failed: {record.error}"
         )
         return {
@@ -138,30 +139,42 @@ class ApprovalNodes:
         feedback = state.get("human_feedback", "")
         if self.feedback_router is not None and feedback:
             verdict = self.feedback_router.route(
-                feedback, state.get("draft", ""),
-                run_id=state.get("run_id", ""), thread_id=state.get("thread_id", ""),
+                feedback,
+                state.get("draft", ""),
+                run_id=state.get("run_id", ""),
+                thread_id=state.get("thread_id", ""),
             )
         else:
             # No classifier configured, or no reply text: default to a revision rather than
             # publishing unasked or discarding the whole research plan.
             verdict = FeedbackDecision(
-                route="revise", reason="No reply to classify; defaulting to revise.")
-        explicit_reject = (state.get("approval") or {}
-                           ).get("approved") is False
+                route="revise", reason="No reply to classify; defaulting to revise."
+            )
+        explicit_reject = (state.get("approval") or {}).get("approved") is False
         explicit_accept = feedback.strip().casefold().rstrip(".! ") in {
-            "approve", "approved", "i approve", "i agree", "đồng ý", "phê duyệt",
-            "looks good, publish it"}
+            "approve",
+            "approved",
+            "i approve",
+            "i agree",
+            "đồng ý",
+            "phê duyệt",
+            "looks good, publish it",
+        }
         if verdict.route == "approve" and (explicit_reject or not explicit_accept):
             verdict = FeedbackDecision(
-                route="revise", reason="Publication requires an explicit, unconditional approval.")
+                route="revise", reason="Publication requires an explicit, unconditional approval."
+            )
 
-        history = [*state.get("bvf_history", []), {
-            "attempt": state.get("recovery_attempt", 0),
-            "kind": "HUMAN_FEEDBACK",
-            "route": verdict.route,
-            "feedback": feedback,
-            "reason": verdict.reason,
-        }]
+        history = [
+            *state.get("bvf_history", []),
+            {
+                "attempt": state.get("recovery_attempt", 0),
+                "kind": "HUMAN_FEEDBACK",
+                "route": verdict.route,
+                "feedback": feedback,
+                "reason": verdict.reason,
+            },
+        ]
         update = {
             "feedback_route": verdict.route,
             "current_action": f"Reviewer feedback routed to {verdict.route}: {verdict.reason or feedback[:120]}",
@@ -170,21 +183,37 @@ class ApprovalNodes:
             "recovery_budget": state.get("recovery_budget", DEFAULT_RECOVERY_BUDGET),
         }
         # clarify_with_user records the reply itself on the scope path.
-        replied = [*state.get("messages", []), HumanMessage(content=feedback)] if feedback else list(
-            state.get("messages", []))
+        replied = (
+            [*state.get("messages", []), HumanMessage(content=feedback)]
+            if feedback
+            else list(state.get("messages", []))
+        )
         if verdict.route == "approve":
-            return {**state, **update, "messages": replied, "human_feedback": "",
-                    "approval": self._approval_for(state, True)}
+            return {
+                **state,
+                **update,
+                "messages": replied,
+                "human_feedback": "",
+                "approval": self._approval_for(state, True),
+            }
         if verdict.route == "revise":
             # synthesizing consumes human_feedback and rewrites the reviewed report; the request
             # joins reviewer_requests so later BVF fixes and the judge keep honouring it. A human
             # revision starts a fresh Build-Verify-Fix cycle, so the attempt/stall counters restart.
-            requests = [*state.get("reviewer_requests", []), feedback] if feedback else list(
-                state.get("reviewer_requests", []))
+            requests = (
+                [*state.get("reviewer_requests", []), feedback]
+                if feedback
+                else list(state.get("reviewer_requests", []))
+            )
             return {
-                **state, **update,
-                "messages": [*replied, AIMessage(
-                    content="Revising the report with your feedback; it will be verified again.")],
+                **state,
+                **update,
+                "messages": [
+                    *replied,
+                    AIMessage(
+                        content="Revising the report with your feedback; it will be verified again."
+                    ),
+                ],
                 "human_feedback": feedback or "(no specific request)",
                 "reviewer_requests": requests,
                 "verification": None,
@@ -201,11 +230,18 @@ class ApprovalNodes:
             # The request joins reviewer_requests, so the coverage gate checks the new section.
             requests = [*state.get("reviewer_requests", []), feedback]
             return {
-                **state, **update,
-                "messages": [*replied, AIMessage(content=(
-                    "Adding that to the report: checking the evidence already collected first, "
-                    "then researching only what is missing. The updated report will be "
-                    "verified again."))],
+                **state,
+                **update,
+                "messages": [
+                    *replied,
+                    AIMessage(
+                        content=(
+                            "Adding that to the report: checking the evidence already collected first, "
+                            "then researching only what is missing. The updated report will be "
+                            "verified again."
+                        )
+                    ),
+                ],
                 "human_feedback": feedback,
                 "reviewer_requests": requests,
                 "extension": {"topic": (verdict.topic or feedback).strip(), "request": feedback},
@@ -221,7 +257,8 @@ class ApprovalNodes:
         # new brief starts a fresh research + Build-Verify-Fix cycle, so earlier reviewer requests
         # and the attempt/stall counters restart.
         return {
-            **state, **update,
+            **state,
+            **update,
             "request": feedback,
             "human_feedback": "",
             "reviewer_requests": [],

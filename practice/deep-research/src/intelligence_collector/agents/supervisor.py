@@ -12,7 +12,11 @@ import json
 from dataclasses import asdict
 
 from intelligence_collector.agents.researcher import ResearchAgent, ResearchOutcome
-from intelligence_collector.agents.worker import already_researched, failed_outcome, persist_research
+from intelligence_collector.agents.worker import (
+    already_researched,
+    failed_outcome,
+    persist_research,
+)
 from intelligence_collector.agents.worker import restore_research
 from intelligence_collector.agents.worker import research_prefix
 from intelligence_collector.contracts import ResearchFindings
@@ -47,8 +51,11 @@ class ResearchSupervisor:
 
     def delegate(self, run_id: str, todos: list[ResearchTodo], *, thread_id: str = ""):
         """Research every todo; returns ``(todo, refs, chunks)`` per todo in plan order."""
-        pending = [todo for todo in todos if todo.status == TodoStatus.PLANNED
-                   and not already_researched(self.vfs, run_id, todo)]
+        pending = [
+            todo
+            for todo in todos
+            if todo.status == TodoStatus.PLANNED and not already_researched(self.vfs, run_id, todo)
+        ]
         # One run-level URL registry, so a page found by several sub-agents is captured once.
         registry = UrlRegistry.load(self.vfs, run_id)
         # Shared by the parallel sub-agents while they search, so a page one task already
@@ -105,21 +112,34 @@ class ResearchSupervisor:
             try:
                 with traced("research.persist", metadata={"todo_id": todo_id}) as observation:
                     payload = asdict(outcome)
-                    payload["findings"] = outcome.findings.model_dump(mode="json") if outcome.findings else None
-                    self.vfs.write_json(run_id, f"{research_prefix(by_id[todo_id])}/retrieved_outcome.json",
-                                        payload, "retrieved_outcome", task_id=todo_id)
+                    payload["findings"] = (
+                        outcome.findings.model_dump(mode="json") if outcome.findings else None
+                    )
+                    self.vfs.write_json(
+                        run_id,
+                        f"{research_prefix(by_id[todo_id])}/retrieved_outcome.json",
+                        payload,
+                        "retrieved_outcome",
+                        task_id=todo_id,
+                    )
                     results[todo_id] = persist_research(
-                        self.vfs, self.index, run_id, by_id[todo_id], outcome, registry)
+                        self.vfs, self.index, run_id, by_id[todo_id], outcome, registry
+                    )
                     todo, refs, chunks = results[todo_id]
-                    observation.output = {"status": todo.status.value, "artifacts": len(refs),
-                                          "indexed_chunks": len(chunks)}
+                    observation.output = {
+                        "status": todo.status.value,
+                        "artifacts": len(refs),
+                        "indexed_chunks": len(chunks),
+                    }
             except Exception as exc:
                 # Finish persisting siblings even if one local index/storage operation failed.
                 errors.append(exc)
                 # Drop uncommitted URL registrations from the failed persistence attempt.
                 registry = UrlRegistry.load(self.vfs, run_id)
         if errors:
-            raise RuntimeError("Research persistence failed; completed sibling artifacts are recoverable") from errors[0]
+            raise RuntimeError(
+                "Research persistence failed; completed sibling artifacts are recoverable"
+            ) from errors[0]
         return results
 
     def _research_one(
@@ -128,8 +148,9 @@ class ResearchSupervisor:
         # One failing sub-agent must not cancel its siblings; the failure becomes its outcome.
         try:
             try:
-                payload = json.loads(self.vfs.read(
-                    run_id, f"{research_prefix(todo)}/retrieved_outcome.json"))
+                payload = json.loads(
+                    self.vfs.read(run_id, f"{research_prefix(todo)}/retrieved_outcome.json")
+                )
             except FileNotFoundError:
                 payload = None
             if payload is not None:
@@ -137,9 +158,11 @@ class ResearchSupervisor:
                     payload["findings"] = ResearchFindings.model_validate(payload["findings"])
                 return ResearchOutcome(**payload)
             return self.researcher.research(
-                todo.research_question + (
+                todo.research_question
+                + (
                     "\nResearch only this missing evidence: " + todo.research_instruction
-                    if todo.research_instruction else ""
+                    if todo.research_instruction
+                    else ""
                 ),
                 run_id=run_id,
                 thread_id=thread_id,

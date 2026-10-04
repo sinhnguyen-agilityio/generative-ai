@@ -23,8 +23,11 @@ def test_each_tier_uses_its_own_configurable_timeout_for_primary_and_fallback(mo
         lambda model, **kwargs: seen.append((model, kwargs["timeout"])) or object(),
     )
     settings = RoleModelSettings(
-        reasoning_model="r-model", standard_model="s-model",
-        reasoning_fallback_model="r-fallback", reasoning_timeout=150.0, standard_timeout=45.0,
+        reasoning_model="r-model",
+        standard_model="s-model",
+        reasoning_fallback_model="r-fallback",
+        reasoning_timeout=150.0,
+        standard_timeout=45.0,
     )
 
     ModelFactory().create_routers(settings)

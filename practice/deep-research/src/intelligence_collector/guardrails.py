@@ -36,14 +36,54 @@ _CONTROL_RE = re.compile(r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]")
 # keyword/regex filters by swapping in a visually identical character from another script.
 # NFKC alone does not fold these: they are distinct, non-compatibility code points that
 # merely render the same as their Latin counterparts.
-_CONFUSABLES = str.maketrans({
-    "а": "a", "А": "A", "е": "e", "Е": "E", "о": "o", "О": "O", "р": "p", "Р": "P",
-    "с": "c", "С": "C", "у": "y", "У": "Y", "х": "x", "Х": "X", "і": "i", "І": "I",
-    "ѕ": "s", "Ѕ": "S", "ј": "j", "Ј": "J", "ԁ": "d", "ѡ": "w", "ѵ": "v",
-    "α": "a", "Α": "A", "β": "b", "Β": "B", "ο": "o", "Ο": "O", "ρ": "p", "Ρ": "P",
-    "κ": "k", "Κ": "K", "τ": "t", "Τ": "T", "υ": "u", "Υ": "Y", "χ": "x", "Χ": "X",
-    "ⅰ": "i", "ⅼ": "l", "ⅽ": "c", "ⅾ": "d", "ⅿ": "m",
-})
+_CONFUSABLES = str.maketrans(
+    {
+        "а": "a",
+        "А": "A",
+        "е": "e",
+        "Е": "E",
+        "о": "o",
+        "О": "O",
+        "р": "p",
+        "Р": "P",
+        "с": "c",
+        "С": "C",
+        "у": "y",
+        "У": "Y",
+        "х": "x",
+        "Х": "X",
+        "і": "i",
+        "І": "I",
+        "ѕ": "s",
+        "Ѕ": "S",
+        "ј": "j",
+        "Ј": "J",
+        "ԁ": "d",
+        "ѡ": "w",
+        "ѵ": "v",
+        "α": "a",
+        "Α": "A",
+        "β": "b",
+        "Β": "B",
+        "ο": "o",
+        "Ο": "O",
+        "ρ": "p",
+        "Ρ": "P",
+        "κ": "k",
+        "Κ": "K",
+        "τ": "t",
+        "Τ": "T",
+        "υ": "u",
+        "Υ": "Y",
+        "χ": "x",
+        "Χ": "X",
+        "ⅰ": "i",
+        "ⅼ": "l",
+        "ⅽ": "c",
+        "ⅾ": "d",
+        "ⅿ": "m",
+    }
+)
 
 
 # Prompt-injection patterns. Each allows a few filler words ("all previous", "your", "the above")

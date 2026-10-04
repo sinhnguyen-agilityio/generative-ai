@@ -40,7 +40,9 @@ class ExtensionJudge:
         thread_id: str = "",
     ) -> ExtensionEvidenceVerdict:
         messages = EXTENSION_JUDGE_TEMPLATE.format_messages(
-            question=question, request=request, topic=topic,
+            question=question,
+            request=request,
+            topic=topic,
             passages=_format_passages(passages),
         )
         return self.router.invoke_messages(

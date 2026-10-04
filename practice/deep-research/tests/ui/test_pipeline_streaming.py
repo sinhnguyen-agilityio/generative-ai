@@ -32,7 +32,9 @@ def disable_local_dotenv(monkeypatch):
     monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
 
 
-def test_chat_turn_streams_through_the_graph_and_settles_on_the_planned_stage(tmp_path, monkeypatch):
+def test_chat_turn_streams_through_the_graph_and_settles_on_the_planned_stage(
+    tmp_path, monkeypatch
+):
     from streamlit.testing.v1 import AppTest
 
     monkeypatch.setenv("INTELLIGENCE_REASONING_MODEL", "fake-scope")
@@ -46,7 +48,9 @@ def test_chat_turn_streams_through_the_graph_and_settles_on_the_planned_stage(tm
 
     # One shared fake model backs both tiers (init_chat_model is patched to ignore its args),
     # so every invoke_messages call — guardrail, scope, brief, planner — draws from one queue.
-    model = RecordingChatModel([_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()])
+    model = RecordingChatModel(
+        [_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()]
+    )
     monkeypatch.setattr(
         "intelligence_collector.models.factory.init_chat_model",
         lambda *args, **kwargs: model,
@@ -62,8 +66,9 @@ def test_chat_turn_streams_through_the_graph_and_settles_on_the_planned_stage(tm
     assert not app.exception
     assert not app.error
     assert app.session_state["scope_state"]["stage"] == "Planning"
-    assert app.session_state["scope_state"]["scoped_request"]["research_question"] == (
-        _brief_payload()["research_question"]
+    assert (
+        app.session_state["scope_state"]["scoped_request"]["research_question"]
+        == (_brief_payload()["research_question"])
     )
     assert [todo["research_question"] for todo in app.session_state["scope_state"]["todos"]] == (
         _plan_payload()["questions"]

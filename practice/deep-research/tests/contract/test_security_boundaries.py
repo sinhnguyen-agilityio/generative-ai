@@ -88,9 +88,7 @@ def test_model_budget_and_trace_redaction_are_enforced():
         trace=lambda **event: events.append(event),
     )
     router.invoke_messages(
-        "test",
-        [HumanMessage(content=f"authorization=Bearer-{secret}")],
-        Decision
+        "test", [HumanMessage(content=f"authorization=Bearer-{secret}")], Decision
     )
 
     assert secret not in repr(events)
@@ -103,8 +101,7 @@ def test_secret_settings_repr_and_dependency_manifest_are_safe():
 
     manifest = Path("pyproject.toml").read_text(encoding="utf-8").lower()
     source = "\n".join(
-        path.read_text(encoding="utf-8").lower()
-        for path in Path("src").rglob("*.py")
+        path.read_text(encoding="utf-8").lower() for path in Path("src").rglob("*.py")
     )
     prohibited = "deep" + "agents"
     assert prohibited not in manifest.replace("-", "").replace("_", "")

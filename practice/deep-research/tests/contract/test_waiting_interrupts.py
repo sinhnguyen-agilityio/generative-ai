@@ -17,16 +17,19 @@ def _one_node_graph(name, node):
 def test_clarification_wait_is_a_resumable_interrupt():
     graph = _one_node_graph("await_clarification", await_clarification)
     config = {"configurable": {"thread_id": "scope-thread"}}
-    paused = graph.invoke({
-        "run_id": "run",
-        "thread_id": "scope-thread",
-        "stage": "Scoping",
-        "scope_assessment": {
-            "need_clarification": True,
-            "question": "Which workload?",
-            "verification": "",
+    paused = graph.invoke(
+        {
+            "run_id": "run",
+            "thread_id": "scope-thread",
+            "stage": "Scoping",
+            "scope_assessment": {
+                "need_clarification": True,
+                "question": "Which workload?",
+                "verification": "",
+            },
         },
-    }, config)
+        config,
+    )
 
     assert paused.get("__interrupt__")
     assert paused["__interrupt__"][0].value["kind"] == "clarification_required"
@@ -41,12 +44,15 @@ def test_clarification_wait_is_a_resumable_interrupt():
 def test_needs_review_wait_is_a_resumable_recovery_interrupt():
     graph = _one_node_graph("await_recovery", await_recovery)
     config = {"configurable": {"thread_id": "recovery-thread"}}
-    paused = graph.invoke({
-        "run_id": "run",
-        "thread_id": "recovery-thread",
-        "stage": "NEEDS_REVIEW",
-        "last_error": "The report remains unsupported.",
-    }, config)
+    paused = graph.invoke(
+        {
+            "run_id": "run",
+            "thread_id": "recovery-thread",
+            "stage": "NEEDS_REVIEW",
+            "last_error": "The report remains unsupported.",
+        },
+        config,
+    )
 
     assert paused.get("__interrupt__")
     payload = paused["__interrupt__"][0].value

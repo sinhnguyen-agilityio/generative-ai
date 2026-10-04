@@ -45,9 +45,7 @@ def test_service_resumes_approval_on_the_same_thread(tmp_path):
     graph.invoke({"run_id": "run-1", "thread_id": "thread-1"}, config)
     service = WorkflowRecoveryService(graph, registry)
 
-    result = service.resume_interrupt(
-        "thread-1", {"approved": True, "actor": "reviewer"}
-    )
+    result = service.resume_interrupt("thread-1", {"approved": True, "actor": "reviewer"})
 
     assert result["stage"] == "Published"
     assert registry.get_by_thread_id("thread-1").terminal is True
@@ -65,9 +63,7 @@ def test_service_refuses_wrong_resume_api_and_invalid_approval(tmp_path):
     with pytest.raises(ValidationError, match="rejection requires feedback"):
         service.resume_interrupt("thread-1", {"approved": False})
     with pytest.raises(ValidationError):
-        service.resume_interrupt(
-            "thread-1", {"approved": True, "node": "publishing"}
-        )
+        service.resume_interrupt("thread-1", {"approved": True, "node": "publishing"})
 
 
 def test_service_rejects_missing_checkpoint_and_unknown_thread(tmp_path):

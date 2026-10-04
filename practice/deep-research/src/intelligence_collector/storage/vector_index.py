@@ -41,8 +41,8 @@ class LocalVectorIndex:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _all(self) -> list[dict]: return json.loads(
-        self.path.read_text()) if self.path.exists() else []
+    def _all(self) -> list[dict]:
+        return json.loads(self.path.read_text()) if self.path.exists() else []
 
     def index(self, chunks: list[IndexedChunk]) -> list[str]:
         """Append the chunks to the JSON file; returns their ids."""
@@ -65,11 +65,8 @@ class LocalVectorIndex:
         terms = set(query.lower().split())
         rows = self._all()
         if run_id is not None:
-            rows = [row for row in rows if row.get(
-                "metadata", {}).get("run_id") == run_id]
+            rows = [row for row in rows if row.get("metadata", {}).get("run_id") == run_id]
         if todo_id is not None:
-            rows = [row for row in rows if row.get(
-                "metadata", {}).get("todo_id") == todo_id]
-        rows.sort(key=lambda r: len(terms & set(
-            r["text"].lower().split())), reverse=True)
+            rows = [row for row in rows if row.get("metadata", {}).get("todo_id") == todo_id]
+        rows.sort(key=lambda r: len(terms & set(r["text"].lower().split())), reverse=True)
         return [IndexedChunk.model_validate(r) for r in rows[:limit]]

@@ -49,7 +49,10 @@ def run_case(case: dict, label: str) -> dict:
     from intelligence_collector.models.redaction import redact_text
     from intelligence_collector.observability.evaluation import make_faithfulness_evaluator
     from intelligence_collector.source_verification import load_catalog
-    from intelligence_collector.storage.chroma_vector_index import ChromaVectorIndex, default_embeddings
+    from intelligence_collector.storage.chroma_vector_index import (
+        ChromaVectorIndex,
+        default_embeddings,
+    )
     from intelligence_collector.storage.vfs import VFS
     from intelligence_collector.tools.mcp import TavilyMCP
 
@@ -65,7 +68,9 @@ def run_case(case: dict, label: str) -> dict:
             role = roles_by_run.get(run_id, "unknown")
             for generations in response.generations:
                 for generation in generations:
-                    usage = getattr(getattr(generation, "message", None), "usage_metadata", None) or {}
+                    usage = (
+                        getattr(getattr(generation, "message", None), "usage_metadata", None) or {}
+                    )
                     tokens[role]["input"] += int(usage.get("input_tokens") or 0)
                     tokens[role]["output"] += int(usage.get("output_tokens") or 0)
 
@@ -82,8 +87,12 @@ def run_case(case: dict, label: str) -> dict:
     root.mkdir(parents=True, exist_ok=True)
     vfs = VFS(root / run_id[:8] / "vfs")
     embeddings = default_embeddings(settings.embedding_model, settings.embedding_provider)
-    index = ChromaVectorIndex(str(root / run_id[:8] / "chroma"), embeddings=embeddings,
-                              model=settings.embedding_model, provider=settings.embedding_provider)
+    index = ChromaVectorIndex(
+        str(root / run_id[:8] / "chroma"),
+        embeddings=embeddings,
+        model=settings.embedding_model,
+        provider=settings.embedding_provider,
+    )
     counters = Counter()
     retrieve = index.retrieve
 
@@ -100,15 +109,24 @@ def run_case(case: dict, label: str) -> dict:
 
     researcher = ResearchAgent(
         routers.standard,
-        mcp_factory=lambda: CountedTavily(os.environ["TAVILY_MCP_URL"], os.environ["TAVILY_API_KEY"],
-                                          max_calls=settings.max_search_calls),
-        max_search_calls=settings.max_search_calls, max_sources=settings.max_sources_per_task)
+        mcp_factory=lambda: CountedTavily(
+            os.environ["TAVILY_MCP_URL"],
+            os.environ["TAVILY_API_KEY"],
+            max_calls=settings.max_search_calls,
+        ),
+        max_search_calls=settings.max_search_calls,
+        max_sources=settings.max_sources_per_task,
+    )
     evaluators = {}
-    judge_key = "GOOGLE_API_KEY" if settings.faithfulness_provider == "google_genai" else "OPENAI_API_KEY"
+    judge_key = (
+        "GOOGLE_API_KEY" if settings.faithfulness_provider == "google_genai" else "OPENAI_API_KEY"
+    )
     if os.getenv(judge_key, "").strip():
         faithfulness = make_faithfulness_evaluator(
-            model=settings.faithfulness_model, api_key=os.environ[judge_key],
-            provider=settings.faithfulness_provider)
+            model=settings.faithfulness_model,
+            api_key=os.environ[judge_key],
+            provider=settings.faithfulness_provider,
+        )
 
         def counted_faithfulness(*args, **kwargs):
             counters["ragas_faithfulness_runs"] += 1
@@ -116,15 +134,19 @@ def run_case(case: dict, label: str) -> dict:
 
         evaluators["faithfulness_evaluator"] = counted_faithfulness
     nodes = ResearchNodes(
-        vfs, index, researcher,
+        vfs,
+        index,
+        researcher,
         # Mirrors the app wiring (app.py::_get_scope_graph). The "before" baseline was run on the
         # previous wiring, which also passed research_assessor=ResearchEvidenceJudge(...).
         report_judge=ReportJudge(routers.reasoning),
         report_guidelines=settings.report_guidelines,
         require_faithfulness=True,
         max_concurrent_researchers=settings.max_concurrent_researchers,
-        recovery_budget=settings.recovery_attempts, evidence_top_k=settings.evidence_top_k,
-        **evaluators)
+        recovery_budget=settings.recovery_attempts,
+        evidence_top_k=settings.evidence_top_k,
+        **evaluators,
+    )
     node_seconds: dict = defaultdict(float)
     node_runs: Counter = Counter()
     started_at: dict = {}
@@ -138,12 +160,19 @@ def run_case(case: dict, label: str) -> dict:
 
     started = time.monotonic()
     pauses, error = [], None
-    with sqlite3.connect(root / run_id[:8] / "checkpoints.sqlite", check_same_thread=False) as connection:
+    with sqlite3.connect(
+        root / run_id[:8] / "checkpoints.sqlite", check_same_thread=False
+    ) as connection:
         graph = build_graph(
             scope_agent=ScopeAgent(routers.reasoning, guardrail_router=routers.standard),
-            research_nodes=nodes, vfs=vfs, checkpointer=SqliteSaver(connection),
-            with_approval=True, output_dir=str(root / "exports"), lifecycle=lifecycle,
-            feedback_router=FeedbackRouter(routers.standard))
+            research_nodes=nodes,
+            vfs=vfs,
+            checkpointer=SqliteSaver(connection),
+            with_approval=True,
+            output_dir=str(root / "exports"),
+            lifecycle=lifecycle,
+            feedback_router=FeedbackRouter(routers.standard),
+        )
         config = {"configurable": {"thread_id": run_id}, "recursion_limit": 100}
         graph_input = {"run_id": run_id, "thread_id": run_id, "request": case["question"]}
         try:
@@ -153,7 +182,9 @@ def run_case(case: dict, label: str) -> dict:
                 kind = _interrupt_kind(snapshot)
                 pauses.append(kind or ",".join(snapshot.next) or "end")
                 if kind == "clarification_required":
-                    graph_input = Command(resume={"reply": case["clarification_reply"], "actor": "eval"})
+                    graph_input = Command(
+                        resume={"reply": case["clarification_reply"], "actor": "eval"}
+                    )
                 elif kind == "plan_approval":
                     graph_input = Command(resume={"approved": True, "actor": "eval"})
                 else:
@@ -172,44 +203,71 @@ def run_case(case: dict, label: str) -> dict:
     try:
         catalog = load_catalog(vfs, run_id, state.get("evidence", []))
         evidence = {
-            "sources": {sid: {"url": s.url, "title": s.title, "excerpt": s.excerpt[:1500]}
-                        for sid, s in catalog.sources.items()},
-            "bundles": [{"question": b.question, "source_ids": b.source_ids, "summary": b.summary,
-                         "gaps": [g.text for g in b.gaps]} for b in catalog.bundles],
+            "sources": {
+                sid: {"url": s.url, "title": s.title, "excerpt": s.excerpt[:1500]}
+                for sid, s in catalog.sources.items()
+            },
+            "bundles": [
+                {
+                    "question": b.question,
+                    "source_ids": b.source_ids,
+                    "summary": b.summary,
+                    "gaps": [g.text for g in b.gaps],
+                }
+                for b in catalog.bundles
+            ],
         }
     except Exception as exc:  # evidence is diagnostic output only
         evidence = {"error": redact_text(exc)}
-    (out / "evidence.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out / "evidence.json").write_text(
+        json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     verification = state.get("verification") or {}
     summary = {
-        "case_id": case["id"], "label": label, "run_id": run_id, "question": case["question"],
-        "stage": state.get("stage"), "pauses": pauses, "error": error,
-        "brief": state.get("scoped_request"), "todos": [
-            {key: todo.get(key) for key in ("research_question", "evidence_needed", "status", "research_attempt")}
-            for todo in state.get("todos", [])],
+        "case_id": case["id"],
+        "label": label,
+        "run_id": run_id,
+        "question": case["question"],
+        "stage": state.get("stage"),
+        "pauses": pauses,
+        "error": error,
+        "brief": state.get("scoped_request"),
+        "todos": [
+            {
+                key: todo.get(key)
+                for key in ("research_question", "evidence_needed", "status", "research_attempt")
+            }
+            for todo in state.get("todos", [])
+        ],
         "plan": state.get("plan"),
         "research_status": state.get("research_status"),
         "research_limitations": state.get("research_limitations"),
         "verification_passed": verification.get("passed"),
         "verification_outcome": state.get("verification_outcome"),
         "failed_checks": [c for c in verification.get("check_results", []) if not c.get("passed")],
-        "verifier_error": state.get("verifier_error"), "last_error": state.get("last_error"),
+        "verifier_error": state.get("verifier_error"),
+        "last_error": state.get("last_error"),
         "faithfulness_score": state.get("faithfulness_score"),
         "draft_version": state.get("draft_version"),
         "improvement_cycles": state.get("recovery_attempt", 0),
         "repair_history": state.get("bvf_history", []),
-        "model_calls_by_role": dict(calls), "tokens_by_role": dict(tokens),
+        "model_calls_by_role": dict(calls),
+        "tokens_by_role": dict(tokens),
         "tavily_searches": counters["tavily_searches"],
         "vector_retrievals": counters["vector_retrievals"],
         "ragas_faithfulness_runs": counters["ragas_faithfulness_runs"],
         "node_runs": dict(node_runs),
         "node_seconds": {k: round(v, 1) for k, v in node_seconds.items()},
         "elapsed_seconds": round(elapsed, 1),
-        "models": {"reasoning": roles.reasoning_model, "standard": roles.standard_model,
-                   "faithfulness": settings.faithfulness_model},
+        "models": {
+            "reasoning": roles.reasoning_model,
+            "standard": roles.standard_model,
+            "faithfulness": settings.faithfulness_model,
+        },
     }
-    (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=str),
-                                      encoding="utf-8")
+    (out / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
     return summary
 
 
@@ -223,16 +281,35 @@ def main():
         parser.error("Pass --run-live to authorize paid model, search and embedding calls")
     sys.stdout.reconfigure(encoding="utf-8")
     from dotenv import load_dotenv
+
     load_dotenv(ROOT / ".env", override=False)
     cases = json.loads((ROOT / "evals" / "cases.json").read_text(encoding="utf-8"))["cases"]
     for case in cases:
         if args.case and case["id"] not in args.case:
             continue
         summary = run_case(case, args.label)
-        print(json.dumps({key: summary[key] for key in (
-            "case_id", "stage", "pauses", "error", "verification_passed", "draft_version",
-            "improvement_cycles", "model_calls_by_role", "tavily_searches", "vector_retrievals",
-            "elapsed_seconds")}, ensure_ascii=False), flush=True)
+        print(
+            json.dumps(
+                {
+                    key: summary[key]
+                    for key in (
+                        "case_id",
+                        "stage",
+                        "pauses",
+                        "error",
+                        "verification_passed",
+                        "draft_version",
+                        "improvement_cycles",
+                        "model_calls_by_role",
+                        "tavily_searches",
+                        "vector_retrievals",
+                        "elapsed_seconds",
+                    )
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

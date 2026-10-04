@@ -21,15 +21,20 @@ def test_scope_live_llm_smoke(tmp_path):
     assert tracer.enabled, tracer.disabled_reason or "set INTELLIGENCE_LANGFUSE_ENABLED=true"
     agent = ScopeAgent(ModelRouter(model))
     from intelligence_collector.storage.vfs import VFS
+
     graph = build_graph(scope_agent=agent, vfs=VFS(tmp_path), tracer=tracer)
     request = "Compare PostgreSQL and SQLite for local Python applications. Use technical primary sources, define success as evidence-backed factual claims, and return a technical report."
-    with tracer.execution(run_id="live-smoke", thread_id="live-smoke", kind="start",
-                          input={"request": request}) as execution:
-        result = graph.invoke({
-            "run_id": "live-smoke",
-            "thread_id": "live-smoke",
-            "request": request,
-        }, execution.graph_config({}))
+    with tracer.execution(
+        run_id="live-smoke", thread_id="live-smoke", kind="start", input={"request": request}
+    ) as execution:
+        result = graph.invoke(
+            {
+                "run_id": "live-smoke",
+                "thread_id": "live-smoke",
+                "request": request,
+            },
+            execution.graph_config({}),
+        )
         execution.finish(result)
     tracer.flush()
     assert result["scope_assessment"]["need_clarification"] is False

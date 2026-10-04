@@ -57,9 +57,10 @@ class WorkflowRecoveryService:
 
     def _config(self, thread_id: str) -> dict:
         record = self._registered(thread_id)
-        return {"configurable": {"thread_id": thread_id,
-                                 "checkpoint_ns": record.checkpoint_namespace},
-                "recursion_limit": 100}
+        return {
+            "configurable": {"thread_id": thread_id, "checkpoint_ns": record.checkpoint_namespace},
+            "recursion_limit": 100,
+        }
 
     def _invoke(self, payload, thread_id: str, *, kind: str, interrupt_kind: str = "") -> dict:
         """Invoke the graph for `thread_id`, traced when a tracer is configured."""
@@ -67,8 +68,12 @@ class WorkflowRecoveryService:
         if self.tracer is None:
             return self._clean_result(self.graph.invoke(payload, config))
         record = self._registered(thread_id)
-        with self.tracer.execution(run_id=record.run_id, thread_id=record.thread_id, kind=kind,
-                                   interrupt_kind=interrupt_kind) as execution:
+        with self.tracer.execution(
+            run_id=record.run_id,
+            thread_id=record.thread_id,
+            kind=kind,
+            interrupt_kind=interrupt_kind,
+        ) as execution:
             result = self.graph.invoke(payload, execution.graph_config(config))
             execution.finish(result)
         return self._clean_result(result)
@@ -78,20 +83,31 @@ class WorkflowRecoveryService:
         self.inspect(thread_id)
         checkpoint = self.graph.get_state(self._config(thread_id))
         state = normalize_checkpoint(dict(checkpoint.values))
-        exhausted_gap = ("prepare_gap_research" in checkpoint.next and
-                         state.get("research_gap_attempt", 0) >= state["research_gap_budget"])
+        exhausted_gap = (
+            "prepare_gap_research" in checkpoint.next
+            and state.get("research_gap_attempt", 0) >= state["research_gap_budget"]
+        )
         if "replan" in checkpoint.next or exhausted_gap:
             # Redirect obsolete plan repair or exhausted legacy gap work without replaying
             # START or resetting the consumed research allowance.
             todos = state.get("todos", [])
             if not todos:
                 raise InvalidRecoveryOperation("Legacy replan checkpoint needs an explicit rescope")
-            instruction = dict(checkpoint.values).get("plan_repair_instruction") or "Find evidence for the core research goal"
-            state.update(verification=None, approval=None, publication=None,
-                         research_status="INSUFFICIENT", result_incomplete=True,
-                         research_limitations=[instruction], verification_issue="evidence_gap",
-                         research_gaps=[{"todo_id": todos[0]["todo_id"], "instruction": instruction}],
-                         progress_assessment={"ready_for_synthesis": False})
+            instruction = (
+                dict(checkpoint.values).get("plan_repair_instruction")
+                or "Find evidence for the core research goal"
+            )
+            state.update(
+                verification=None,
+                approval=None,
+                publication=None,
+                research_status="INSUFFICIENT",
+                result_incomplete=True,
+                research_limitations=[instruction],
+                verification_issue="evidence_gap",
+                research_gaps=[{"todo_id": todos[0]["todo_id"], "instruction": instruction}],
+                progress_assessment={"ready_for_synthesis": False},
+            )
             self.graph.update_state(self._config(thread_id), state, as_node="research_complete")
             return self._invoke(None, thread_id, kind="recovery")
         # Older workflows ended at these human-waiting states. Bridge them through
@@ -101,13 +117,22 @@ class WorkflowRecoveryService:
             if stage == "Awaiting Approval":
                 # Legacy ended approval checkpoints have no resumable human interrupt.
                 # Invalidate stale authority and enter the controlled recovery path.
-                state.update(stage="NEEDS_REVIEW", approval=None, verification=None,
-                             verification_issue="publication_failure",
-                             last_error="Legacy approval checkpoint requires re-verification")
+                state.update(
+                    stage="NEEDS_REVIEW",
+                    approval=None,
+                    verification=None,
+                    verification_issue="publication_failure",
+                    last_error="Legacy approval checkpoint requires re-verification",
+                )
                 stage = "NEEDS_REVIEW"
-            node = ("needs_review" if stage == "NEEDS_REVIEW" else
-                    "clarify_with_user" if stage == "Scoping" and
-                    (state.get("scope_assessment") or {}).get("need_clarification") else None)
+            node = (
+                "needs_review"
+                if stage == "NEEDS_REVIEW"
+                else "clarify_with_user"
+                if stage == "Scoping"
+                and (state.get("scope_assessment") or {}).get("need_clarification")
+                else None
+            )
             if node is not None:
                 self.graph.update_state(self._config(thread_id), state, as_node=node)
                 return self._invoke(None, thread_id, kind="recovery")
@@ -137,12 +162,16 @@ class WorkflowRecoveryService:
             normalize_checkpoint(values)
             if values.get("thread_id", thread_id) != thread_id:
                 raise CheckpointIdentityMismatch("Legacy checkpoint thread identity mismatch")
-            self.run_registry.register_run(values["run_id"], thread_id,
-                                           request_summary=values.get("request", ""))
+            self.run_registry.register_run(
+                values["run_id"], thread_id, request_summary=values.get("request", "")
+            )
             snapshot = self.inspect(thread_id)
-            self.run_registry.update_run(snapshot.run_id, thread_id,
-                                         workflow_status=snapshot.workflow_status,
-                                         current_stage=snapshot.current_stage)
+            self.run_registry.update_run(
+                snapshot.run_id,
+                thread_id,
+                workflow_status=snapshot.workflow_status,
+                current_stage=snapshot.current_stage,
+            )
         return self.list_recoverable_runs()
 
     def _registered(self, thread_id: str) -> RunRecord:
@@ -187,9 +216,7 @@ class WorkflowRecoveryService:
         checkpoint = self.graph.get_state(self._config(record.thread_id))
         values = dict(getattr(checkpoint, "values", {}) or {})
         if not values:
-            raise CheckpointNotFound(
-                f"No checkpoint state exists for thread '{record.thread_id}'"
-            )
+            raise CheckpointNotFound(f"No checkpoint state exists for thread '{record.thread_id}'")
         normalize_checkpoint(values)
         checkpoint_run_id = str(values.get("run_id") or "")
         checkpoint_thread_id = str(values.get("thread_id") or record.thread_id)
@@ -199,12 +226,16 @@ class WorkflowRecoveryService:
             )
         interrupts = self._interrupts(checkpoint)
         stage = str(values.get("stage") or record.current_stage)
-        terminal_status = {"Published": WorkflowStatus.PUBLISHED,
-                           "Incomplete": WorkflowStatus.INCOMPLETE,
-                           "Cancelled": WorkflowStatus.CANCELLED,
-                           "Exported Incomplete": WorkflowStatus.EXPORTED_INCOMPLETE}.get(stage)
-        waiting_status = {"NEEDS_REVIEW": WorkflowStatus.WAITING_FOR_RECOVERY,
-                          "Awaiting Approval": WorkflowStatus.WAITING_FOR_APPROVAL}.get(stage)
+        terminal_status = {
+            "Published": WorkflowStatus.PUBLISHED,
+            "Incomplete": WorkflowStatus.INCOMPLETE,
+            "Cancelled": WorkflowStatus.CANCELLED,
+            "Exported Incomplete": WorkflowStatus.EXPORTED_INCOMPLETE,
+        }.get(stage)
+        waiting_status = {
+            "NEEDS_REVIEW": WorkflowStatus.WAITING_FOR_RECOVERY,
+            "Awaiting Approval": WorkflowStatus.WAITING_FOR_APPROVAL,
+        }.get(stage)
         if self._interrupt_kind(interrupts) == "plan_approval":
             waiting_status = WorkflowStatus.WAITING_FOR_PLAN_APPROVAL
         return RecoverySnapshot(
@@ -237,12 +268,11 @@ class WorkflowRecoveryService:
                 "Checkpoint is waiting for human input; use resume_interrupt"
             )
         if not snapshot.next_nodes:
-            raise InvalidRecoveryOperation(
-                "Checkpoint has no pending graph node to continue"
-            )
+            raise InvalidRecoveryOperation("Checkpoint has no pending graph node to continue")
         values = self.graph.get_state(self._config(snapshot.thread_id)).values
-        exhausted_gap = ("prepare_gap_research" in snapshot.next_nodes and
-                         values.get("research_gap_attempt", 0) >= min(values.get("research_gap_budget", 1), 1))
+        exhausted_gap = "prepare_gap_research" in snapshot.next_nodes and values.get(
+            "research_gap_attempt", 0
+        ) >= min(values.get("research_gap_budget", 1), 1)
         if "replan" in snapshot.next_nodes or exhausted_gap:
             return self.load_state(thread_id)
         return self._invoke(None, snapshot.thread_id, kind="continue")
@@ -273,5 +303,9 @@ class WorkflowRecoveryService:
         if not isinstance(decision, Mapping):
             raise TypeError("resume decision must be a mapping")
         payload = self._validated_resume(snapshot.interrupt_kind, decision)
-        return self._invoke(Command(resume=payload), snapshot.thread_id, kind="resume",
-                            interrupt_kind=snapshot.interrupt_kind)
+        return self._invoke(
+            Command(resume=payload),
+            snapshot.thread_id,
+            kind="resume",
+            interrupt_kind=snapshot.interrupt_kind,
+        )

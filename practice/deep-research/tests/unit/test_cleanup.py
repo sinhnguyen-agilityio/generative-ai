@@ -13,8 +13,10 @@ def test_importing_manual_scripts_does_not_make_paid_calls(monkeypatch, filename
         pytest.fail("Importing a manual script must not construct a live model or evaluator")
 
     monkeypatch.setattr(ModelFactory, "create", unexpected_call)
-    monkeypatch.setattr("intelligence_collector.observability.evaluation.make_faithfulness_evaluator",
-                        unexpected_call)
+    monkeypatch.setattr(
+        "intelligence_collector.observability.evaluation.make_faithfulness_evaluator",
+        unexpected_call,
+    )
     path = Path(__file__).resolve().parents[2] / "scripts" / filename
     spec = importlib.util.spec_from_file_location("manual_check", path)
     module = importlib.util.module_from_spec(spec)
@@ -49,9 +51,14 @@ def test_recovery_controls_reuse_inspected_checkpoint(tmp_path, monkeypatch):
             return checkpoint
 
     monkeypatch.setattr(app, "WorkflowRecoveryService", Service)
-    monkeypatch.setattr(app.Settings, "from_env", lambda: SimpleNamespace(
-        checkpoint_path=str(tmp_path / "absent.sqlite"),
-        run_registry_path=str(tmp_path / "absent-registry.sqlite")))
+    monkeypatch.setattr(
+        app.Settings,
+        "from_env",
+        lambda: SimpleNamespace(
+            checkpoint_path=str(tmp_path / "absent.sqlite"),
+            run_registry_path=str(tmp_path / "absent-registry.sqlite"),
+        ),
+    )
     ui = UI()
     snapshot = {"run_id": "run", "thread_id": "thread", "stage": "Synthesizing"}
     inspected = app._inspect_checkpoint(ui, snapshot)

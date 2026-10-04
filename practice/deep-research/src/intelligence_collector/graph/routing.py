@@ -25,7 +25,11 @@ TO_PUBLISH, TO_REVISE, TO_EXTEND, TO_SCOPE = "approve", "revise", "extend", "sco
 
 # Outcomes of route_after_plan_approval.
 PLAN_APPROVED, PLAN_CHANGE, PLAN_DECLINED, REPLACEMENT_DECLINED = (
-    "approve", "change", "decline", "replacement_declined")
+    "approve",
+    "change",
+    "decline",
+    "replacement_declined",
+)
 
 # ===== CONDITIONAL EDGE ROUTERS =====
 
@@ -88,8 +92,11 @@ def route_after_research(state: GraphState) -> str:
     if state.get("verification_issue") == "research_failure":
         return Node.NEEDS_REVIEW
     if state.get("verification_issue") == "research_verifier_failure":
-        return (Node.RETRY_RESEARCH_ASSESSMENT if state.get("research_verifier_attempt", 0) < 2
-                else Node.NEEDS_REVIEW)
+        return (
+            Node.RETRY_RESEARCH_ASSESSMENT
+            if state.get("research_verifier_attempt", 0) < 2
+            else Node.NEEDS_REVIEW
+        )
     if (state.get("progress_assessment") or {}).get("ready_for_synthesis"):
         return Node.SYNTHESIZE
     if state.get("research_gap_attempt", 0) >= min(state.get("research_gap_budget", 1), 1):

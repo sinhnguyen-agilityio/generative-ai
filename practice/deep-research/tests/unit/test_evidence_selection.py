@@ -13,21 +13,24 @@ def _bundle(task_id, question, sources):
         "question": question,
         "summary": "summary",
         "sources": [
-            {"locator": url, "excerpt": text, "provenance": {"title": url}}
-            for url, text in sources
+            {"locator": url, "excerpt": text, "provenance": {"title": url}} for url, text in sources
         ],
         "unresolved_gaps": [],
     }
 
 
 def _index_sources(index, task_id, sources):
-    index.index([
-        IndexedChunk(
-            source_id=url, artifact_id="a", text=text,
-            metadata={"run_id": RUN_ID, "todo_id": task_id, "locator": url},
-        )
-        for url, text in sources
-    ])
+    index.index(
+        [
+            IndexedChunk(
+                source_id=url,
+                artifact_id="a",
+                text=text,
+                metadata={"run_id": RUN_ID, "todo_id": task_id, "locator": url},
+            )
+            for url, text in sources
+        ]
+    )
 
 
 def test_bundle_at_or_under_top_k_is_left_unfiltered():
@@ -69,12 +72,16 @@ def test_narrows_to_top_k_most_relevant_sources_for_the_question(tmp_path):
 
 def test_every_bundle_keeps_guaranteed_representation_even_if_less_relevant_globally(tmp_path):
     """Per-bundle scoping: bundle B's sources must never be crowded out by bundle A's."""
-    a_sources = [(f"https://a.test/{n}", "highly relevant cache eviction details") for n in range(4)]
+    a_sources = [
+        (f"https://a.test/{n}", "highly relevant cache eviction details") for n in range(4)
+    ]
     b_sources = [(f"https://b.test/{n}", "mildly related backup topic") for n in range(4)]
-    catalog = catalog_from_bundles([
-        _bundle("task-a", "cache eviction details", a_sources),
-        _bundle("task-b", "backup topic", b_sources),
-    ])
+    catalog = catalog_from_bundles(
+        [
+            _bundle("task-a", "cache eviction details", a_sources),
+            _bundle("task-b", "backup topic", b_sources),
+        ]
+    )
     index = LocalVectorIndex(tmp_path / "index.json")
     _index_sources(index, "task-a", a_sources)
     _index_sources(index, "task-b", b_sources)
@@ -83,8 +90,14 @@ def test_every_bundle_keeps_guaranteed_representation_even_if_less_relevant_glob
 
     assert len(result.bundles[0].source_ids) == 2
     assert len(result.bundles[1].source_ids) == 2
-    assert all(catalog.sources[sid].url.startswith("https://a.test") for sid in result.bundles[0].source_ids)
-    assert all(catalog.sources[sid].url.startswith("https://b.test") for sid in result.bundles[1].source_ids)
+    assert all(
+        catalog.sources[sid].url.startswith("https://a.test")
+        for sid in result.bundles[0].source_ids
+    )
+    assert all(
+        catalog.sources[sid].url.startswith("https://b.test")
+        for sid in result.bundles[1].source_ids
+    )
 
 
 def test_retrieval_failure_leaves_the_bundle_unfiltered_instead_of_blocking_build():
@@ -95,7 +108,9 @@ def test_retrieval_failure_leaves_the_bundle_unfiltered_instead_of_blocking_buil
     sources = [(f"https://x.test/{n}", "text") for n in range(10)]
     catalog = catalog_from_bundles([_bundle("t1", "Q?", sources)])
 
-    result = select_relevant_evidence(catalog, ExplodingIndex(), RUN_ID, top_k=3, direct_read_chars=0)
+    result = select_relevant_evidence(
+        catalog, ExplodingIndex(), RUN_ID, top_k=3, direct_read_chars=0
+    )
 
     assert result.bundles[0].source_ids == catalog.bundles[0].source_ids
 

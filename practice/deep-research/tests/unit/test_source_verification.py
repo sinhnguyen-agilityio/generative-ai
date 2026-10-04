@@ -15,11 +15,13 @@ def _bundle(task_id="t1", question="How do caches store data?", url=URL, gaps=()
         "task_id": task_id,
         "question": question,
         "summary": f"Caches store reusable data [{url}]",
-        "sources": [{
-            "locator": url,
-            "excerpt": "A cache stores reusable data. Version 3.13 added 2 storage tiers.",
-            "provenance": {"title": "Cache docs"},
-        }],
+        "sources": [
+            {
+                "locator": url,
+                "excerpt": "A cache stores reusable data. Version 3.13 added 2 storage tiers.",
+                "provenance": {"title": "Cache docs"},
+            }
+        ],
         "unresolved_gaps": list(gaps),
     }
 
@@ -49,10 +51,12 @@ def test_fingerprint_tracks_what_failed_not_the_draft_hash():
 
 
 def test_catalog_assigns_stable_ids_per_unique_url_and_keeps_gaps():
-    catalog = catalog_from_bundles([
-        _bundle(gaps=["No benchmark data"]),
-        _bundle(task_id="t2", question="How is data evicted?"),  # same URL again
-    ])
+    catalog = catalog_from_bundles(
+        [
+            _bundle(gaps=["No benchmark data"]),
+            _bundle(task_id="t2", question="How is data evicted?"),  # same URL again
+        ]
+    )
 
     assert list(catalog.sources) == ["S1"]
     assert [bundle.source_ids for bundle in catalog.bundles] == [["S1"], ["S1"]]
@@ -60,7 +64,9 @@ def test_catalog_assigns_stable_ids_per_unique_url_and_keeps_gaps():
 
 
 def test_cited_source_excerpts_returns_only_the_excerpts_the_report_actually_cites():
-    other_bundle = _bundle(task_id="t2", question="How is data evicted?", url="https://docs.test/evict")
+    other_bundle = _bundle(
+        task_id="t2", question="How is data evicted?", url="https://docs.test/evict"
+    )
     catalog = catalog_from_bundles([_bundle(), other_bundle])
 
     report = cited_report([GOOD_CLAIM], {"S1": URL})  # cites only S1, never S2

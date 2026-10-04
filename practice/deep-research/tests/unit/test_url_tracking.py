@@ -7,7 +7,9 @@ def test_normalize_url_unifies_spellings_of_the_same_page():
     assert normalize_url("https://docs.test/Guide/Cache#section-2") == canonical
     assert normalize_url("https://docs.test/Guide/Cache?utm_source=x&fbclid=y") == canonical
     assert normalize_url("https://docs.test/guide/cache") != canonical  # path case is significant
-    assert normalize_url("https://docs.test/a?b=2&a=1") == normalize_url("https://docs.test/a?a=1&b=2")
+    assert normalize_url("https://docs.test/a?b=2&a=1") == normalize_url(
+        "https://docs.test/a?a=1&b=2"
+    )
     assert normalize_url("http://docs.test:8080/a") == "http://docs.test:8080/a"
 
 

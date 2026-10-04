@@ -5,6 +5,7 @@ from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.tools.mcp import ControlledMCP
 from tests.fixtures.fake_models import FakeResearchModel
 
+
 def test_completed_worker_is_not_repeated(stores):
     vfs, index = stores
     todo = ResearchTodo(todo_id="task", research_question="question")

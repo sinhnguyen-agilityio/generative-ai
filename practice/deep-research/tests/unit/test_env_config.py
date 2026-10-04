@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from intelligence_collector.config import DEFAULT_REPORT_GUIDELINES, LangfuseSettings, Settings, load_local_env
+from intelligence_collector.config import (
+    DEFAULT_REPORT_GUIDELINES,
+    LangfuseSettings,
+    Settings,
+    load_local_env,
+)
 
 
 def test_local_env_does_not_override_process_environment(monkeypatch, tmp_path):

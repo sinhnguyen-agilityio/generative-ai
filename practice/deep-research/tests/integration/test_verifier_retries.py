@@ -1,4 +1,5 @@
 """Bounded semantic verifier retries and explicit resume must bypass failed caches."""
+
 import json
 import pytest
 from langchain_core.messages import AIMessage
@@ -30,7 +31,9 @@ class VerdictModel:
             elif self.defect == "duplicate":
                 results[-1] = results[0]
             elif self.defect == "extra":
-                results.append({"criterion": "Invented criterion", "met": True, "justification": "Extra"})
+                results.append(
+                    {"criterion": "Invented criterion", "met": True, "justification": "Extra"}
+                )
             elif self.defect == "json":
                 return AIMessage(content="not JSON")
         return AIMessage(content=json.dumps({"results": results}))
@@ -54,8 +57,9 @@ def test_complete_unresolved_criteria_inside_one_verification(tmp_path, defect):
     assert not diagnosis.calls and result["batch_cycles"] == 0
     if defect != "extra":
         assert "unresolved criteria" in str(model.calls[1][0].content)
-    assert not any(e.source == Node.VERIFY and e.target == Node.VERIFY
-                   for e in graph.get_graph().edges)
+    assert not any(
+        e.source == Node.VERIFY and e.target == Node.VERIFY for e in graph.get_graph().edges
+    )
 
 
 def test_json_error_pauses_without_reverifying_or_blind_rewrite(tmp_path):
@@ -71,22 +75,35 @@ def test_json_error_pauses_without_reverifying_or_blind_rewrite(tmp_path):
 
 def test_incomplete_judge_with_known_defect_fixes_and_builds_new_draft(tmp_path):
     from intelligence_collector.services.workflow import VerificationOutputError
+
     graph, config, initial, nodes, writer, judge, researcher, diagnosis = workflow(tmp_path)
     delegate = nodes.bvf.verification_service.judge
+
     class PartialJudge:
         calls = 0
+
         def verify(self, brief, criteria, report, evidence, **kwargs):
             self.calls += 1
             if self.calls == 1:
-                raise VerificationOutputError("Missing criterion", partial_results=[{
-                    "criterion": criteria[0], "met": False,
-                    "justification": "Explain cache reuse with the stored evidence",
-                    "issue_type": "draft_defect"}])
+                raise VerificationOutputError(
+                    "Missing criterion",
+                    partial_results=[
+                        {
+                            "criterion": criteria[0],
+                            "met": False,
+                            "justification": "Explain cache reuse with the stored evidence",
+                            "issue_type": "draft_defect",
+                        }
+                    ],
+                )
             return delegate.verify(brief, criteria, report, evidence, **kwargs)
+
     partial = PartialJudge()
     nodes.bvf.verification_service.judge = partial
     result = approve_plan(graph, config, initial)
-    assert [v["outcome"] for v in result["verification_history"]] == ["ERROR", "PASS"], result.get("technical_failure")
+    assert [v["outcome"] for v in result["verification_history"]] == ["ERROR", "PASS"], result.get(
+        "technical_failure"
+    )
     assert len(writer.calls) == partial.calls == 2
     assert len(diagnosis.calls) == 1 and result["batch_cycles"] == 1
     assert "Explain cache reuse" in writer.calls[1]["revision"].failures
@@ -95,14 +112,25 @@ def test_incomplete_judge_with_known_defect_fixes_and_builds_new_draft(tmp_path)
 
 def test_known_defects_consume_only_three_fix_build_verify_cycles(tmp_path):
     from intelligence_collector.services.workflow import VerificationOutputError
+
     graph, config, initial, nodes, writer, judge, researcher, diagnosis = workflow(tmp_path)
+
     class PartialJudge:
         calls = 0
+
         def verify(self, brief, criteria, report, evidence, **kwargs):
             self.calls += 1
-            raise VerificationOutputError("Missing criterion", partial_results=[{
-                "criterion": criteria[0], "met": False,
-                "justification": "Explain cache reuse with evidence"}])
+            raise VerificationOutputError(
+                "Missing criterion",
+                partial_results=[
+                    {
+                        "criterion": criteria[0],
+                        "met": False,
+                        "justification": "Explain cache reuse with evidence",
+                    }
+                ],
+            )
+
     partial = PartialJudge()
     nodes.bvf.verification_service.judge = partial
     result = approve_plan(graph, config, initial)
@@ -117,6 +145,7 @@ def test_known_defects_consume_only_three_fix_build_verify_cycles(tmp_path):
 def test_resume_bypasses_error_cache_without_resetting_fix_budget(tmp_path):
     from intelligence_collector.graph.recovery import WorkflowRecoveryService
     from intelligence_collector.storage.run_registry import RunRegistry
+
     graph, config, initial, nodes, writer, judge, researcher, diagnosis = workflow(tmp_path)
     model = VerdictModel(invalid_calls=99)
     attach_model(nodes, model)
@@ -128,7 +157,8 @@ def test_resume_bypasses_error_cache_without_resetting_fix_budget(tmp_path):
     registry = RunRegistry(tmp_path / "registry.sqlite")
     registry.register_run("run", "run")
     resumed = WorkflowRecoveryService(graph, registry).resume_interrupt(
-        "run", {"action": "resume_saved_step"})
+        "run", {"action": "resume_saved_step"}
+    )
     assert resumed["verification"]["outcome"] == "PASS"
     assert resumed["verifier_retry_epoch"] == 1
     assert resumed["draft"] == result["draft"]
@@ -138,21 +168,31 @@ def test_resume_bypasses_error_cache_without_resetting_fix_budget(tmp_path):
 
 def test_invalid_cached_coverage_cannot_pass_or_trigger_a_blind_fix(tmp_path):
     from intelligence_collector.services.workflow import digest
+
     graph, config, initial, nodes, writer, judge, researcher, diagnosis = workflow(tmp_path)
     model = VerdictModel(invalid_calls=0)
     attach_model(nodes, model)
     original_call = nodes.bvf.verification_service.operations.call
     injected = False
+
     def call(run_id, operation, inputs, invoke, **kwargs):
         nonlocal injected
         if operation == "coverage" and not injected:
             injected = True
             key = digest({"operation": operation, "inputs": inputs})
-            nodes.vfs.write_json(run_id, f"operations/policy/{key}.json", {
-                "operation": "coverage", "attempts": 1, "status": "complete",
-                "result": {"results": []},
-            }, "legacy_cache")
+            nodes.vfs.write_json(
+                run_id,
+                f"operations/policy/{key}.json",
+                {
+                    "operation": "coverage",
+                    "attempts": 1,
+                    "status": "complete",
+                    "result": {"results": []},
+                },
+                "legacy_cache",
+            )
         return original_call(run_id, operation, inputs, invoke, **kwargs)
+
     nodes.bvf.verification_service.operations.call = call
     result = approve_plan(graph, config, initial)
     assert result["verification"]["outcome"] == "ERROR"
@@ -164,19 +204,25 @@ def test_invalid_cached_coverage_cannot_pass_or_trigger_a_blind_fix(tmp_path):
 
 def test_supplement_preserves_negative_assessment_and_causes_fix(tmp_path):
     graph, config, initial, nodes, writer, judge, researcher, diagnosis = workflow(tmp_path)
+
     class NegativeModel(VerdictModel):
         def invoke(self, messages, config=None):
             response = super().invoke(messages, config)
             if len(self.calls) == 1:
                 value = json.loads(response.content)
-                value["results"][0].update(met=False, justification="Explain cache reuse from evidence")
+                value["results"][0].update(
+                    met=False, justification="Explain cache reuse from evidence"
+                )
                 return AIMessage(content=json.dumps(value))
             return response
+
     model = NegativeModel(defect="missing")
     attach_model(nodes, model)
     result = approve_plan(graph, config, initial)
     assert [v["outcome"] for v in result["verification_history"]] == ["FAIL", "PASS"]
-    assert len(model.calls) == 3  # first verdict, missing-criterion supplement, revised draft verdict
+    assert (
+        len(model.calls) == 3
+    )  # first verdict, missing-criterion supplement, revised draft verdict
     assert len(writer.calls) == 2 and len(diagnosis.calls) == 1
     assert result["batch_cycles"] == 1
     assert "Explain cache reuse" in writer.calls[1]["revision"].failures

@@ -5,13 +5,16 @@ import re
 # Dict keys whose value is always replaced, whatever the value looks like.
 SECRET_MARKERS = ("api_key", "apikey", "secret", "password", "token", "authorization")
 
-_KEY_VALUE = re.compile(r"(?i)\b(api[_-]?key|secret|password|token|authorization)\s*[:=]\s*([^\s,;]+)")
+_KEY_VALUE = re.compile(
+    r"(?i)\b(api[_-]?key|secret|password|token|authorization)\s*[:=]\s*([^\s,;]+)"
+)
 _BEARER = re.compile(r"(?i)\bbearer\s+[a-z0-9._-]{8,}")
 
 
 # URL query parameters whose name contains a secret marker, e.g. Tavily's `?tavilyApiKey=...`.
 _QUERY_SECRET = re.compile(
-    r"(?i)([?&][\w.-]*(?:api[_-]?key|secret|password|token)[\w.-]*=)[^&\s'\"]+")
+    r"(?i)([?&][\w.-]*(?:api[_-]?key|secret|password|token)[\w.-]*=)[^&\s'\"]+"
+)
 
 
 def redact_text(value: object) -> str:

@@ -47,9 +47,13 @@ def restore_research(vfs, run_id: str, todo: ResearchTodo):
     if bundle.get("task_id") != todo.todo_id:
         raise ValueError("Saved evidence belongs to a different research task")
     todo.status = TodoStatus.COMPLETED
-    ref = ArtifactRef(run_id=run_id, path=str(vfs.root / run_id / path), kind="evidence_bundle",
-                      content_hash=hashlib.sha256(text).hexdigest(),
-                      task_id=todo.todo_id)
+    ref = ArtifactRef(
+        run_id=run_id,
+        path=str(vfs.root / run_id / path),
+        kind="evidence_bundle",
+        content_hash=hashlib.sha256(text).hexdigest(),
+        task_id=todo.todo_id,
+    )
     chunks = [IndexedChunk.model_validate(item) for item in bundle.get("indexed_chunks", [])]
     return todo, [ref], chunks
 
@@ -58,8 +62,12 @@ def _write_failure(vfs, run_id: str, todo: ResearchTodo, message: str, *, techni
     return vfs.write_json(
         run_id,
         f"{research_prefix(todo)}/outcome.json",
-        {"status": "failed", "question": todo.research_question, "error": message,
-         "failure_kind": "technical" if technical else "no_evidence"},
+        {
+            "status": "failed",
+            "question": todo.research_question,
+            "error": message,
+            "failure_kind": "technical" if technical else "no_evidence",
+        },
         "research_outcome",
         task_id=todo.todo_id,
     )
@@ -127,13 +135,15 @@ def persist_research(
         if known is not None:
             # Already captured in this run: point at the first capture, skip write + index.
             reused += 1
-            evidence_sources.append({
-                **entry,
-                "source_id": known["source_id"],
-                "artifact_id": known["artifact_id"],
-                "content_hash": known["content_hash"],
-                "reused_from_task": known["task_id"],
-            })
+            evidence_sources.append(
+                {
+                    **entry,
+                    "source_id": known["source_id"],
+                    "artifact_id": known["artifact_id"],
+                    "content_hash": known["content_hash"],
+                    "reused_from_task": known["task_id"],
+                }
+            )
             continue
         ref = vfs.write_json(
             run_id,
@@ -143,22 +153,31 @@ def persist_research(
             task_id=todo.todo_id,
         )
         refs.append(ref)
-        chunks.append(IndexedChunk(
-            source_id=record.source_id,
-            artifact_id=ref.artifact_id,
-            text=raw,
-            metadata={"run_id": run_id, "todo_id": todo.todo_id, "locator": record.locator},
-        ))
-        evidence_sources.append({
-            **entry, "artifact_id": ref.artifact_id, "content_hash": ref.content_hash,
-        })
-        urls.register(record.locator, {
-            "source_id": record.source_id,
-            "artifact_id": ref.artifact_id,
-            "content_hash": ref.content_hash,
-            "task_id": todo.todo_id,
-            "locator": record.locator,
-        })
+        chunks.append(
+            IndexedChunk(
+                source_id=record.source_id,
+                artifact_id=ref.artifact_id,
+                text=raw,
+                metadata={"run_id": run_id, "todo_id": todo.todo_id, "locator": record.locator},
+            )
+        )
+        evidence_sources.append(
+            {
+                **entry,
+                "artifact_id": ref.artifact_id,
+                "content_hash": ref.content_hash,
+            }
+        )
+        urls.register(
+            record.locator,
+            {
+                "source_id": record.source_id,
+                "artifact_id": ref.artifact_id,
+                "content_hash": ref.content_hash,
+                "task_id": todo.todo_id,
+                "locator": record.locator,
+            },
+        )
     if chunks:
         index.index(chunks)
     registry_ref = urls.save(vfs, run_id)
@@ -167,41 +186,47 @@ def persist_research(
 
     findings = outcome.findings
     todo.status = TodoStatus.COMPLETED
-    refs.append(vfs.write(
-        run_id,
-        f"{research_prefix(todo)}/notes/result.md",
-        f"# Research notes\n\nQuestion: {todo.research_question}\n\n"
-        f"Search calls: {outcome.search_calls}/{outcome.search_budget}\n\n"
-        f"Sources: {len(sources)} ({reused} already captured earlier in this run)\n\n"
-        f"## Findings\n\n{findings.summary}\n",
-        "notes",
-        task_id=todo.todo_id,
-    ))
-    refs.append(vfs.write_json(
-        run_id,
-        f"{research_prefix(todo)}/excerpts/result.json",
-        {"excerpts": [item["excerpt"] for item in evidence_sources]},
-        "excerpts",
-        task_id=todo.todo_id,
-    ))
-    refs.append(vfs.write_json(
-        run_id,
-        _evidence_path(todo),
-        {
-            "task_id": todo.todo_id,
-            "research_attempt": todo.research_attempt,
-            "question": todo.research_question,
-            "summary": findings.summary,
-            "sources": evidence_sources,
-            "search_calls": outcome.search_calls,
-            "search_budget": outcome.search_budget,
-            "sufficient": findings.sufficient,
-            "unresolved_gaps": findings.unresolved_gaps,
-            "indexed_chunks": [chunk.model_dump(mode="json") for chunk in chunks],
-        },
-        "evidence_bundle",
-        task_id=todo.todo_id,
-    ))
+    refs.append(
+        vfs.write(
+            run_id,
+            f"{research_prefix(todo)}/notes/result.md",
+            f"# Research notes\n\nQuestion: {todo.research_question}\n\n"
+            f"Search calls: {outcome.search_calls}/{outcome.search_budget}\n\n"
+            f"Sources: {len(sources)} ({reused} already captured earlier in this run)\n\n"
+            f"## Findings\n\n{findings.summary}\n",
+            "notes",
+            task_id=todo.todo_id,
+        )
+    )
+    refs.append(
+        vfs.write_json(
+            run_id,
+            f"{research_prefix(todo)}/excerpts/result.json",
+            {"excerpts": [item["excerpt"] for item in evidence_sources]},
+            "excerpts",
+            task_id=todo.todo_id,
+        )
+    )
+    refs.append(
+        vfs.write_json(
+            run_id,
+            _evidence_path(todo),
+            {
+                "task_id": todo.todo_id,
+                "research_attempt": todo.research_attempt,
+                "question": todo.research_question,
+                "summary": findings.summary,
+                "sources": evidence_sources,
+                "search_calls": outcome.search_calls,
+                "search_budget": outcome.search_budget,
+                "sufficient": findings.sufficient,
+                "unresolved_gaps": findings.unresolved_gaps,
+                "indexed_chunks": [chunk.model_dump(mode="json") for chunk in chunks],
+            },
+            "evidence_bundle",
+            task_id=todo.todo_id,
+        )
+    )
     return todo, refs, chunks
 
 

@@ -26,9 +26,5 @@ def test_needs_review_banner_shows_when_the_graph_stops_for_review():
     app.run()
 
     assert not app.exception
-    assert any(
-        "needs human review" in element.value for element in app.error
-    )
-    assert any(
-        "recovery budget 3 exhausted" in element.value for element in app.caption
-    )
+    assert any("needs human review" in element.value for element in app.error)
+    assert any("recovery budget 3 exhausted" in element.value for element in app.caption)

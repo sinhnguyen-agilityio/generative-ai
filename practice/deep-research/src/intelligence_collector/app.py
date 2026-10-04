@@ -60,9 +60,12 @@ def _get_scope_graph(st, agent, tracer):
     if "scope_graph" in st.session_state:
         return st.session_state.scope_graph
     runtime = build_runtime(
-        st.session_state.model_routers, agent, tracer,
-        lifecycle=lambda node, status: st.session_state.get(
-            "_lifecycle_callback", lambda *_: None)(node, status),
+        st.session_state.model_routers,
+        agent,
+        tracer,
+        lifecycle=lambda node, status: st.session_state.get("_lifecycle_callback", lambda *_: None)(
+            node, status
+        ),
         warn=st.warning,
     )
     st.session_state.scope_checkpoint_connection = runtime.checkpoint_connection
@@ -100,7 +103,8 @@ _QUALITY_METRICS = (
 def _render_quality_scores(st, snapshot):
     """RAGAS scores of the final report side by side; informational, never a gate."""
     present = [
-        (key, label) for key, label in _QUALITY_METRICS
+        (key, label)
+        for key, label in _QUALITY_METRICS
         if snapshot.get(f"{key}_score") is not None or snapshot.get(f"{key}_error")
     ]
     if not present:
@@ -170,14 +174,15 @@ def _render_details_content(st, snapshot):
         st.write(f"Cycle: {attempt}/{snapshot.get('recovery_budget', 0)}")
         for entry in snapshot.get("bvf_history") or []:
             if entry.get("route"):
-                st.markdown(f"- Cycle {entry.get('attempt')}: {entry['route']} repair of "
-                            + ", ".join(entry.get("failed_checks") or []))
+                st.markdown(
+                    f"- Cycle {entry.get('attempt')}: {entry['route']} repair of "
+                    + ", ".join(entry.get("failed_checks") or [])
+                )
 
     todos = list(snapshot.get("todos") or [])
     if todos:
         completed = sum(
-            _status_text(_record_value(todo, "status")) == "completed"
-            for todo in todos
+            _status_text(_record_value(todo, "status")) == "completed" for todo in todos
         )
         st.subheader("Research tasks")
         st.write(f"Task progress: {completed}/{len(todos)} completed")
@@ -204,20 +209,14 @@ def _render_details_content(st, snapshot):
     if evidence:
         st.subheader("Evidence")
         for item in evidence:
-            title = _record_value(item, "title") or _record_value(
-                item, "source_id", "Evidence"
-            )
+            title = _record_value(item, "title") or _record_value(item, "source_id", "Evidence")
             locator = _record_value(item, "locator") or _record_value(item, "path")
             if locator:
                 st.markdown(f"- [{title}]({locator})")
             else:
                 st.markdown(f"- {title}")
 
-    report = (
-        snapshot.get("report")
-        or snapshot.get("latest_report")
-        or snapshot.get("draft")
-    )
+    report = snapshot.get("report") or snapshot.get("latest_report") or snapshot.get("draft")
     if report:
         st.subheader("Report")
         st.markdown(report)
@@ -307,7 +306,8 @@ def _render_agent_row_body(st, agent_key, status, snapshot, vfs):
         elif status == "complete":
             run_id = snapshot.get("run_id", "")
             completed_todos = [
-                todo for todo in snapshot.get("todos") or []
+                todo
+                for todo in snapshot.get("todos") or []
                 if _status_text(_record_value(todo, "status")) == "completed"
             ]
             for todo in completed_todos:
@@ -419,17 +419,28 @@ def _awaiting_plan_approval(checkpoint) -> bool:
 def _render_plan(st, plan: dict):
     """The plan awaiting approval: what is asked, the research tasks and the expected report."""
     with st.chat_message("assistant"):
-        title = "Replacement research plan" if plan.get("kind") == "replacement" else "Research plan"
-        lines = [f"**{title}** — nothing is searched until you approve it.", "",
-                 "Required answers:", *(f"- {item}" for item in plan.get("required_answers", [])),
-                 "", "Research tasks:"]
+        title = (
+            "Replacement research plan" if plan.get("kind") == "replacement" else "Research plan"
+        )
+        lines = [
+            f"**{title}** — nothing is searched until you approve it.",
+            "",
+            "Required answers:",
+            *(f"- {item}" for item in plan.get("required_answers", [])),
+            "",
+            "Research tasks:",
+        ]
         for task in plan.get("tasks", []):
-            needed = f" _(evidence: {task['evidence_needed']})_" if task.get("evidence_needed") else ""
+            needed = (
+                f" _(evidence: {task['evidence_needed']})_" if task.get("evidence_needed") else ""
+            )
             lines.append(f"- {task['question']}{needed}")
         if plan.get("report_shape"):
             lines += ["", f"Report: {plan['report_shape']}"]
         st.markdown("\n".join(lines))
-        st.caption("Reply **approve** to start research, **cancel** to stop, or describe what to change.")
+        st.caption(
+            "Reply **approve** to start research, **cancel** to stop, or describe what to change."
+        )
 
 
 def _awaiting_clarification(snapshot) -> bool:
@@ -466,7 +477,9 @@ def _render_transcript(st, snapshot):
             st.markdown(report)
     elif _awaiting_recovery(snapshot):
         with st.chat_message("assistant"):
-            st.caption(f"Unverified draft v{snapshot.get('draft_version', 1)} — not approved or published")
+            st.caption(
+                f"Unverified draft v{snapshot.get('draft_version', 1)} — not approved or published"
+            )
             st.markdown(report)
 
 
@@ -477,7 +490,11 @@ _NODE_ACTIVITY = {
     Node.PLAN: ("Calling write_todos", "Planner", "write_todos"),
     Node.AWAIT_PLAN: ("Waiting for plan approval", "Planner", None),
     Node.RESEARCH: ("Delegating research to sub-agents", "Research Supervisor", "tavily_search"),
-    Node.ASSESS_RESEARCH: ("Assessing evidence for the research goal", "Research Evidence Judge", "assessment"),
+    Node.ASSESS_RESEARCH: (
+        "Assessing evidence for the research goal",
+        "Research Evidence Judge",
+        "assessment",
+    ),
     Node.SYNTHESIZE: ("Synthesizing report", "Report Writer", None),
     Node.VERIFY: ("Verifying coverage, citations and faithfulness", "Verifier", "report_judge"),
     Node.EVALUATE_QUALITY: ("Scoring optional RAGAS metrics", "Verifier", None),
@@ -536,6 +553,7 @@ def _stream_graph_turn(st, graph, config, graph_input, placeholders, vfs_for_ui)
 
 
 _ACTIVITY_LOG = "__activity_log__"  # placeholders key of the activity log (not an agent row)
+_PIPELINE_HEIGHT = 420  # px; the agent rows scroll within this
 
 _PROGRESS_BY_STAGE = {
     "Scoping": "Waiting for your response",
@@ -546,7 +564,12 @@ _PROGRESS_BY_STAGE = {
 
 
 # A published thread is finished. Clarification, approval and recovery states are durable pauses.
-_THREAD_DONE_STAGES = {Stage.PUBLISHED.value, Stage.INCOMPLETE.value, "Cancelled", "Exported Incomplete"}
+_THREAD_DONE_STAGES = {
+    Stage.PUBLISHED.value,
+    Stage.INCOMPLETE.value,
+    "Cancelled",
+    "Exported Incomplete",
+}
 
 
 def _chat_turn_trace(text, *, reviewing, clarifying, planning) -> tuple[str, str, dict]:
@@ -560,7 +583,9 @@ def _chat_turn_trace(text, *, reviewing, clarifying, planning) -> tuple[str, str
     return "start", "", {"request": text}
 
 
-def _run_chat_turn(st, text, *, reviewing, clarifying=False, planning=False, placeholders, vfs_for_ui):
+def _run_chat_turn(
+    st, text, *, reviewing, clarifying=False, planning=False, placeholders, vfs_for_ui
+):
     """One chat message drives one graph turn: a new request (or scope answer) starts/continues
     the research; while a report awaits review, the message is the reviewer's reply and resumes
     the paused graph, whose feedback classifier reads it as approve / format / scope.
@@ -573,9 +598,12 @@ def _run_chat_turn(st, text, *, reviewing, clarifying=False, planning=False, pla
     st.session_state._execution_id = str(uuid4())
     resuming = reviewing or clarifying or planning
     kind, interrupt_kind, trace_input = _chat_turn_trace(
-        text, reviewing=reviewing, clarifying=clarifying, planning=planning)
-    with st.status("Processing your reply" if resuming else "Processing research request",
-                   expanded=False) as indicator:
+        text, reviewing=reviewing, clarifying=clarifying, planning=planning
+    )
+    with st.status(
+        "Processing your reply" if resuming else "Processing research request", expanded=False
+    ) as indicator:
+
         def lifecycle(node, status):
             """Record node progress in the activity log and the status indicator."""
             item = _record_lifecycle(st, node, status)
@@ -590,19 +618,27 @@ def _run_chat_turn(st, text, *, reviewing, clarifying=False, planning=False, pla
             )
         graph = _get_scope_graph(st, agent, tracer)
         graph_input = (
-            Command(resume={"reply": text, "actor": "local-user"}) if resuming
+            Command(resume={"reply": text, "actor": "local-user"})
+            if resuming
             else {**st.session_state.scope_state, "request": text, "thread_id": thread_id}
         )
-        with tracer.execution(run_id=run_id, thread_id=thread_id, kind=kind,
-                              interrupt_kind=interrupt_kind, input=trace_input) as execution:
+        with tracer.execution(
+            run_id=run_id,
+            thread_id=thread_id,
+            kind=kind,
+            interrupt_kind=interrupt_kind,
+            input=trace_input,
+        ) as execution:
             config = execution.graph_config(
-                {"configurable": {"thread_id": thread_id}, "recursion_limit": 100})
+                {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
+            )
             try:
                 # stream_mode="values" yields the full accumulated state after each node, so
                 # every step is redrawn straight into the side panel for live progress. A turn
                 # that reaches a fully-passing report pauses at the human-in-the-loop review.
                 result, interrupted = _stream_graph_turn(
-                    st, graph, config, graph_input, placeholders, vfs_for_ui)
+                    st, graph, config, graph_input, placeholders, vfs_for_ui
+                )
             finally:
                 st.session_state.pop("_lifecycle_callback", None)
             execution.finish({**result, "__interrupt__": interrupted})
@@ -631,7 +667,8 @@ def _adopt_recovered_state(st, state):
     st.session_state.stage = state.get("stage", "Scoping")
     st.session_state.activity = list(state.get("activity", []))
     st.session_state.progress = _PROGRESS_BY_STAGE.get(
-        st.session_state.stage, "Recovered checkpoint; continuation available")
+        st.session_state.stage, "Recovered checkpoint; continuation available"
+    )
 
 
 def _inspect_checkpoint(st, snapshot):
@@ -659,10 +696,15 @@ def _render_checkpoint_tools(st):
         runs = registry.list_unfinished()
         if runs:
             with st.expander("Recover an unfinished run"):
-                chosen = st.selectbox("Run", [run.thread_id for run in runs],
-                                      format_func=lambda value: next(
-                                          f"{run.request_summary or run.run_id} — {run.current_stage}"
-                                          for run in runs if run.thread_id == value))
+                chosen = st.selectbox(
+                    "Run",
+                    [run.thread_id for run in runs],
+                    format_func=lambda value: next(
+                        f"{run.request_summary or run.run_id} — {run.current_stage}"
+                        for run in runs
+                        if run.thread_id == value
+                    ),
+                )
                 if st.button("Restore checkpoint"):
                     try:
                         _adopt_recovered_state(st, _recovery_service(st).load_state(chosen))
@@ -681,26 +723,46 @@ def _render_recovery_controls(st, snapshot, checkpoint=None):
         version = snapshot.get("draft_version", 0)
         # Open only the first time; after a recovery attempt returned a new draft, the draft and
         # the assistant's reply come first and the options stay collapsed until requested.
-        tried = any(entry.get("kind") == "RECOVERY_DECISION"
-                    for entry in snapshot.get("bvf_history") or [])
+        tried = any(
+            entry.get("kind") == "RECOVERY_DECISION" for entry in snapshot.get("bvf_history") or []
+        )
         with st.expander("Recovery options — this run needs your decision", expanded=not tried):
             st.caption("Choose a bounded recovery action. Incomplete export is never publication.")
-            action = st.selectbox("Recovery action", [
-                "revise", "retry_report", "research", "rescope", "export_incomplete", "cancel"],
-                key=f"recovery_action_v{version}")
-            feedback = st.text_area("Repair instructions or research feedback", max_chars=4000,
-                                    key=f"recovery_feedback_v{version}")
-            attempts = (int(st.number_input("Additional repair attempts", min_value=1,
-                                           max_value=2, value=1, key=f"recovery_attempts_v{version}"))
-                        if action == "retry_report" else 0)
+            action = st.selectbox(
+                "Recovery action",
+                ["revise", "retry_report", "research", "rescope", "export_incomplete", "cancel"],
+                key=f"recovery_action_v{version}",
+            )
+            feedback = st.text_area(
+                "Repair instructions or research feedback",
+                max_chars=4000,
+                key=f"recovery_feedback_v{version}",
+            )
+            attempts = (
+                int(
+                    st.number_input(
+                        "Additional repair attempts",
+                        min_value=1,
+                        max_value=2,
+                        value=1,
+                        key=f"recovery_attempts_v{version}",
+                    )
+                )
+                if action == "retry_report"
+                else 0
+            )
             apply = st.button("Apply recovery action", key=f"recovery_apply_v{version}")
         if apply:
             try:
                 if feedback and not validate_request(normalize_text(feedback)).allowed:
                     raise ValueError("Recovery feedback rejected by input guardrails")
-                with st.spinner("Applying the recovery action — rewriting and re-verifying the report"):
-                    result = _recovery_service(st).resume_interrupt(snapshot["thread_id"], {
-                        "action": action, "feedback": feedback, "additional_attempts": attempts})
+                with st.spinner(
+                    "Applying the recovery action — rewriting and re-verifying the report"
+                ):
+                    result = _recovery_service(st).resume_interrupt(
+                        snapshot["thread_id"],
+                        {"action": action, "feedback": feedback, "additional_attempts": attempts},
+                    )
                 _adopt_recovered_state(st, result)
                 st.rerun()
             except Exception as exc:
@@ -708,7 +770,9 @@ def _render_recovery_controls(st, snapshot, checkpoint=None):
     elif checkpoint is not None and checkpoint.next_nodes and not checkpoint.has_interrupt:
         if st.button("Continue unfinished run"):
             try:
-                _adopt_recovered_state(st, _recovery_service(st).continue_run(snapshot["thread_id"]))
+                _adopt_recovered_state(
+                    st, _recovery_service(st).continue_run(snapshot["thread_id"])
+                )
                 st.rerun()
             except Exception as exc:
                 st.error(f"Continuation failed: {exc}")
@@ -733,13 +797,21 @@ def render():
     st.session_state.setdefault(
         "scope_thread_id", existing_scope_state.get("thread_id", str(uuid4()))
     )
-    st.session_state.setdefault("scope_state", {
-        "run_id": str(uuid4()), "thread_id": st.session_state.scope_thread_id,
-    })
+    st.session_state.setdefault(
+        "scope_state",
+        {
+            "run_id": str(uuid4()),
+            "thread_id": st.session_state.scope_thread_id,
+        },
+    )
     snapshot = st.session_state.scope_state
     checkpoint = _inspect_checkpoint(st, snapshot)
-    pending = bool(checkpoint is not None and checkpoint.next_nodes
-                   and not checkpoint.has_interrupt and not checkpoint.terminal)
+    pending = bool(
+        checkpoint is not None
+        and checkpoint.next_nodes
+        and not checkpoint.has_interrupt
+        and not checkpoint.terminal
+    )
     st.caption(f"{st.session_state.stage} · {st.session_state.progress}")
     tracing_problem = _get_tracer(st).disabled_reason
     if tracing_problem:
@@ -750,8 +822,11 @@ def render():
     # Side panel: the agent pipeline and the activity log, framed apart from the conversation.
     with panel_col, st.container(border=True):
         st.subheader("Pipeline")
-        placeholders = {agent_key: st.empty() for _, agent_key in _AGENT_ROWS}
-        _render_agent_pipeline(st, placeholders, snapshot, vfs_for_ui)
+        # Fixed height so a long plan or many sources scroll inside the pipeline instead of
+        # pushing the activity log and details off screen.
+        with st.container(height=_PIPELINE_HEIGHT, border=False):
+            placeholders = {agent_key: st.empty() for _, agent_key in _AGENT_ROWS}
+            _render_agent_pipeline(st, placeholders, snapshot, vfs_for_ui)
         st.subheader("Activity log")
         placeholders[_ACTIVITY_LOG] = st.empty()
         _render_activity_log(st, placeholders[_ACTIVITY_LOG], list(snapshot.get("activity") or []))
@@ -768,7 +843,9 @@ def render():
             _render_plan(st, snapshot["plan"])
         current_stage = snapshot.get("stage")
         if current_stage == Stage.NEEDS_REVIEW.value:
-            st.error("This run needs human review before it can be treated as verified or published.")
+            st.error(
+                "This run needs human review before it can be treated as verified or published."
+            )
             st.caption(
                 snapshot.get("current_action")
                 or snapshot.get("last_error")
@@ -781,13 +858,20 @@ def render():
         clarifying = _awaiting_clarification(snapshot)
         recovering = _awaiting_recovery(snapshot)
         if pending:
-            st.info("This checkpoint has unfinished work. Use Continue unfinished run to resume it.")
+            st.info(
+                "This checkpoint has unfinished work. Use Continue unfinished run to resume it."
+            )
         if current_stage in {"Exported Incomplete", Stage.INCOMPLETE.value}:
-            st.warning("Incomplete answer — not a published report. Some requested information could not be verified.")
+            st.warning(
+                "Incomplete answer — not a published report. Some requested information could not be verified."
+            )
             try:
-                st.download_button("Download incomplete report",
-                                   vfs_for_ui.read(snapshot["run_id"], "reports/incomplete.md"),
-                                   file_name="incomplete-report.md", mime="text/markdown")
+                st.download_button(
+                    "Download incomplete report",
+                    vfs_for_ui.read(snapshot["run_id"], "reports/incomplete.md"),
+                    file_name="incomplete-report.md",
+                    mime="text/markdown",
+                )
             except FileNotFoundError:
                 st.error("The incomplete report artifact is unavailable.")
         _render_recovery_controls(st, snapshot, checkpoint)
@@ -796,10 +880,14 @@ def render():
         # in normal flow right below it.
         with st.container():
             text = st.chat_input(
-                "Reply: approve, or what to change" if reviewing
-                else "Reply: approve the plan, cancel, or what to change" if planning
-                else "Answer the clarification question" if clarifying
-                else "Use the recovery options above" if recovering
+                "Reply: approve, or what to change"
+                if reviewing
+                else "Reply: approve the plan, cancel, or what to change"
+                if planning
+                else "Answer the clarification question"
+                if clarifying
+                else "Use the recovery options above"
+                if recovering
                 else "What should we research?",
                 disabled=recovering or pending or current_stage in _THREAD_DONE_STAGES,
             )
@@ -817,8 +905,13 @@ def render():
                     st.session_state.progress = "Request rejected; no research started"
                 return st
             _run_chat_turn(
-                st, text, reviewing=reviewing, clarifying=clarifying, planning=planning,
-                placeholders=placeholders, vfs_for_ui=vfs_for_ui,
+                st,
+                text,
+                reviewing=reviewing,
+                clarifying=clarifying,
+                planning=planning,
+                placeholders=placeholders,
+                vfs_for_ui=vfs_for_ui,
             )
             st.rerun()
         except GuardrailViolation as exc:
@@ -833,4 +926,7 @@ def render():
                 st.session_state.activity[-1]["status"] = "failure"
             st.error(f"{stage_label} failed: {exc}")
     return st
-if __name__ == "__main__": render()
+
+
+if __name__ == "__main__":
+    render()

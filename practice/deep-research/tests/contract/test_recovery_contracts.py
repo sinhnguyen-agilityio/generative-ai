@@ -63,11 +63,16 @@ def test_retry_report_requires_a_bounded_fresh_allowance():
     ],
 )
 def test_only_retry_report_can_grant_additional_attempts(action):
-    kwargs = {"feedback": "Change the requested output."} if action in {
-        RecoveryAction.REVISE,
-        RecoveryAction.RESEARCH,
-        RecoveryAction.RESCOPE,
-    } else {}
+    kwargs = (
+        {"feedback": "Change the requested output."}
+        if action
+        in {
+            RecoveryAction.REVISE,
+            RecoveryAction.RESEARCH,
+            RecoveryAction.RESCOPE,
+        }
+        else {}
+    )
 
     with pytest.raises(ValidationError, match="allowed only for retry_report"):
         RecoveryDecision(action=action, additional_attempts=1, **kwargs)
@@ -77,10 +82,12 @@ def test_recovery_decision_rejects_unknown_actions_and_graph_destinations():
     with pytest.raises(ValidationError):
         RecoveryDecision(action="jump_to_node")
     with pytest.raises(ValidationError):
-        RecoveryDecision.model_validate({
-            "action": "cancel",
-            "node": "publishing",
-        })
+        RecoveryDecision.model_validate(
+            {
+                "action": "cancel",
+                "node": "publishing",
+            }
+        )
 
 
 def test_recovery_feedback_has_a_size_boundary():

@@ -4,10 +4,16 @@ from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel
 
 from intelligence_collector.models.router import ModelRouter
+
+
 def test_model_router_falls_back_once():
-    def primary(role, prompt): raise RuntimeError("timeout")
-    def fallback(role, prompt): return {"ok": True}
-    router=ModelRouter(primary, fallback)
+    def primary(role, prompt):
+        raise RuntimeError("timeout")
+
+    def fallback(role, prompt):
+        return {"ok": True}
+
+    router = ModelRouter(primary, fallback)
     result = router.invoke_messages("scope", [HumanMessage(content="hello")], _Decision)
     assert result == _Decision(ok=True)
 
@@ -23,16 +29,16 @@ def test_invoke_messages_parses_multi_block_thinking_content():
 
     class ThinkingModel:
         def invoke(self, messages):
-            return AIMessage(content=[
-                {"type": "thinking", "thinking": "reasoning about the answer..."},
-                {"type": "text", "text": json.dumps({"ok": True})},
-            ])
+            return AIMessage(
+                content=[
+                    {"type": "thinking", "thinking": "reasoning about the answer..."},
+                    {"type": "text", "text": json.dumps({"ok": True})},
+                ]
+            )
 
     router = ModelRouter(ThinkingModel())
 
-    result = router.invoke_messages(
-        "scope", [HumanMessage(content="hi")], _Decision
-    )
+    result = router.invoke_messages("scope", [HumanMessage(content="hi")], _Decision)
 
     assert result == _Decision(ok=True)
 
@@ -54,9 +60,7 @@ def test_invoke_messages_uses_provider_native_structured_output():
 
     router = ModelRouter(StructuredModel())
 
-    result = router.invoke_messages(
-        "research_compressor", [HumanMessage(content="hi")], _Decision
-    )
+    result = router.invoke_messages("research_compressor", [HumanMessage(content="hi")], _Decision)
 
     assert result == _Decision(ok=True)
     assert bound == [_Decision]

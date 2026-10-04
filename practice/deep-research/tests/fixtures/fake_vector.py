@@ -1,9 +1,9 @@
 import hashlib
 
 
-
 class FakeVectorIndex:
     """In-memory vector-index substitute preserving chunk provenance."""
+
     def __init__(self):
         self.chunks = []
 
@@ -46,4 +46,3 @@ class FakeEmbeddings:
     def embed_query(self, text: str) -> list[float]:
         self.calls.append(text)
         return self._vector(text)
-

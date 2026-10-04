@@ -24,11 +24,15 @@ def await_clarification(state: GraphState) -> GraphState:
     from langgraph.types import interrupt
 
     assessment = ScopeAssessment.model_validate(state["scope_assessment"])
-    decision = ClarificationResumeDecision.model_validate(interrupt({
-        "kind": "clarification_required",
-        "run_id": state.get("run_id"),
-        "question": assessment.question,
-    }))
+    decision = ClarificationResumeDecision.model_validate(
+        interrupt(
+            {
+                "kind": "clarification_required",
+                "run_id": state.get("run_id"),
+                "question": assessment.question,
+            }
+        )
+    )
     return {
         **state,
         "request": decision.reply,
@@ -46,28 +50,52 @@ def await_plan_approval(state: GraphState) -> GraphState:
     from langgraph.types import interrupt
 
     plan = state.get("plan") or {}
-    decision = PlanApprovalDecision.model_validate(interrupt({
-        "kind": "plan_approval",
-        "run_id": state.get("run_id"),
-        "plan": plan,
-    }))
+    decision = PlanApprovalDecision.model_validate(
+        interrupt(
+            {
+                "kind": "plan_approval",
+                "run_id": state.get("run_id"),
+                "plan": plan,
+            }
+        )
+    )
     outcome = decision.outcome
-    record = {"plan_hash": plan.get("plan_hash", ""), "approved": outcome == "approve",
-              "outcome": outcome, "actor": decision.actor, "kind": plan.get("kind", "initial")}
+    record = {
+        "plan_hash": plan.get("plan_hash", ""),
+        "approved": outcome == "approve",
+        "outcome": outcome,
+        "actor": decision.actor,
+        "kind": plan.get("kind", "initial"),
+    }
     update = {**state, "plan_approval": record, "reviewer": decision.actor}
     if outcome == "approve":
-        return {**update, "stage": Stage.RESEARCHING.value, "status": "active",
-                "current_action": "Plan approved — starting research"}
+        return {
+            **update,
+            "stage": Stage.RESEARCHING.value,
+            "status": "active",
+            "current_action": "Plan approved — starting research",
+        }
     if outcome == "change":
         # The requested change becomes the next scope turn: new brief, new plan, new approval.
-        return {**update, "stage": Stage.SCOPING.value, "request": decision.reply,
-                "current_action": "Plan change requested — rescoping"}
+        return {
+            **update,
+            "stage": Stage.SCOPING.value,
+            "request": decision.reply,
+            "current_action": "Plan change requested — rescoping",
+        }
     if plan.get("kind") == "replacement":
-        return {**update, "stage": Stage.NEEDS_REVIEW.value,
-                "current_action": "Replacement plan declined",
-                "last_error": "The replacement research plan was declined."}
-    return {**update, "stage": "Cancelled", "status": "cancelled",
-            "current_action": "Plan declined; run cancelled"}
+        return {
+            **update,
+            "stage": Stage.NEEDS_REVIEW.value,
+            "current_action": "Replacement plan declined",
+            "last_error": "The replacement research plan was declined.",
+        }
+    return {
+        **update,
+        "stage": "Cancelled",
+        "status": "cancelled",
+        "current_action": "Plan declined; run cancelled",
+    }
 
 
 def await_recovery(state: GraphState, *, can_rescope=True) -> GraphState:
@@ -77,13 +105,20 @@ def await_recovery(state: GraphState, *, can_rescope=True) -> GraphState:
     """
     from langgraph.types import interrupt
 
-    decision = RecoveryDecision.model_validate(interrupt({
-        "kind": "recovery_required",
-        "run_id": state.get("run_id"),
-        "reason": state.get("current_action") or state.get("last_error", ""),
-        "allowed_actions": [action.value for action in RecoveryAction
-                            if can_rescope or action is not RecoveryAction.RESCOPE],
-    }))
+    decision = RecoveryDecision.model_validate(
+        interrupt(
+            {
+                "kind": "recovery_required",
+                "run_id": state.get("run_id"),
+                "reason": state.get("current_action") or state.get("last_error", ""),
+                "allowed_actions": [
+                    action.value
+                    for action in RecoveryAction
+                    if can_rescope or action is not RecoveryAction.RESCOPE
+                ],
+            }
+        )
+    )
     return {
         **state,
         "recovery_decision": decision.model_dump(mode="json"),
@@ -95,8 +130,6 @@ def approval(state: GraphState) -> GraphState:
     """Pause the graph until a human resumes it with a publication decision."""
     from langgraph.types import interrupt
 
-    decision = interrupt({"kind": "publication_approval",
-                         "run_id": state.get("run_id")})
-    stage = Stage.PUBLISHED if decision.get(
-        "approved") else Stage.AWAITING_APPROVAL
+    decision = interrupt({"kind": "publication_approval", "run_id": state.get("run_id")})
+    stage = Stage.PUBLISHED if decision.get("approved") else Stage.AWAITING_APPROVAL
     return {**state, "approval": decision, "stage": stage.value}

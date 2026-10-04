@@ -13,17 +13,23 @@ def _bullets(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items) if items else "(none)"
 
 
-def create_todos(vfs, run_id, questions: list[str], evidence_needed: list[str] = ()) -> list[ResearchTodo]:
+def create_todos(
+    vfs, run_id, questions: list[str], evidence_needed: list[str] = ()
+) -> list[ResearchTodo]:
     """Turn research questions into planned todos and persist them through `write_todos`."""
     needed = list(evidence_needed)
-    todos = [ResearchTodo(research_question=q, evidence_needed=needed[i] if i < len(needed) else "")
-             for i, q in enumerate(questions) if q.strip()]
+    todos = [
+        ResearchTodo(research_question=q, evidence_needed=needed[i] if i < len(needed) else "")
+        for i, q in enumerate(questions)
+        if q.strip()
+    ]
     write_todos(vfs, run_id, todos)
     return todos
 
 
-def plan_record(brief: ResearchBrief, todos: list[ResearchTodo], report_shape: str, *,
-                kind: str = "initial") -> dict:
+def plan_record(
+    brief: ResearchBrief, todos: list[ResearchTodo], report_shape: str, *, kind: str = "initial"
+) -> dict:
     """The plan shown for approval: what is asked, the tasks and the expected report. Its hash
     binds an approval to exactly this plan."""
     body = {
@@ -34,8 +40,14 @@ def plan_record(brief: ResearchBrief, todos: list[ResearchTodo], report_shape: s
         "output_requirements": brief.output_requirements,
         # Statuses and repair instructions are left out: reopening an approved task for targeted
         # research stays inside the approved strategy.
-        "tasks": [{"todo_id": todo.todo_id, "question": todo.research_question,
-                   "evidence_needed": todo.evidence_needed} for todo in todos],
+        "tasks": [
+            {
+                "todo_id": todo.todo_id,
+                "question": todo.research_question,
+                "evidence_needed": todo.evidence_needed,
+            }
+            for todo in todos
+        ],
         "report_shape": report_shape,
     }
     digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
@@ -59,9 +71,14 @@ class PlannerAgent:
     ) -> TodoPlan:
         """Structured LLM decision: the standalone research questions for the brief. With
         `unanswered`, plan a replacement strategy for those required answers only."""
-        replacement = REPLACEMENT_PLAN_BLOCK.format(
-            unanswered=_bullets(list(unanswered)), previous=_bullets(list(previous_questions)),
-        ) if unanswered else ""
+        replacement = (
+            REPLACEMENT_PLAN_BLOCK.format(
+                unanswered=_bullets(list(unanswered)),
+                previous=_bullets(list(previous_questions)),
+            )
+            if unanswered
+            else ""
+        )
         messages = PLANNER_TEMPLATE.format_messages(
             brief=brief.research_question,
             required_answers=_bullets(brief.checklist),

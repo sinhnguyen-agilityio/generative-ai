@@ -26,8 +26,9 @@ def test_output_caps_can_be_disabled(monkeypatch):
     assert capped_model(model, "verify", {}) is model
 
 
-@pytest.mark.parametrize("provider,field", [(Provider(), "max_tokens"),
-                                         (GoogleProvider(), "max_output_tokens")])
+@pytest.mark.parametrize(
+    "provider,field", [(Provider(), "max_tokens"), (GoogleProvider(), "max_output_tokens")]
+)
 def test_role_cap_clones_provider_without_mutating_shared_model(provider, field):
     limited = capped_model(provider, "verify", {"verify": 1200})
     assert getattr(limited, field) == 1200
@@ -38,8 +39,9 @@ def test_lower_existing_cap_is_preserved():
     assert capped_model(Provider(max_tokens=100), "verify", {"verify": 1200}).max_tokens == 100
 
 
-@pytest.mark.parametrize("value", ['[]', '{"verify":true}', '{"verify":0}',
-                                   '{"unknown":100}', '{"verify":1.5}'])
+@pytest.mark.parametrize(
+    "value", ["[]", '{"verify":true}', '{"verify":0}', '{"unknown":100}', '{"verify":1.5}']
+)
 def test_invalid_limits_rejected(monkeypatch, value):
     monkeypatch.setenv("INTELLIGENCE_NODE_OUTPUT_TOKENS", value)
     with pytest.raises(ValueError):
@@ -71,6 +73,7 @@ def test_router_caps_primary_and_fallback_before_binding_schema():
                 raise RuntimeError("primary failed")
             return {"need_clarification": False, "question": "", "verification": "Scope is clear"}
 
-    ModelRouter(Model(fail=True), Model(), output_limits={"scope":128}).invoke_messages(
-        "scope", [], ScopeAssessment)
+    ModelRouter(Model(fail=True), Model(), output_limits={"scope": 128}).invoke_messages(
+        "scope", [], ScopeAssessment
+    )
     assert seen == [128, 128]

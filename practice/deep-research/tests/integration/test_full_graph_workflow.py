@@ -17,7 +17,12 @@ from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.tools.mcp import ControlledMCP
-from tests.fixtures.fake_models import FakeAcceptanceModel, FakeReportModel, FakeResearchModel, cited_report
+from tests.fixtures.fake_models import (
+    FakeAcceptanceModel,
+    FakeReportModel,
+    FakeResearchModel,
+    cited_report,
+)
 
 URL = "https://controlled.test/cache"
 REQUEST = "How does a local software cache store and reuse data?"
@@ -38,12 +43,21 @@ class SequencedModel:
 def _scope_responses(questions=(QUESTION,)):
     return [
         {"allowed": True, "reason": ""},
-        {"need_clarification": False, "question": "",
-         "verification": "The cache question is clear; I will prepare a research plan."},
-        {"research_question": REQUEST, "required_answers": ["how a local cache stores and reuses data"],
-         "output_requirements": []},
-        {"questions": list(questions), "evidence_needed": ["documentation describing cache storage and reuse"],
-         "report_shape": "A short direct answer, then sources."},
+        {
+            "need_clarification": False,
+            "question": "",
+            "verification": "The cache question is clear; I will prepare a research plan.",
+        },
+        {
+            "research_question": REQUEST,
+            "required_answers": ["how a local cache stores and reuses data"],
+            "output_requirements": [],
+        },
+        {
+            "questions": list(questions),
+            "evidence_needed": ["documentation describing cache storage and reuse"],
+            "report_shape": "A short direct answer, then sources.",
+        },
     ]
 
 
@@ -59,19 +73,40 @@ class CountingMCP(ControlledMCP):
 
 def _graph(stores, scope_model, *, judge_verdicts=None, drafts=(REPORT,), sources=None):
     vfs, index = stores
-    mcp = CountingMCP(sources or [{"url": URL, "content": "A cache stores reusable data for later access."}])
+    mcp = CountingMCP(
+        sources or [{"url": URL, "content": "A cache stores reusable data for later access."}]
+    )
     researcher = ResearchAgent(ModelRouter(FakeResearchModel()), lambda: mcp)
     writer_model = FakeReportModel(list(drafts))
     nodes = ResearchNodes(
-        vfs, index, researcher,
+        vfs,
+        index,
+        researcher,
         report_writer=ReportWriter(ModelRouter(writer_model)),
-        report_judge=ReportJudge(ModelRouter(FakeAcceptanceModel(judge_verdicts or [{
-            "results": [{"criterion": "all", "met": True, "justification": "Answered."}]}]))),
+        report_judge=ReportJudge(
+            ModelRouter(
+                FakeAcceptanceModel(
+                    judge_verdicts
+                    or [
+                        {
+                            "results": [
+                                {"criterion": "all", "met": True, "justification": "Answered."}
+                            ]
+                        }
+                    ]
+                )
+            )
+        ),
         faithfulness_evaluator=lambda q, r, c: {"score": 0.96, "unsupported": []},
         require_faithfulness=True,
     )
-    graph = build_graph(scope_agent=ScopeAgent(ModelRouter(scope_model)), vfs=vfs,
-                        research_nodes=nodes, checkpointer=MemorySaver(), with_approval=True)
+    graph = build_graph(
+        scope_agent=ScopeAgent(ModelRouter(scope_model)),
+        vfs=vfs,
+        research_nodes=nodes,
+        checkpointer=MemorySaver(),
+        with_approval=True,
+    )
     return graph, mcp, writer_model, nodes
 
 
@@ -112,9 +147,16 @@ def test_approved_one_task_plan_completes_with_one_worker_and_stops_on_pass(stor
     assert result["stage"] == "Awaiting Approval"
     assert len(result["todos"]) == 1 and result["todos"][0]["status"] == "completed"
     assert mcp.searches == 1
-    assert nodes.supervisor.max_concurrent_researchers == 3  # the cap stays; one task uses one worker
-    assert result["plan_approval"] == {"plan_hash": result["plan"]["plan_hash"], "approved": True,
-                                       "outcome": "approve", "actor": "tester", "kind": "initial"}
+    assert (
+        nodes.supervisor.max_concurrent_researchers == 3
+    )  # the cap stays; one task uses one worker
+    assert result["plan_approval"] == {
+        "plan_hash": result["plan"]["plan_hash"],
+        "approved": True,
+        "outcome": "approve",
+        "actor": "tester",
+        "kind": "initial",
+    }
     assert result["verification_outcome"] == "PASS" and result["draft_version"] == 1
     assert len(writer.prompts("write")) == 1 and not result.get("bvf_history")
     assert "Original user question (verbatim):\n" + REQUEST in writer.prompts("write")[0]
@@ -132,14 +174,27 @@ def test_declined_initial_plan_ends_without_research(stores):
 
 
 def test_plan_change_request_rescopes_and_needs_a_new_approval(stores):
-    responses = _scope_responses() + _scope_responses()[:1] + [
-        {"need_clarification": False, "question": "",
-         "verification": "I will cover only official documentation."},
-        {"research_question": REQUEST + " Use only official documentation.",
-         "required_answers": ["how a local cache stores and reuses data"], "output_requirements": []},
-        {"questions": [QUESTION + " (official documentation)"], "evidence_needed": ["official docs"],
-         "report_shape": "Short answer."},
-    ]
+    responses = (
+        _scope_responses()
+        + _scope_responses()[:1]
+        + [
+            {
+                "need_clarification": False,
+                "question": "",
+                "verification": "I will cover only official documentation.",
+            },
+            {
+                "research_question": REQUEST + " Use only official documentation.",
+                "required_answers": ["how a local cache stores and reuses data"],
+                "output_requirements": [],
+            },
+            {
+                "questions": [QUESTION + " (official documentation)"],
+                "evidence_needed": ["official docs"],
+                "report_shape": "Short answer.",
+            },
+        ]
+    )
     graph, mcp, _, _ = _graph(stores, SequencedModel(responses))
     config = {"configurable": {"thread_id": "t"}}
     first = graph.invoke({"run_id": "r", "thread_id": "t", "request": REQUEST}, config)
@@ -154,8 +209,12 @@ def test_plan_change_request_rescopes_and_needs_a_new_approval(stores):
 
 def test_research_refuses_to_run_without_approval_of_the_current_plan(stores):
     vfs, index = stores
-    nodes = ResearchNodes(vfs, index, ResearchAgent(ModelRouter(FakeResearchModel()), lambda: ControlledMCP([])),
-                          report_judge=ReportJudge(ModelRouter(FakeAcceptanceModel([{"results": []}]))))
+    nodes = ResearchNodes(
+        vfs,
+        index,
+        ResearchAgent(ModelRouter(FakeResearchModel()), lambda: ControlledMCP([])),
+        report_judge=ReportJudge(ModelRouter(FakeAcceptanceModel([{"results": []}]))),
+    )
     todo = ResearchTodo(research_question=QUESTION).model_dump(mode="json")
     state = {"run_id": "r", "thread_id": "t", "todos": [todo], "plan": {"plan_hash": "new"}}
 
@@ -166,14 +225,28 @@ def test_research_refuses_to_run_without_approval_of_the_current_plan(stores):
 
 
 def test_replacement_plan_waits_for_approval_after_targeted_research_failed(stores):
-    gap = {"results": [{"criterion": "all", "met": False, "justification": "No figure found.",
-                        "missing_points": ["the requested figure"], "issue_type": "evidence_gap"}]}
+    gap = {
+        "results": [
+            {
+                "criterion": "all",
+                "met": False,
+                "justification": "No figure found.",
+                "missing_points": ["the requested figure"],
+                "issue_type": "evidence_gap",
+            }
+        ]
+    }
     passed = {"results": [{"criterion": "all", "met": True, "justification": "Answered."}]}
-    responses = _scope_responses() + [{
-        "questions": ["Which official statistics page reports the cache figure?"],
-        "evidence_needed": ["an official statistics page"], "report_shape": "Short answer."}]
-    graph, mcp, _, _ = _graph(stores, SequencedModel(responses), judge_verdicts=[gap, gap, passed],
-                              drafts=[REPORT])
+    responses = _scope_responses() + [
+        {
+            "questions": ["Which official statistics page reports the cache figure?"],
+            "evidence_needed": ["an official statistics page"],
+            "report_shape": "Short answer.",
+        }
+    ]
+    graph, mcp, _, _ = _graph(
+        stores, SequencedModel(responses), judge_verdicts=[gap, gap, passed], drafts=[REPORT]
+    )
     config = {"configurable": {"thread_id": "t"}}
     graph.invoke({"run_id": "r", "thread_id": "t", "request": REQUEST}, config)
     paused = graph.invoke(Command(resume={"approved": True}), config)
@@ -182,7 +255,9 @@ def test_replacement_plan_waits_for_approval_after_targeted_research_failed(stor
     assert paused["plan"]["kind"] == "replacement"
     assert [entry["route"] for entry in paused["bvf_history"]] == ["research", "replan"]
     searches_before = mcp.searches
-    assert searches_before == 2  # initial search + one targeted search; nothing for the new task yet
+    assert (
+        searches_before == 2
+    )  # initial search + one targeted search; nothing for the new task yet
 
     result = graph.invoke(Command(resume={"approved": True}), config)
 

@@ -23,6 +23,7 @@ def main():
         parser.error("Pass --run-live to authorize paid model, search and embedding calls")
     sys.stdout.reconfigure(encoding="utf-8")
     from dotenv import load_dotenv
+
     load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
     if args.no_output_caps:
         os.environ["INTELLIGENCE_DISABLE_OUTPUT_CAPS"] = "1"
@@ -39,7 +40,10 @@ def main():
     from intelligence_collector.models.factory import ModelFactory
     from intelligence_collector.models.redaction import redact_text
     from intelligence_collector.storage.vfs import VFS
-    from intelligence_collector.storage.chroma_vector_index import ChromaVectorIndex, default_embeddings
+    from intelligence_collector.storage.chroma_vector_index import (
+        ChromaVectorIndex,
+        default_embeddings,
+    )
     from intelligence_collector.tools.mcp import TavilyMCP
 
     calls = []
@@ -71,32 +75,58 @@ def main():
     embeddings = default_embeddings(settings.embedding_model, settings.embedding_provider)
     researcher = ResearchAgent(
         routers.standard,
-        mcp_factory=lambda: TavilyMCP(os.environ["TAVILY_MCP_URL"],
-                                     os.environ["TAVILY_API_KEY"], max_calls=settings.max_search_calls),
-        max_search_calls=settings.max_search_calls, max_sources=settings.max_sources_per_task)
+        mcp_factory=lambda: TavilyMCP(
+            os.environ["TAVILY_MCP_URL"],
+            os.environ["TAVILY_API_KEY"],
+            max_calls=settings.max_search_calls,
+        ),
+        max_search_calls=settings.max_search_calls,
+        max_sources=settings.max_sources_per_task,
+    )
     nodes = ResearchNodes(
-        vfs, ChromaVectorIndex(str(root / "chroma"), embeddings=embeddings,
-                               model=settings.embedding_model, provider=settings.embedding_provider), researcher,
-        report_judge=ReportJudge(routers.reasoning), require_faithfulness=True,
+        vfs,
+        ChromaVectorIndex(
+            str(root / "chroma"),
+            embeddings=embeddings,
+            model=settings.embedding_model,
+            provider=settings.embedding_provider,
+        ),
+        researcher,
+        report_judge=ReportJudge(routers.reasoning),
+        require_faithfulness=True,
         report_guidelines=settings.report_guidelines,
         max_concurrent_researchers=settings.max_concurrent_researchers,
-        recovery_budget=settings.recovery_attempts, evidence_top_k=settings.evidence_top_k,
-        **_quality_evaluators(settings, embeddings))
+        recovery_budget=settings.recovery_attempts,
+        evidence_top_k=settings.evidence_top_k,
+        **_quality_evaluators(settings, embeddings),
+    )
     started = time.monotonic()
     with sqlite3.connect(root / "checkpoints.sqlite", check_same_thread=False) as connection:
         graph = build_graph(
             scope_agent=ScopeAgent(routers.reasoning, guardrail_router=routers.standard),
-            research_nodes=nodes, vfs=vfs, checkpointer=SqliteSaver(connection),
-            with_approval=True, output_dir=str(root / "exports"),
+            research_nodes=nodes,
+            vfs=vfs,
+            checkpointer=SqliteSaver(connection),
+            with_approval=True,
+            output_dir=str(root / "exports"),
             lifecycle=lambda node, status: print(
-                f"{time.monotonic() - started:.1f}s {node}: {status}", flush=True))
+                f"{time.monotonic() - started:.1f}s {node}: {status}", flush=True
+            ),
+        )
         config = {"configurable": {"thread_id": run_id}, "recursion_limit": 100}
-        print(f"RUN {run_id}; no_output_caps={args.no_output_caps}; "
-              f"reasoning_model={roles.reasoning_model}; standard_model={roles.standard_model}", flush=True)
+        print(
+            f"RUN {run_id}; no_output_caps={args.no_output_caps}; "
+            f"reasoning_model={roles.reasoning_model}; standard_model={roles.standard_model}",
+            flush=True,
+        )
         error = None
         try:
-            graph.invoke(None if args.resume_run else
-                         {"run_id": run_id, "thread_id": run_id, "request": args.question}, config)
+            graph.invoke(
+                None
+                if args.resume_run
+                else {"run_id": run_id, "thread_id": run_id, "request": args.question},
+                config,
+            )
         except Exception as exc:
             chain = []
             while exc is not None:
@@ -105,11 +135,27 @@ def main():
             error = " <- ".join(chain)
         snapshot = graph.get_state(config)
         state = snapshot.values
-        summary = {key: state.get(key) for key in (
-            "stage", "research_status", "result_incomplete", "verification", "verifier_error",
-            "last_error", "research_limitations", "draft", "scoped_request", "todos")}
-        summary.update(error=error, next_nodes=snapshot.next, calls=calls,
-                       elapsed_seconds=time.monotonic() - started)
+        summary = {
+            key: state.get(key)
+            for key in (
+                "stage",
+                "research_status",
+                "result_incomplete",
+                "verification",
+                "verifier_error",
+                "last_error",
+                "research_limitations",
+                "draft",
+                "scoped_request",
+                "todos",
+            )
+        }
+        summary.update(
+            error=error,
+            next_nodes=snapshot.next,
+            calls=calls,
+            elapsed_seconds=time.monotonic() - started,
+        )
         vfs.write_json(run_id, "diagnostic.json", summary, "diagnostic")
         print(json.dumps(summary, default=str, ensure_ascii=False, indent=2), flush=True)
         print(f"Artifacts: {root.resolve()}", flush=True)

@@ -52,9 +52,7 @@ def build_scope_agent(routers: ModelRouters) -> ScopeAgent:
 def open_checkpoint_connection(checkpoint_path: str) -> sqlite3.Connection:
     path = Path(checkpoint_path).expanduser()
     if path.exists() and path.is_dir():
-        raise RuntimeError(
-            f"Checkpoint path points to a directory, not a SQLite file: {path}"
-        )
+        raise RuntimeError(f"Checkpoint path points to a directory, not a SQLite file: {path}")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         return sqlite3.connect(path, check_same_thread=False)
@@ -66,7 +64,9 @@ def open_checkpoint_connection(checkpoint_path: str) -> sqlite3.Connection:
 
 
 def _judge_key_env(settings: Settings) -> str:
-    return "GOOGLE_API_KEY" if settings.faithfulness_provider == "google_genai" else "OPENAI_API_KEY"
+    return (
+        "GOOGLE_API_KEY" if settings.faithfulness_provider == "google_genai" else "OPENAI_API_KEY"
+    )
 
 
 def quality_evaluators(settings: Settings, embeddings) -> dict:
@@ -79,33 +79,48 @@ def quality_evaluators(settings: Settings, embeddings) -> dict:
     api_key = os.getenv(_judge_key_env(settings), "").strip()
     if not api_key:
         return {}
-    judge = {"model": settings.faithfulness_model, "api_key": api_key,
-             "provider": settings.faithfulness_provider}
+    judge = {
+        "model": settings.faithfulness_model,
+        "api_key": api_key,
+        "provider": settings.faithfulness_provider,
+    }
     factories = {
-        "faithfulness": ("faithfulness_evaluator",
-                         lambda: make_faithfulness_evaluator(**judge)),
-        "context_precision": ("context_precision_evaluator",
-                              lambda: make_context_precision_evaluator(**judge)),
-        "response_relevancy": ("response_relevancy_evaluator",
-                               lambda: make_response_relevancy_evaluator(**judge, embeddings=embeddings)),
+        "faithfulness": ("faithfulness_evaluator", lambda: make_faithfulness_evaluator(**judge)),
+        "context_precision": (
+            "context_precision_evaluator",
+            lambda: make_context_precision_evaluator(**judge),
+        ),
+        "response_relevancy": (
+            "response_relevancy_evaluator",
+            lambda: make_response_relevancy_evaluator(**judge, embeddings=embeddings),
+        ),
     }
     metrics = dict.fromkeys(["faithfulness", *settings.eval_metrics])
     return {factories[m][0]: factories[m][1]() for m in metrics}
 
 
-def _research_nodes(settings: Settings, routers: ModelRouters, agent: ScopeAgent, vfs: VFS,
-                    warn: Callable[[str], None]) -> ResearchNodes | None:
+def _research_nodes(
+    settings: Settings,
+    routers: ModelRouters,
+    agent: ScopeAgent,
+    vfs: VFS,
+    warn: Callable[[str], None],
+) -> ResearchNodes | None:
     """The post-planning nodes, or None (scope-and-plan only) without Tavily configured."""
     tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
     tavily_url = os.getenv("TAVILY_MCP_URL", "").strip()
     if not (tavily_key and tavily_url):
-        warn("Research is disabled: configure TAVILY_API_KEY and TAVILY_MCP_URL. "
-             "This run can only clarify the request and prepare a plan.")
+        warn(
+            "Research is disabled: configure TAVILY_API_KEY and TAVILY_MCP_URL. "
+            "This run can only clarify the request and prepare a plan."
+        )
         return None
     judge_key = _judge_key_env(settings)
     if not os.getenv(judge_key, "").strip():
-        warn(f"Report verification needs RAGAS Faithfulness: configure {judge_key}. "
-             "Until then every verification ends in ERROR and no report can be approved.")
+        warn(
+            f"Report verification needs RAGAS Faithfulness: configure {judge_key}. "
+            "Until then every verification ends in ERROR and no report can be approved."
+        )
     researcher = ResearchAgent(
         routers.standard,
         # Each research sub-agent gets its own MCP client and per-task search budget.
@@ -119,8 +134,12 @@ def _research_nodes(settings: Settings, routers: ModelRouters, agent: ScopeAgent
         # Real semantic retrieval, persisted locally via Chroma. Used to narrow the Build/Fix
         # prompt to each question's most relevant sources; Verify always re-reads the full
         # evidence independently, so this never affects what gets checked.
-        ChromaVectorIndex(settings.chroma_path, embeddings=embeddings,
-                          model=settings.embedding_model, provider=settings.embedding_provider),
+        ChromaVectorIndex(
+            settings.chroma_path,
+            embeddings=embeddings,
+            model=settings.embedding_model,
+            provider=settings.embedding_provider,
+        ),
         researcher,
         # Coverage gate; shares the scope/planner reasoning-tier model. Research readiness is
         # derived from the stored bundles without an extra assessor call.

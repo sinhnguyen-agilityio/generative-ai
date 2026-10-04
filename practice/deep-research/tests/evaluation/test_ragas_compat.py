@@ -17,9 +17,7 @@ def _run(code: str, *, with_src_on_path: bool = False) -> subprocess.CompletedPr
     env = os.environ.copy()
     if with_src_on_path:
         env["PYTHONPATH"] = SRC + os.pathsep + env.get("PYTHONPATH", "")
-    return subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, env=env
-    )
+    return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
 
 
 def test_ragas_is_not_importable_without_the_compat_shim():

@@ -18,14 +18,16 @@ def test_blocked_content_never_reaches_the_scope_model():
 
 
 def test_allowed_content_proceeds_to_the_scope_model():
-    fake = RecordingChatModel([
-        _guardrail_payload(),
-        {
-            "need_clarification": True,
-            "question": "Which databases and workload?",
-            "verification": "",
-        },
-    ])
+    fake = RecordingChatModel(
+        [
+            _guardrail_payload(),
+            {
+                "need_clarification": True,
+                "question": "Which databases and workload?",
+                "verification": "",
+            },
+        ]
+    )
     agent = ScopeAgent(ModelRouter(fake))
 
     result = agent.clarify_with_user("Compare databases")

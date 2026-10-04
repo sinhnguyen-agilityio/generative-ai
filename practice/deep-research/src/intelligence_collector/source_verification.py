@@ -95,10 +95,8 @@ def catalog_from_bundles(bundles: list[dict]) -> SourceCatalog:
                 catalog.sources[by_url[key]] = CatalogSource(
                     source_id=by_url[key],
                     url=url,
-                    title=str(provenance.get("title")
-                              or source.get("title") or ""),
-                    excerpt=str(source.get("excerpt")
-                                or source.get("content") or ""),
+                    title=str(provenance.get("title") or source.get("title") or ""),
+                    excerpt=str(source.get("excerpt") or source.get("content") or ""),
                 )
             if by_url[key] not in source_ids:
                 source_ids.append(by_url[key])
@@ -107,13 +105,15 @@ def catalog_from_bundles(bundles: list[dict]) -> SourceCatalog:
             for text in bundle.get("unresolved_gaps", [])
             if str(text).strip()
         ]
-        catalog.bundles.append(EvidenceBundle(
-            todo_id=todo_id,
-            question=question,
-            summary=str(bundle.get("summary", "")),
-            source_ids=source_ids,
-            gaps=gaps,
-        ))
+        catalog.bundles.append(
+            EvidenceBundle(
+                todo_id=todo_id,
+                question=question,
+                summary=str(bundle.get("summary", "")),
+                source_ids=source_ids,
+                gaps=gaps,
+            )
+        )
     return catalog
 
 
@@ -142,7 +142,9 @@ def evidence_task_ids(evidence_refs: list[dict]) -> list[str]:
     return list(dict.fromkeys(ref["task_id"] for ref in evidence_refs if ref.get("task_id")))
 
 
-def load_catalog(vfs, run_id: str, evidence_refs: list[dict], *, active_todo_ids=None) -> SourceCatalog:
+def load_catalog(
+    vfs, run_id: str, evidence_refs: list[dict], *, active_todo_ids=None
+) -> SourceCatalog:
     """Read the evidence bundles referenced by graph state (in research order)."""
     bundles = []
     seen = set()
@@ -152,8 +154,10 @@ def load_catalog(vfs, run_id: str, evidence_refs: list[dict], *, active_todo_ids
         if not task_id:
             continue
         path = ref.get("path")
-        relative = str(Path(path).resolve().relative_to(base)) if path else (
-            f"research/{task_id}/evidence/result.json"
+        relative = (
+            str(Path(path).resolve().relative_to(base))
+            if path
+            else (f"research/{task_id}/evidence/result.json")
         )
         if relative in seen:
             continue
@@ -168,13 +172,14 @@ def load_catalog(vfs, run_id: str, evidence_refs: list[dict], *, active_todo_ids
         all_sources.setdefault(bundle.get("task_id"), []).extend(bundle.get("sources", []))
     # Seed citations from capture order before combining the latest per-question findings.
     historic = catalog_from_bundles(bundles)
-    merged = catalog_from_bundles([
-        {**bundle, "sources": all_sources[task_id]} for task_id, bundle in latest.items()
-    ])
+    merged = catalog_from_bundles(
+        [{**bundle, "sources": all_sources[task_id]} for task_id, bundle in latest.items()]
+    )
     by_url = {_normalize_url(source.url): sid for sid, source in historic.sources.items()}
     for bundle in merged.bundles:
-        bundle.source_ids = [by_url[_normalize_url(merged.sources[sid].url)]
-                             for sid in bundle.source_ids]
+        bundle.source_ids = [
+            by_url[_normalize_url(merged.sources[sid].url)] for sid in bundle.source_ids
+        ]
     merged.sources = historic.sources
     if active_todo_ids is not None:
         active = set(active_todo_ids)

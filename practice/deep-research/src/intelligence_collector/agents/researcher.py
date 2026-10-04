@@ -63,8 +63,7 @@ SEARCH_TOOL = {
 
 
 class ResearcherState(TypedDict, total=False):
-    """State of one research sub-agent's own LangGraph loop (LLM and search tool, then compression).
-    """
+    """State of one research sub-agent's own LangGraph loop (LLM and search tool, then compression)."""
 
     research_question: str
     messages: Annotated[list[BaseMessage], add_messages]
@@ -113,7 +112,9 @@ def _format_search_results(query: str, rows: list[dict[str, Any]], repeated: lis
         for number, row in enumerate(rows, start=1):
             linked = (
                 " (already retrieved by another research task: linked, does not use your "
-                "source budget)" if row.get("_covered_by") else ""
+                "source budget)"
+                if row.get("_covered_by")
+                else ""
             )
             blocks.append(
                 f"[{number}] {row.get('title') or 'Untitled'}{linked}\n"
@@ -122,7 +123,8 @@ def _format_search_results(query: str, rows: list[dict[str, Any]], repeated: lis
             )
     if repeated:
         blocks.append(
-            "Already retrieved earlier, not repeated: " + ", ".join(repeated)
+            "Already retrieved earlier, not repeated: "
+            + ", ".join(repeated)
             + ". Change the query if you need new sources."
         )
     if any(row.get("_covered_by") for row in rows):
@@ -182,15 +184,25 @@ class ResearchAgent:
             mcp_tool=getattr(mcp, "tool_name", "search"),
         )
         graph = self._build_graph(
-            mcp, outcome, run_id=run_id, thread_id=thread_id, task_id=task_id, claims=claims,
+            mcp,
+            outcome,
+            run_id=run_id,
+            thread_id=thread_id,
+            task_id=task_id,
+            claims=claims,
         )
-        final = graph.invoke({
-            "research_question": question,
-            "messages": [HumanMessage(content=f"Research question:\n{question}")],
-            "llm_calls": 0,
-            "search_calls": 0,
-        }, config={"run_name": "research_agent",
-                   "metadata": {"todo_id": task_id, "run_id": run_id}})
+        final = graph.invoke(
+            {
+                "research_question": question,
+                "messages": [HumanMessage(content=f"Research question:\n{question}")],
+                "llm_calls": 0,
+                "search_calls": 0,
+            },
+            config={
+                "run_name": "research_agent",
+                "metadata": {"todo_id": task_id, "run_id": run_id},
+            },
+        )
         outcome.search_calls = final.get("search_calls", 0)
         outcome.sources = final.get("sources", [])
         outcome.errors = final.get("errors", [])
@@ -198,8 +210,14 @@ class ResearchAgent:
         return outcome
 
     def _build_graph(
-        self, mcp: MCPResearchPort, outcome: ResearchOutcome, *,
-        run_id, thread_id, task_id="", claims: UrlClaims | None = None,
+        self,
+        mcp: MCPResearchPort,
+        outcome: ResearchOutcome,
+        *,
+        run_id,
+        thread_id,
+        task_id="",
+        claims: UrlClaims | None = None,
     ):
         budget = outcome.search_budget
         source_budget = self.max_sources
@@ -242,7 +260,9 @@ class ResearchAgent:
             for call in last.tool_calls:
                 query = str(call["args"].get("query", "")).strip()
                 if call["name"] != SEARCH_TOOL_NAME:
-                    content = f"Unknown tool {call['name']!r}; only {SEARCH_TOOL_NAME} is available."
+                    content = (
+                        f"Unknown tool {call['name']!r}; only {SEARCH_TOOL_NAME} is available."
+                    )
                 elif not query:
                     content = "A non-empty query is required."
                 elif calls >= budget:
@@ -257,10 +277,14 @@ class ResearchAgent:
                     remaining = source_budget - len(owned_urls)
                     try:
                         with traced(
-                            "mcp.search", as_type="tool",
+                            "mcp.search",
+                            as_type="tool",
                             input={"query": query, "max_results": remaining},
-                            metadata={"mcp_server": outcome.mcp_server,
-                                      "mcp_tool": outcome.mcp_tool, "todo_id": task_id},
+                            metadata={
+                                "mcp_server": outcome.mcp_server,
+                                "mcp_tool": outcome.mcp_tool,
+                                "todo_id": task_id,
+                            },
                         ) as observation:
                             rows = mcp.search(
                                 query,
@@ -271,7 +295,8 @@ class ResearchAgent:
                             # Locators only: page content stays in the VFS captures.
                             observation.output = {
                                 "results": len(rows),
-                                "urls": [str(row.get("url", "")) for row in rows]}
+                                "urls": [str(row.get("url", "")) for row in rows],
+                            }
                     except Exception as exc:  # retrieval failures are task outcomes, not crashes
                         error = redact_mcp_error(exc)
                         errors.append(error)
@@ -309,7 +334,12 @@ class ResearchAgent:
                                 "Finish with the evidence you already have."
                             )
                 replies.append(ToolMessage(content=content, tool_call_id=call["id"]))
-            return {"messages": replies, "search_calls": calls, "sources": sources, "errors": errors}
+            return {
+                "messages": replies,
+                "search_calls": calls,
+                "sources": sources,
+                "errors": errors,
+            }
 
         def compress_research(state: ResearcherState) -> ResearcherState:
             """Compress the gathered sources into ``ResearchFindings``; no sources means no

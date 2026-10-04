@@ -6,16 +6,24 @@ from intelligence_collector.storage.vfs import VFS
 
 
 def state(action, **kwargs):
-    return {"run_id": "run", "thread_id": "thread", "draft": "Unverified draft",
-            "verification": {"passed": False, "repair_details": "Unsupported claim"},
-            "last_error": "Unsupported claim", "approval": {"approved": True},
-            "recovery_attempt": 3, "stall_count": 2,
-            "recovery_decision": {"action": action, **kwargs}}
+    return {
+        "run_id": "run",
+        "thread_id": "thread",
+        "draft": "Unverified draft",
+        "verification": {"passed": False, "repair_details": "Unsupported claim"},
+        "last_error": "Unsupported claim",
+        "approval": {"approved": True},
+        "recovery_attempt": 3,
+        "stall_count": 2,
+        "recovery_decision": {"action": action, **kwargs},
+    }
 
 
 @pytest.mark.parametrize("action", ["retry_report", "revise"])
 def test_repair_invalidates_verification_and_starts_bounded_allowance(tmp_path, action):
-    payload = {"additional_attempts": 2} if action == "retry_report" else {"feedback": "Use bullets"}
+    payload = (
+        {"additional_attempts": 2} if action == "retry_report" else {"feedback": "Use bullets"}
+    )
     result = RecoveryNodes(VFS(tmp_path)).apply(state(action, **payload))
     assert result["verification"] is None
     assert result["approval"] is None
@@ -67,8 +75,9 @@ def test_recovery_checkpoint_survives_restart_and_cancel_is_terminal(tmp_path):
 
     def build(connection):
         builder = StateGraph(GraphState)
-        builder.add_node("await_recovery", node_wrapper(
-            "await_recovery", await_recovery, run_registry=registry))
+        builder.add_node(
+            "await_recovery", node_wrapper("await_recovery", await_recovery, run_registry=registry)
+        )
         builder.add_node("apply", node_wrapper("apply", nodes.apply, run_registry=registry))
         builder.add_edge(START, "await_recovery")
         builder.add_edge("await_recovery", "apply")

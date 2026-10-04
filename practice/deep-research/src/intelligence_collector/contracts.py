@@ -99,9 +99,7 @@ class RecoveryDecision(Model):
 
     action: RecoveryAction
     feedback: str = Field(default="", max_length=MAX_RECOVERY_FEEDBACK_LENGTH)
-    additional_attempts: int = Field(
-        default=0, ge=0, le=MAX_ADDITIONAL_RECOVERY_ATTEMPTS
-    )
+    additional_attempts: int = Field(default=0, ge=0, le=MAX_ADDITIONAL_RECOVERY_ATTEMPTS)
 
     @model_validator(mode="after")
     def validate_action_requirements(self):
@@ -117,9 +115,7 @@ class RecoveryDecision(Model):
             if self.additional_attempts == 0:
                 raise ValueError("retry_report requires at least one additional attempt")
         elif self.additional_attempts != 0:
-            raise ValueError(
-                "additional attempts are allowed only for retry_report"
-            )
+            raise ValueError("additional attempts are allowed only for retry_report")
         return self
 
 
@@ -145,10 +141,25 @@ class ApprovalResumeDecision(Model):
         return self
 
 
-PLAN_APPROVAL_WORDS = frozenset({
-    "approve", "approved", "i approve", "yes", "ok", "okay", "go", "go ahead", "start",
-    "looks good", "lgtm", "đồng ý", "duyệt", "phê duyệt", "ok, bắt đầu",
-})
+PLAN_APPROVAL_WORDS = frozenset(
+    {
+        "approve",
+        "approved",
+        "i approve",
+        "yes",
+        "ok",
+        "okay",
+        "go",
+        "go ahead",
+        "start",
+        "looks good",
+        "lgtm",
+        "đồng ý",
+        "duyệt",
+        "phê duyệt",
+        "ok, bắt đầu",
+    }
+)
 
 
 class PlanApprovalDecision(Model):
@@ -175,8 +186,11 @@ class PlanApprovalDecision(Model):
     @property
     def outcome(self) -> Literal["approve", "decline", "change"]:
         if self.approved is not None:
-            return "approve" if self.approved and not self.reply else (
-                "change" if self.reply else "decline")
+            return (
+                "approve"
+                if self.approved and not self.reply
+                else ("change" if self.reply else "decline")
+            )
         text = self.reply.casefold().rstrip(".! ")
         if text in PLAN_APPROVAL_WORDS:
             return "approve"
@@ -331,7 +345,9 @@ class TodoPlan(Model):
             raise ValueError("planned research questions must not be blank")
         if len({question.casefold() for question in self.questions}) != len(self.questions):
             raise ValueError("planned research questions must not repeat")
-        self.evidence_needed = [item.strip() for item in self.evidence_needed][:len(self.questions)]
+        self.evidence_needed = [item.strip() for item in self.evidence_needed][
+            : len(self.questions)
+        ]
         self.report_shape = self.report_shape.strip()
         return self
 
@@ -374,7 +390,9 @@ class ResearchEvidenceVerdict(Model):
 
     @model_validator(mode="after")
     def validate_readiness(self):
-        if self.status != ResearchReadiness.READY and not any(text.strip() for text in self.limitations):
+        if self.status != ResearchReadiness.READY and not any(
+            text.strip() for text in self.limitations
+        ):
             raise ValueError("Partial or insufficient research requires explicit limitations")
         if self.status == ResearchReadiness.INSUFFICIENT and not any(
             not check.sufficient and check.missing_evidence.strip() for check in self.questions

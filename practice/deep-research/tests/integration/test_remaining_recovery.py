@@ -11,11 +11,14 @@ from intelligence_collector.graph.state import GraphState
 from intelligence_collector.storage.run_registry import RunRegistry
 
 
-@pytest.mark.parametrize("kind,decision", [
-    ("clarification_required", {"reply": "Use the latest stable release"}),
-    ("publication_approval", {"approved": True}),
-    ("recovery_required", {"action": "cancel"}),
-])
+@pytest.mark.parametrize(
+    "kind,decision",
+    [
+        ("clarification_required", {"reply": "Use the latest stable release"}),
+        ("publication_approval", {"approved": True}),
+        ("recovery_required", {"action": "cancel"}),
+    ],
+)
 def test_interrupt_survives_connection_restart_on_same_thread(tmp_path, kind, decision):
     checkpoint_path = tmp_path / "checkpoints.sqlite"
     registry_path = tmp_path / "runs.sqlite"
@@ -41,12 +44,14 @@ def test_interrupt_survives_connection_restart_on_same_thread(tmp_path, kind, de
 
     with sqlite3.connect(checkpoint_path, check_same_thread=False) as connection:
         graph = build(connection, RunRegistry(registry_path))
-        graph.invoke({"run_id": "run", "thread_id": "thread"},
-                     {"configurable": {"thread_id": "thread"}})
+        graph.invoke(
+            {"run_id": "run", "thread_id": "thread"}, {"configurable": {"thread_id": "thread"}}
+        )
     connection.close()
     with sqlite3.connect(checkpoint_path, check_same_thread=False) as connection:
-        service = WorkflowRecoveryService(build(connection, RunRegistry(registry_path)),
-                                          RunRegistry(registry_path))
+        service = WorkflowRecoveryService(
+            build(connection, RunRegistry(registry_path)), RunRegistry(registry_path)
+        )
         assert service.load_state("thread")["draft"] == "Already completed work"
         assert service.inspect("thread").interrupt_kind == kind
         result = service.resume_interrupt("thread", decision)
@@ -87,7 +92,8 @@ def test_legacy_ended_review_is_discovered_and_bridged_to_interrupt(tmp_path):
         old.add_edge(START, "needs_review")
         old.add_edge("needs_review", END)
         old.compile(checkpointer=SqliteSaver(connection)).invoke(
-            {"run_id": "run", "thread_id": "thread"}, config)
+            {"run_id": "run", "thread_id": "thread"}, config
+        )
     connection.close()
     with sqlite3.connect(path, check_same_thread=False) as connection:
         new = StateGraph(GraphState)
@@ -96,7 +102,9 @@ def test_legacy_ended_review_is_discovered_and_bridged_to_interrupt(tmp_path):
         new.add_edge(START, "needs_review")
         new.add_edge("needs_review", "await_recovery")
         new.add_edge("await_recovery", END)
-        service = WorkflowRecoveryService(new.compile(checkpointer=SqliteSaver(connection)), registry)
+        service = WorkflowRecoveryService(
+            new.compile(checkpointer=SqliteSaver(connection)), registry
+        )
         assert service.discover_legacy_runs()[0].run_id == "run"
         restored = service.load_state("thread")
         assert restored["run_id"] == "run"

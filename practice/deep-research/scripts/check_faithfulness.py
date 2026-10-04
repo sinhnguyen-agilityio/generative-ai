@@ -12,9 +12,12 @@ from dotenv import load_dotenv
 from intelligence_collector.config import Settings
 from intelligence_collector.observability.evaluation import make_faithfulness_evaluator
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-live", action="store_true", help="Allow potentially paid judge calls")
+    parser.add_argument(
+        "--run-live", action="store_true", help="Allow potentially paid judge calls"
+    )
     args = parser.parse_args()
     if not args.run_live:
         parser.error("Pass --run-live to authorize live judge calls")
@@ -28,7 +31,8 @@ def main() -> int:
     if not api_key:
         parser.error(f"{key_name} is not set")
     evaluate = make_faithfulness_evaluator(
-        model=settings.faithfulness_model, api_key=api_key,
+        model=settings.faithfulness_model,
+        api_key=api_key,
         provider=settings.faithfulness_provider,
     )
     try:

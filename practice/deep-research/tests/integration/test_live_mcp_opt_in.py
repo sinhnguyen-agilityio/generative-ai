@@ -33,13 +33,13 @@ def test_live_tavily_mcp_preserves_provenance_artifacts_and_index(stores):
     mcp = TavilyMCP(endpoint, api_key, max_calls=5)
     model = ModelFactory().create(
         ModelConfig(
-            model_name, provider=os.getenv("INTELLIGENCE_REASONING_PROVIDER") or None, timeout=45,
+            model_name,
+            provider=os.getenv("INTELLIGENCE_REASONING_PROVIDER") or None,
+            timeout=45,
         )
     )
     researcher = ResearchAgent(ModelRouter(model), lambda: mcp)
-    todo = ResearchTodo(
-        research_question="What is the official Python 3.13 release date?"
-    )
+    todo = ResearchTodo(research_question="What is the official Python 3.13 release date?")
 
     completed, refs, chunks = run_worker(vfs, index, "live-tavily", todo, researcher)
 
@@ -56,16 +56,21 @@ def test_live_tavily_mcp_preserves_provenance_artifacts_and_index(stores):
     }
     assert chunks
     assert all(chunk.metadata["run_id"] == "live-tavily" for chunk in chunks)
-    assert {chunk.chunk_id for chunk in index.retrieve(
-        todo.research_question,
-        limit=20,
-        run_id="live-tavily",
-    )} == {chunk.chunk_id for chunk in chunks}
+    assert {
+        chunk.chunk_id
+        for chunk in index.retrieve(
+            todo.research_question,
+            limit=20,
+            run_id="live-tavily",
+        )
+    } == {chunk.chunk_id for chunk in chunks}
 
-    evidence = json.loads(vfs.read(
-        "live-tavily",
-        f"research/{todo.todo_id}/evidence/result.json",
-    ))
+    evidence = json.loads(
+        vfs.read(
+            "live-tavily",
+            f"research/{todo.todo_id}/evidence/result.json",
+        )
+    )
     assert evidence["search_calls"] <= 5
     assert evidence["sources"]
     assert all(source["mcp_server"] == "tavily" for source in evidence["sources"])

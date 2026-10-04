@@ -63,7 +63,9 @@ def _plan_payload():
 
 def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch, tmp_path):
     calls = []
-    model = RecordingChatModel([_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()])
+    model = RecordingChatModel(
+        [_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()]
+    )
     monkeypatch.setattr(
         "intelligence_collector.models.factory.init_chat_model",
         lambda *args, **kwargs: calls.append((args, kwargs)) or model,
@@ -99,13 +101,15 @@ def test_live_scope_uses_factory_messages_and_selects_planning_edge(monkeypatch,
 
 def test_invalid_planner_output_does_not_write_todos(tmp_path):
     duplicate = "What are the documented locking differences between PostgreSQL and SQLite?"
-    model = RecordingChatModel([
-        _guardrail_payload(),
-        _clear_payload(),
-        _brief_payload(),
-        {"questions": [duplicate, duplicate]},
-        {"questions": []},
-    ])
+    model = RecordingChatModel(
+        [
+            _guardrail_payload(),
+            _clear_payload(),
+            _brief_payload(),
+            {"questions": [duplicate, duplicate]},
+            {"questions": []},
+        ]
+    )
     graph = build_graph(scope_agent=ScopeAgent(ModelRouter(model)), vfs=VFS(tmp_path))
     with pytest.raises(ValueError, match="invalid structured output for planner"):
         graph.invoke({"run_id": "bad-plan", "thread_id": "bad-plan", "request": "Bounded request"})
@@ -113,24 +117,26 @@ def test_invalid_planner_output_does_not_write_todos(tmp_path):
 
 
 def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
-    model = RecordingChatModel([
-        _guardrail_payload(),
-        {
-            "need_clarification": True,
-            "question": "Which database versions and workload should be compared?",
-            "verification": "",
-        },
-        _guardrail_payload(),
-        {
-            "need_clarification": True,
-            "question": "What evidence standard should the report meet?",
-            "verification": "",
-        },
-        _guardrail_payload(),
-        _clear_payload(),
-        _brief_payload(),
-        _plan_payload(),
-    ])
+    model = RecordingChatModel(
+        [
+            _guardrail_payload(),
+            {
+                "need_clarification": True,
+                "question": "Which database versions and workload should be compared?",
+                "verification": "",
+            },
+            _guardrail_payload(),
+            {
+                "need_clarification": True,
+                "question": "What evidence standard should the report meet?",
+                "verification": "",
+            },
+            _guardrail_payload(),
+            _clear_payload(),
+            _brief_payload(),
+            _plan_payload(),
+        ]
+    )
     router = ModelRouter(model)
     graph = build_graph(
         scope_agent=ScopeAgent(router), vfs=VFS(tmp_path), checkpointer=MemorySaver()
@@ -146,10 +152,12 @@ def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
     assert first["messages"][-1].content.startswith("Which database versions")
 
     second = graph.invoke(
-        Command(resume={
-            "reply": "Compare PostgreSQL and SQLite for local apps",
-            "actor": "tester",
-        }),
+        Command(
+            resume={
+                "reply": "Compare PostgreSQL and SQLite for local apps",
+                "actor": "tester",
+            }
+        ),
         config,
     )
     assert second["stage"] == "Scoping"
@@ -157,10 +165,12 @@ def test_ambiguous_scope_pauses_then_resumes_same_thread_to_planning(tmp_path):
     assert len(second["messages"]) == 4
 
     resumed = graph.invoke(
-        Command(resume={
-            "reply": "Every factual claim must cite a primary source",
-            "actor": "tester",
-        }),
+        Command(
+            resume={
+                "reply": "Every factual claim must cite a primary source",
+                "actor": "tester",
+            }
+        ),
         config,
     )
     assert resumed["stage"] == "Planning"
@@ -178,7 +188,9 @@ def test_primary_model_failure_uses_fallback_without_silent_clear(tmp_path):
         def invoke(self, messages):
             raise TimeoutError("primary timed out")
 
-    fallback = RecordingChatModel([_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()])
+    fallback = RecordingChatModel(
+        [_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()]
+    )
     router = ModelRouter(FailingModel(), fallback)
     result = build_graph(scope_agent=ScopeAgent(router), vfs=VFS(tmp_path)).invoke(
         {"run_id": "fallback", "thread_id": "fallback", "request": "A fully bounded request"}
@@ -187,11 +199,13 @@ def test_primary_model_failure_uses_fallback_without_silent_clear(tmp_path):
 
 
 def test_malformed_structured_output_never_routes_to_planning(tmp_path):
-    model = RecordingChatModel([
-        _guardrail_payload(),
-        {"need_clarification": False},
-        {"need_clarification": False},
-    ])
+    model = RecordingChatModel(
+        [
+            _guardrail_payload(),
+            {"need_clarification": False},
+            {"need_clarification": False},
+        ]
+    )
     graph = build_graph(scope_agent=ScopeAgent(ModelRouter(model)), vfs=VFS(tmp_path))
     with pytest.raises(ValueError, match="invalid structured output"):
         graph.invoke({"run_id": "bad", "thread_id": "bad", "request": "Research this"})

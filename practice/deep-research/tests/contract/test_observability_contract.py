@@ -36,8 +36,11 @@ def test_disabled_settings_give_an_inert_tracer():
 def test_authentication_failure_disables_tracing_with_an_actionable_reason(monkeypatch):
     monkeypatch.setattr("langfuse.Langfuse.auth_check", lambda self: False)
 
-    tracer = RunTracer.from_settings(LangfuseSettings(
-        enabled=True, public_key="pk-auth-test", secret_key="sk", host="http://127.0.0.1:9"))
+    tracer = RunTracer.from_settings(
+        LangfuseSettings(
+            enabled=True, public_key="pk-auth-test", secret_key="sk", host="http://127.0.0.1:9"
+        )
+    )
 
     assert not tracer.enabled
     assert "LANGFUSE_BASE_URL" in tracer.disabled_reason
@@ -51,16 +54,26 @@ def test_trace_id_is_derived_from_the_run_and_stable_across_clients():
 
 
 def test_graph_config_adds_the_execution_callback_and_correlation_metadata():
-    execution = Execution(run_id="run", thread_id="thread", kind="resume",
-                          execution_id="exec-1", callbacks=["handler"])
+    execution = Execution(
+        run_id="run",
+        thread_id="thread",
+        kind="resume",
+        execution_id="exec-1",
+        callbacks=["handler"],
+    )
 
-    config = execution.graph_config({"configurable": {"thread_id": "thread"},
-                                     "metadata": {"source": "chat"}})
+    config = execution.graph_config(
+        {"configurable": {"thread_id": "thread"}, "metadata": {"source": "chat"}}
+    )
 
     assert config["callbacks"] == ["handler"]
     assert config["run_name"] == "research_graph"
-    assert config["metadata"] == {"source": "chat", "run_id": "run", "execution_id": "exec-1",
-                                  "execution_kind": "resume"}
+    assert config["metadata"] == {
+        "source": "chat",
+        "run_id": "run",
+        "execution_id": "exec-1",
+        "execution_kind": "resume",
+    }
     assert config["configurable"] == {"thread_id": "thread"}
 
 
@@ -69,19 +82,27 @@ def test_finish_records_where_the_invocation_paused():
         value = {"kind": "plan_approval", "plan": {"tasks": []}}
 
     execution = Execution(run_id="run", thread_id="thread", kind="start", execution_id="e")
-    execution.finish({"stage": "Planning", "status": "paused", "draft": "long text",
-                      "__interrupt__": (Interrupt(),)})
+    execution.finish(
+        {
+            "stage": "Planning",
+            "status": "paused",
+            "draft": "long text",
+            "__interrupt__": (Interrupt(),),
+        }
+    )
 
     assert execution.outcome == {"stage": "Planning", "paused_at": "plan_approval"}
 
 
 def test_mask_redacts_credentials_and_bounds_strings():
-    masked = mask_payload({
-        "api_key": "sk-live",
-        "nested": [{"Authorization": "Bearer abcdefghijkl"}],
-        "url": "https://mcp.test/?tavilyApiKey=tvly-1&x=1",
-        "messages": [HumanMessage(content="token=abc " + "y" * (MAX_TRACE_TEXT + 50))],
-    })
+    masked = mask_payload(
+        {
+            "api_key": "sk-live",
+            "nested": [{"Authorization": "Bearer abcdefghijkl"}],
+            "url": "https://mcp.test/?tavilyApiKey=tvly-1&x=1",
+            "messages": [HumanMessage(content="token=abc " + "y" * (MAX_TRACE_TEXT + 50))],
+        }
+    )
 
     assert masked["api_key"] == "[REDACTED]"
     assert masked["nested"] == [{"Authorization": "[REDACTED]"}]
@@ -94,8 +115,11 @@ def test_mask_redacts_credentials_and_bounds_strings():
 
 def test_node_wrapper_annotates_the_node_and_scores_only_where_the_score_is_produced():
     capture = LangfuseCapture()
-    verifying = node_wrapper("verifying", lambda state: {**state, "faithfulness_score": 0.91,
-                                                           "draft_version": 2}, capture.tracer)
+    verifying = node_wrapper(
+        "verifying",
+        lambda state: {**state, "faithfulness_score": 0.91, "draft_version": 2},
+        capture.tracer,
+    )
     approval = node_wrapper("approval", lambda state: state, capture.tracer)
 
     with capture.tracer.execution(run_id="run", thread_id="thread", kind="start"):

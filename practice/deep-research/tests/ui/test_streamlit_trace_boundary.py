@@ -35,10 +35,12 @@ def test_reruns_do_not_start_executions_and_a_message_starts_exactly_one(monkeyp
     from streamlit.testing.v1 import AppTest
 
     capture = LangfuseCapture()
-    model = RecordingChatModel([_guardrail_payload(), _clear_payload(), _brief_payload(),
-                                _plan_payload()])
-    monkeypatch.setattr("intelligence_collector.models.factory.init_chat_model",
-                        lambda *args, **kwargs: model)
+    model = RecordingChatModel(
+        [_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()]
+    )
+    monkeypatch.setattr(
+        "intelligence_collector.models.factory.init_chat_model", lambda *args, **kwargs: model
+    )
     monkeypatch.setattr("intelligence_collector.app._get_tracer", lambda st: capture.tracer)
 
     app = AppTest.from_file(APP_PATH).run()

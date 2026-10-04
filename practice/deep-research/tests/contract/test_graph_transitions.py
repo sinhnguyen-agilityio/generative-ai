@@ -45,14 +45,16 @@ def _brief():
 
 
 def test_invalid_scope_cannot_traverse_to_planning(tmp_path):
-    model = SequencedModel([
-        {"allowed": True, "reason": ""},
-        {
-            "need_clarification": True,
-            "question": "Which databases and workload should be compared?",
-            "verification": "",
-        }
-    ])
+    model = SequencedModel(
+        [
+            {"allowed": True, "reason": ""},
+            {
+                "need_clarification": True,
+                "question": "Which databases and workload should be compared?",
+                "verification": "",
+            },
+        ]
+    )
     graph = build_graph(
         scope_agent=ScopeAgent(ModelRouter(model)),
         vfs=VFS(tmp_path),
@@ -75,14 +77,18 @@ def test_failed_todo_write_cannot_traverse_to_research(tmp_path):
                 raise OSError("simulated todo persistence failure")
             return super().write_json(run_id, relative_path, payload, kind, **kwargs)
 
-    model = SequencedModel([
-        {"allowed": True, "reason": ""},
-        _clear_scope(),
-        _brief(),
-        {
-            "questions": ["Which databases suit local Python applications, per primary sources?"],
-        },
-    ])
+    model = SequencedModel(
+        [
+            {"allowed": True, "reason": ""},
+            _clear_scope(),
+            _brief(),
+            {
+                "questions": [
+                    "Which databases suit local Python applications, per primary sources?"
+                ],
+            },
+        ]
+    )
     graph = build_graph(
         scope_agent=ScopeAgent(ModelRouter(model)),
         vfs=PlanningWriteFailureVFS(tmp_path),
@@ -102,7 +108,10 @@ def test_insufficient_research_gets_only_one_automatic_retry():
     from intelligence_collector.graph.nodes import Node
 
     assert route_after_research({"research_status": "INSUFFICIENT"}) == Node.PREPARE_GAP_RESEARCH
-    assert route_after_research({"research_status": "INSUFFICIENT", "research_gap_attempt": 1}) == Node.SYNTHESIZE
+    assert (
+        route_after_research({"research_status": "INSUFFICIENT", "research_gap_attempt": 1})
+        == Node.SYNTHESIZE
+    )
 
 
 def test_unverified_result_cannot_traverse_to_approval_or_publication():
@@ -161,3 +170,23 @@ def test_node_lifecycle_reports_failure():
         wrapped({"run_id": "run", "thread_id": "thread"})
 
     assert events == [("planning", "running"), ("planning", "failure")]
+
+
+def test_node_lifecycle_reports_waiting_on_interrupt():
+    from langgraph.errors import GraphInterrupt
+
+    events = []
+
+    def pause(_state):
+        raise GraphInterrupt(())
+
+    wrapped = node_wrapper(
+        "await_plan_approval",
+        pause,
+        lifecycle=lambda node, status: events.append((node, status)),
+    )
+
+    with pytest.raises(GraphInterrupt):
+        wrapped({"run_id": "run", "thread_id": "thread"})
+
+    assert events == [("await_plan_approval", "running"), ("await_plan_approval", "waiting")]

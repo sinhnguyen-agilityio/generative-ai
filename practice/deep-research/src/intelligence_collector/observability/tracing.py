@@ -72,7 +72,8 @@ def mask_payload(value: Any) -> Any:
     ``{"role", "content"}`` so state snapshots stay readable."""
     if isinstance(value, dict):
         return {
-            key: "[REDACTED]" if any(marker in str(key).lower() for marker in SECRET_MARKERS)
+            key: "[REDACTED]"
+            if any(marker in str(key).lower() for marker in SECRET_MARKERS)
             else mask_payload(item)
             for key, item in value.items()
         }
@@ -114,7 +115,11 @@ def _is_pause(exc: BaseException) -> bool:
 
 @contextmanager
 def traced(
-    name: str, *, as_type: str = "span", input: Any = None, metadata: dict | None = None,
+    name: str,
+    *,
+    as_type: str = "span",
+    input: Any = None,
+    metadata: dict | None = None,
 ) -> Iterator[Observation]:
     """Record a non-LangChain operation (MCP call, persistence, retrieval, evaluation) as a child
     of the current observation. An exception marks this observation as ERROR and propagates;
@@ -126,7 +131,8 @@ def traced(
         return
     try:
         manager = client.start_as_current_observation(
-            name=name, as_type=as_type, input=input, metadata=handle.metadata)
+            name=name, as_type=as_type, input=input, metadata=handle.metadata
+        )
         observation = manager.__enter__()
     except Exception:  # tracing must never break the operation
         logger.exception("Langfuse: could not start observation %s", name)
@@ -146,8 +152,9 @@ def traced(
             if error is not None and _is_pause(error):
                 updates["status_message"] = PAUSED_MESSAGE
             elif error is not None:
-                updates.update(level="ERROR",
-                               status_message=f"{type(error).__name__}: {redact_text(error)}")
+                updates.update(
+                    level="ERROR", status_message=f"{type(error).__name__}: {redact_text(error)}"
+                )
             observation.update(**updates)
         finally:
             manager.__exit__(None, None, None)
@@ -178,7 +185,8 @@ def score_current_trace(name: str, value: float, *, comment: str = "") -> None:
         return
     try:
         client.score_current_trace(
-            name=name, value=value, data_type="NUMERIC", comment=comment or None)
+            name=name, value=value, data_type="NUMERIC", comment=comment or None
+        )
     except Exception:
         logger.exception("Langfuse: could not score the trace")
 
@@ -208,8 +216,12 @@ class Execution:
     outcome: dict[str, Any] = field(default_factory=dict)
 
     def graph_config(self, config: dict) -> dict:
-        metadata = {**config.get("metadata", {}), "run_id": self.run_id,
-                    "execution_id": self.execution_id, "execution_kind": self.kind}
+        metadata = {
+            **config.get("metadata", {}),
+            "run_id": self.run_id,
+            "execution_id": self.execution_id,
+            "execution_kind": self.kind,
+        }
         traced_config = {**config, "metadata": metadata, "run_name": "research_graph"}
         if self.callbacks:
             traced_config["callbacks"] = [*config.get("callbacks", []), *self.callbacks]
@@ -218,9 +230,11 @@ class Execution:
     def finish(self, result: dict) -> None:
         """Summarise the final state: stage, report version and where the graph paused, if it
         did. (``status`` is left out: the state only updates it at some nodes.)"""
-        self.outcome = {key: result.get(key) for key in (
-            "stage", "draft_version", "verification_outcome", "feedback_route")
-            if result.get(key) not in (None, "")}
+        self.outcome = {
+            key: result.get(key)
+            for key in ("stage", "draft_version", "verification_outcome", "feedback_route")
+            if result.get(key) not in (None, "")
+        }
         paused_at = _interrupt_kind(result)
         if paused_at:
             self.outcome["paused_at"] = paused_at
@@ -262,7 +276,8 @@ class RunTracer:
                 raise RuntimeError(
                     "Langfuse authentication failed. Verify that LANGFUSE_PUBLIC_KEY and "
                     "LANGFUSE_SECRET_KEY belong to the same project and that LANGFUSE_BASE_URL "
-                    "matches that project's region.")
+                    "matches that project's region."
+                )
         except Exception as exc:
             reason = redact_text(exc)
             logger.warning("Langfuse tracing disabled: %s", reason)
@@ -286,52 +301,73 @@ class RunTracer:
 
     @contextmanager
     def execution(
-        self, *, run_id: str, thread_id: str, kind: str, input: Any = None,
+        self,
+        *,
+        run_id: str,
+        thread_id: str,
+        kind: str,
+        input: Any = None,
         interrupt_kind: str = "",
     ) -> Iterator[Execution]:
         """Open ``research.execution`` for one graph invocation and make it current.
 
         `kind` is ``start``, ``resume``, ``recovery`` or ``continue``; `interrupt_kind` names the
         interrupt a resume answers (``plan_approval``, ``publication_approval``, ...)."""
-        execution = Execution(run_id=run_id, thread_id=thread_id, kind=kind,
-                              execution_id=str(uuid4()), trace_id=self.trace_id_for(run_id))
+        execution = Execution(
+            run_id=run_id,
+            thread_id=thread_id,
+            kind=kind,
+            execution_id=str(uuid4()),
+            trace_id=self.trace_id_for(run_id),
+        )
         if self.client is None:
             yield execution
             return
         from langfuse import propagate_attributes
         from langfuse.langchain import CallbackHandler
 
-        metadata = {"run_id": run_id, "thread_id": thread_id, "execution_id": execution.execution_id,
-                    "execution_kind": kind, "interrupt_kind": interrupt_kind}
+        metadata = {
+            "run_id": run_id,
+            "thread_id": thread_id,
+            "execution_id": execution.execution_id,
+            "execution_kind": kind,
+            "interrupt_kind": interrupt_kind,
+        }
         # A fresh handler per execution: no callback state is shared between invocations,
         # Streamlit reruns or concurrently open runs.
         execution.callbacks = [CallbackHandler(public_key=self.public_key or None)]
         token = _ACTIVE_CLIENT.set(self.client)
         try:
-            with self.client.start_as_current_observation(
-                name="research.execution",
-                as_type="agent",
-                trace_context={"trace_id": execution.trace_id},
-                input=input,
-                metadata={key: value for key, value in metadata.items() if value},
-            ) as observation, propagate_attributes(
-                session_id=thread_id,
-                trace_name=TRACE_NAME,
-                tags=TRACE_TAGS,
-                metadata={"run_id": run_id, "thread_id": thread_id},
+            with (
+                self.client.start_as_current_observation(
+                    name="research.execution",
+                    as_type="agent",
+                    trace_context={"trace_id": execution.trace_id},
+                    input=input,
+                    metadata={key: value for key, value in metadata.items() if value},
+                ) as observation,
+                propagate_attributes(
+                    session_id=thread_id,
+                    trace_name=TRACE_NAME,
+                    tags=TRACE_TAGS,
+                    metadata={"run_id": run_id, "thread_id": thread_id},
+                ),
             ):
                 try:
                     yield execution
                 except BaseException as exc:
                     if not _is_pause(exc):
-                        observation.update(level="ERROR", status_message=(
-                            f"{type(exc).__name__}: {redact_text(exc)}"))
+                        observation.update(
+                            level="ERROR",
+                            status_message=(f"{type(exc).__name__}: {redact_text(exc)}"),
+                        )
                     raise
                 finally:
                     observation.update(output=execution.outcome or None)
                     if execution.outcome.get("paused_at"):
-                        observation.update(status_message=(
-                            f"{PAUSED_MESSAGE} ({execution.outcome['paused_at']})"))
+                        observation.update(
+                            status_message=(f"{PAUSED_MESSAGE} ({execution.outcome['paused_at']})")
+                        )
         finally:
             # No synchronous flush: the SDK exports in the background (and at exit), so an
             # unreachable Langfuse never delays a chat turn.

@@ -35,7 +35,12 @@ from intelligence_collector.graph.routing import (
 )
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.tools.mcp import ControlledMCP
-from tests.fixtures.fake_models import FakeAcceptanceModel, FakeReportModel, FakeResearchModel, cited_report
+from tests.fixtures.fake_models import (
+    FakeAcceptanceModel,
+    FakeReportModel,
+    FakeResearchModel,
+    cited_report,
+)
 from tests.integration.test_langchain_scope import (
     RecordingChatModel,
     _brief_payload,
@@ -45,11 +50,17 @@ from tests.integration.test_langchain_scope import (
 
 URL = "https://controlled.test/cache"
 QUESTION = "How does a local software cache store and reuse data?"
-BRIEF = {"research_question": "I want a technical report on local software cache behavior from primary sources."}
+BRIEF = {
+    "research_question": "I want a technical report on local software cache behavior from primary sources."
+}
 GOOD = cited_report(["A cache stores reusable data for later access [S1]."], {"S1": URL})
 BULLETED = GOOD.replace("A cache stores", "- A cache stores")
 PASS = {"results": [{"criterion": "all criteria", "met": True, "justification": "Satisfied."}]}
-FAIL = {"results": [{"criterion": "all criteria", "met": False, "justification": "A claim lost its citation."}]}
+FAIL = {
+    "results": [
+        {"criterion": "all criteria", "met": False, "justification": "A claim lost its citation."}
+    ]
+}
 
 
 def _sha(text: str) -> str:
@@ -89,10 +100,14 @@ def _bvf_graph(stores, report_model, *, output_dir, feedback_router=None, judge_
     vfs, index = stores
     researcher = ResearchAgent(
         ModelRouter(FakeResearchModel()),
-        lambda: ControlledMCP([{"url": URL, "content": "A cache stores reusable data for later access."}]),
+        lambda: ControlledMCP(
+            [{"url": URL, "content": "A cache stores reusable data for later access."}]
+        ),
     )
     nodes = ResearchNodes(
-        vfs, index, researcher,
+        vfs,
+        index,
+        researcher,
         report_writer=ReportWriter(ModelRouter(report_model)),
         report_judge=ReportJudge(ModelRouter(judge_model)) if judge_model else _passing_judge(),
         recovery_budget=3,
@@ -143,8 +158,13 @@ def test_revise_rewrites_from_the_evidence_reverifies_then_publishes(stores, tmp
     report_model = FakeReportModel([GOOD, BULLETED])
     judge = FakeAcceptanceModel([PASS])
     feedback_model, router = _router({"route": "revise", "reason": "Presentation change."})
-    graph = _bvf_graph(stores, report_model, feedback_router=router, judge_model=judge,
-                       output_dir=tmp_path / "exports")
+    graph = _bvf_graph(
+        stores,
+        report_model,
+        feedback_router=router,
+        judge_model=judge,
+        output_dir=tmp_path / "exports",
+    )
     config = {"configurable": {"thread_id": "approval-run"}}
 
     paused = graph.invoke(_initial_state(), config)
@@ -177,8 +197,11 @@ def test_revise_rewrites_from_the_evidence_reverifies_then_publishes(stores, tmp
     assert chat[-3] == ("human", "Please use bullet points.")
     assert chat[-2][0] == "ai" and "verified again" in chat[-2][1]
     # ...and the chat says when the rewritten report is back and verified.
-    assert chat[-1] == ("ai", "Report draft v2 passed verification (coverage, citations, "
-                              "faithfulness) and is ready for your review below.")
+    assert chat[-1] == (
+        "ai",
+        "Report draft v2 passed verification (coverage, citations, "
+        "faithfulness) and is ready for your review below.",
+    )
     human_entries = [e for e in paused_again["bvf_history"] if e.get("kind") == "HUMAN_FEEDBACK"]
     assert human_entries and human_entries[0]["route"] == "revise"
 
@@ -192,8 +215,13 @@ def test_reviewer_request_stays_in_force_through_a_bvf_fix(stores, tmp_path):
     report_model = FakeReportModel([GOOD, BULLETED, BULLETED])
     judge = FakeAcceptanceModel([PASS, FAIL, PASS])
     _, router = _router({"route": "revise", "reason": "Presentation change."})
-    graph = _bvf_graph(stores, report_model, feedback_router=router, judge_model=judge,
-                       output_dir=tmp_path / "exports")
+    graph = _bvf_graph(
+        stores,
+        report_model,
+        feedback_router=router,
+        judge_model=judge,
+        output_dir=tmp_path / "exports",
+    )
     config = {"configurable": {"thread_id": "approval-run"}}
 
     graph.invoke(_initial_state(), config)
@@ -220,7 +248,10 @@ def test_review_flow_graph_structure(stores, tmp_path):
     assert (Node.CLASSIFY_FEEDBACK, Node.PUBLISH) in edges  # a chat reply read as an approval
     assert (Node.CLASSIFY_FEEDBACK, Node.PREPARE_REVISION) in edges
     assert (Node.PREPARE_REVISION, Node.SYNTHESIZE) in edges  # rewrite and re-verify
-    assert (Node.CLASSIFY_FEEDBACK, Node.STUB_SCOPE) in edges  # clarify_with_user when a scope agent is wired
+    assert (
+        Node.CLASSIFY_FEEDBACK,
+        Node.STUB_SCOPE,
+    ) in edges  # clarify_with_user when a scope agent is wired
     assert "writer" not in {node for edge in edges for node in edge}
 
 
@@ -229,7 +260,10 @@ def test_feedback_routing_outcomes():
     assert route_after_approval({"approval": {"approved": False}}) == REJECTED
     assert route_after_feedback({"feedback_route": "scope"}) == TO_SCOPE
     assert route_after_feedback({"feedback_route": "revise"}) == TO_REVISE
-    assert route_after_feedback({"feedback_route": "approve", "approval": {"approved": True}}) == TO_PUBLISH
+    assert (
+        route_after_feedback({"feedback_route": "approve", "approval": {"approved": True}})
+        == TO_PUBLISH
+    )
     # An "approve" route without a recorded approval never publishes.
     assert route_after_feedback({"feedback_route": "approve", "approval": None}) == TO_REVISE
 
@@ -241,7 +275,8 @@ def test_reject_without_a_feedback_router_defaults_to_revise(stores, tmp_path):
 
     graph.invoke(_initial_state(), config)
     paused_again = graph.invoke(
-        Command(resume={"approved": False, "feedback": "not great"}), config,
+        Command(resume={"approved": False, "feedback": "not great"}),
+        config,
     )
 
     assert paused_again["feedback_route"] == "revise"
@@ -249,22 +284,34 @@ def test_reject_without_a_feedback_router_defaults_to_revise(stores, tmp_path):
 
 def test_reject_with_scope_route_goes_back_through_scoping_and_replans(stores, tmp_path):
     vfs, index = stores
-    shared_model = RecordingChatModel([
-        _guardrail_payload(), _clear_payload(), _brief_payload(),
-        _single_question_plan(),  # initial plan
-        _guardrail_payload(), _clear_payload(), _brief_payload(),  # feedback re-enters scoping
-        _single_question_plan(),  # replan after the scope change
-    ])
+    shared_model = RecordingChatModel(
+        [
+            _guardrail_payload(),
+            _clear_payload(),
+            _brief_payload(),
+            _single_question_plan(),  # initial plan
+            _guardrail_payload(),
+            _clear_payload(),
+            _brief_payload(),  # feedback re-enters scoping
+            _single_question_plan(),  # replan after the scope change
+        ]
+    )
     shared_router = ModelRouter(shared_model)
-    feedback_model = FakeFeedbackRouterModel([{"route": "scope", "reason": "Changes what is covered."}])
+    feedback_model = FakeFeedbackRouterModel(
+        [{"route": "scope", "reason": "Changes what is covered."}]
+    )
 
     researcher = ResearchAgent(
         ModelRouter(FakeResearchModel()),
-        lambda: ControlledMCP([{"url": URL, "content": "A cache stores reusable data for later access."}]),
+        lambda: ControlledMCP(
+            [{"url": URL, "content": "A cache stores reusable data for later access."}]
+        ),
     )
     report_model = FakeReportModel([GOOD, GOOD])
     nodes = ResearchNodes(
-        vfs, index, researcher,
+        vfs,
+        index,
+        researcher,
         report_writer=ReportWriter(ModelRouter(report_model)),
         report_judge=_passing_judge(),
         recovery_budget=3,
@@ -282,8 +329,11 @@ def test_reject_with_scope_route_goes_back_through_scoping_and_replans(stores, t
     config = {"configurable": {"thread_id": "planner-run"}}
 
     planned = graph.invoke(
-        {"run_id": "planner-run", "thread_id": "planner-run",
-         "request": "Compare local software caches"},
+        {
+            "run_id": "planner-run",
+            "thread_id": "planner-run",
+            "request": "Compare local software caches",
+        },
         config,
     )
     assert planned["stage"] == "Planning"  # paused for plan approval before any retrieval
@@ -292,7 +342,9 @@ def test_reject_with_scope_route_goes_back_through_scoping_and_replans(stores, t
     assert paused["stage"] == "Awaiting Approval"
 
     replanned = graph.invoke(
-        Command(resume={"approved": False, "feedback": "Also cover the wrong angle: eviction policies."}),
+        Command(
+            resume={"approved": False, "feedback": "Also cover the wrong angle: eviction policies."}
+        ),
         config,
     )
     assert replanned["plan_approval"] is None  # the new plan needs its own approval
@@ -308,7 +360,9 @@ def test_reject_with_scope_route_goes_back_through_scoping_and_replans(stores, t
     # The feedback re-entered scoping as a new user turn, before the brief and plan were redone.
     scope_prompts = ["\n".join(str(m.content) for m in call) for call in shared_model.calls[4:]]
     assert any("eviction policies" in prompt for prompt in scope_prompts)
-    assert paused_again["recovery_attempt"] == 0  # a new scope starts a fresh Build-Verify-Fix cycle
+    assert (
+        paused_again["recovery_attempt"] == 0
+    )  # a new scope starts a fresh Build-Verify-Fix cycle
     assert paused_again["reviewer_requests"] == []
 
     result = graph.invoke(Command(resume={"approved": True}), config)
@@ -320,14 +374,17 @@ def test_reject_with_scope_route_goes_back_through_scoping_and_replans(stores, t
 def test_chat_reply_classified_as_approve_publishes(stores, tmp_path):
     feedback_model = FakeFeedbackRouterModel([{"route": "approve", "reason": "Accepts as-is."}])
     graph = _bvf_graph(
-        stores, FakeReportModel([GOOD]),
+        stores,
+        FakeReportModel([GOOD]),
         feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
         output_dir=tmp_path / "exports",
     )
     config = {"configurable": {"thread_id": "approval-run"}}
 
     graph.invoke(_initial_state(), config)
-    result = graph.invoke(Command(resume={"reply": "Looks good, publish it", "actor": "tester"}), config)
+    result = graph.invoke(
+        Command(resume={"reply": "Looks good, publish it", "actor": "tester"}), config
+    )
 
     assert result["stage"] == "Published"
     assert result["approval"]["approved"] is True
@@ -341,8 +398,12 @@ def test_chat_reply_classified_as_approve_publishes(stores, tmp_path):
 
 def test_chat_reply_classified_as_revise_is_rewritten_and_shown_again(stores, tmp_path):
     _, router = _router({"route": "revise", "reason": "Presentation change."})
-    graph = _bvf_graph(stores, FakeReportModel([GOOD, BULLETED]), feedback_router=router,
-                       output_dir=tmp_path / "exports")
+    graph = _bvf_graph(
+        stores,
+        FakeReportModel([GOOD, BULLETED]),
+        feedback_router=router,
+        output_dir=tmp_path / "exports",
+    )
     config = {"configurable": {"thread_id": "approval-run"}}
 
     graph.invoke(_initial_state(), config)
@@ -357,7 +418,8 @@ def test_chat_reply_classified_as_revise_is_rewritten_and_shown_again(stores, tm
 def test_explicit_rejection_is_never_classified_as_approval(stores, tmp_path):
     feedback_model = FakeFeedbackRouterModel([{"route": "approve", "reason": "Sounds positive."}])
     graph = _bvf_graph(
-        stores, FakeReportModel([GOOD, BULLETED]),
+        stores,
+        FakeReportModel([GOOD, BULLETED]),
         feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
         output_dir=tmp_path / "exports",
     )
@@ -365,7 +427,8 @@ def test_explicit_rejection_is_never_classified_as_approval(stores, tmp_path):
 
     graph.invoke(_initial_state(), config)
     paused_again = graph.invoke(
-        Command(resume={"approved": False, "feedback": "Great, but use bullets"}), config,
+        Command(resume={"approved": False, "feedback": "Great, but use bullets"}),
+        config,
     )
 
     assert paused_again["stage"] == "Awaiting Approval"

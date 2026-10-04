@@ -35,8 +35,20 @@ from intelligence_collector.graph.nodes.scope import PlannerNodes, ScopeNodes
 from intelligence_collector.graph.nodes.stubs import stage_only
 
 __all__ = [
-    "DEFAULT_RECOVERY_BUDGET", "EXTENSION_PASSAGES", "FAITHFULNESS_THRESHOLD",
-    "MAX_STALLED_ATTEMPTS", "Node", "approval", "await_clarification", "await_plan_approval",
-    "await_recovery", "RecoveryNodes", "BVFNodes", "ResearchNodes", "ApprovalNodes",
-    "PlannerNodes", "ScopeNodes", "stage_only",
+    "DEFAULT_RECOVERY_BUDGET",
+    "EXTENSION_PASSAGES",
+    "FAITHFULNESS_THRESHOLD",
+    "MAX_STALLED_ATTEMPTS",
+    "Node",
+    "approval",
+    "await_clarification",
+    "await_plan_approval",
+    "await_recovery",
+    "RecoveryNodes",
+    "BVFNodes",
+    "ResearchNodes",
+    "ApprovalNodes",
+    "PlannerNodes",
+    "ScopeNodes",
+    "stage_only",
 ]

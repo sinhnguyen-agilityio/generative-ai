@@ -64,8 +64,11 @@ def diagnose(
     issues, passing = [], []
     for check in verification.check_results:
         if check.passed:
-            if check.gate == "coverage" and check.item and not check.item.startswith(
-                    ("Output requirement", "Satisfies this reviewer")):
+            if (
+                check.gate == "coverage"
+                and check.item
+                and not check.item.startswith(("Output requirement", "Satisfies this reviewer"))
+            ):
                 passing.append(check.item)
             continue
         todo = None
@@ -82,7 +85,8 @@ def diagnose(
             todo = affected_todo(check.item, check.missing_points, todos)
             bundle = bundles.get(todo.todo_id) if todo else None
             unseen = bundle is not None and set(bundle.source_ids) - set(
-                shown_source_ids.get(todo.todo_id, bundle.source_ids))
+                shown_source_ids.get(todo.todo_id, bundle.source_ids)
+            )
             if unseen:
                 route = "chroma"
             elif item_key(check.item) in researched_items:
@@ -91,22 +95,39 @@ def diagnose(
                 route = "research"
             else:
                 route = "vfs"
-        issues.append({
-            "check": check.name, "gate": check.gate, "issue_type": check.issue_type,
-            "item": check.item, "missing_points": list(check.missing_points),
-            "detail": "; ".join(check.details), "route": route,
-            "todo_id": todo.todo_id if todo else "",
-        })
+        issues.append(
+            {
+                "check": check.name,
+                "gate": check.gate,
+                "issue_type": check.issue_type,
+                "item": check.item,
+                "missing_points": list(check.missing_points),
+                "detail": "; ".join(check.details),
+                "route": route,
+                "todo_id": todo.todo_id if todo else "",
+            }
+        )
     route = next((r for r in ROUTE_ORDER if any(i["route"] == r for i in issues)), "vfs")
     return {"route": route, "issues": issues, "passing": passing}
 
 
-def locate_with_index(vfs, index, run_id: str, catalog: SourceCatalog, writer_catalog: SourceCatalog,
-                      issues: list[dict], artifacts: list[dict], *, limit: int = 4) -> SourceCatalog:
+def locate_with_index(
+    vfs,
+    index,
+    run_id: str,
+    catalog: SourceCatalog,
+    writer_catalog: SourceCatalog,
+    issues: list[dict],
+    artifacts: list[dict],
+    *,
+    limit: int = 4,
+) -> SourceCatalog:
     """Chroma route: retrieve passages for each affected item, read each hit's original capture
     from the VFS through its artifact provenance, and add those sources to the writer's view of
     the affected task. Hits that cannot be traced back to a VFS capture are ignored."""
-    paths = {item.get("artifact_id"): item.get("path") for item in artifacts if item.get("artifact_id")}
+    paths = {
+        item.get("artifact_id"): item.get("path") for item in artifacts if item.get("artifact_id")
+    }
     by_url = {_normalize_url(source.url): sid for sid, source in catalog.sources.items()}
     added: dict[str, list[str]] = {}
     for issue in issues:
@@ -125,6 +146,13 @@ def locate_with_index(vfs, index, run_id: str, catalog: SourceCatalog, writer_ca
     bundles = []
     for bundle in writer_catalog.bundles:
         extra = [sid for sid in added.get(bundle.todo_id, []) if sid not in bundle.source_ids]
-        bundles.append(EvidenceBundle(bundle.todo_id, bundle.question, bundle.summary,
-                                      [*bundle.source_ids, *extra], bundle.gaps))
+        bundles.append(
+            EvidenceBundle(
+                bundle.todo_id,
+                bundle.question,
+                bundle.summary,
+                [*bundle.source_ids, *extra],
+                bundle.gaps,
+            )
+        )
     return SourceCatalog(sources=catalog.sources, bundles=bundles)

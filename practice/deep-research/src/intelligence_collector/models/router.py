@@ -34,7 +34,10 @@ def _is_transient(exc: BaseException) -> bool:
     """
     if isinstance(exc, (TimeoutError, ConnectionError)):
         return True
-    if getattr(exc, "status_code", None) in TRANSIENT_STATUS or getattr(exc, "code", None) in TRANSIENT_STATUS:
+    if (
+        getattr(exc, "status_code", None) in TRANSIENT_STATUS
+        or getattr(exc, "code", None) in TRANSIENT_STATUS
+    ):
         return True
     name = type(exc).__name__.lower()  # e.g. openai.APITimeoutError, httpx.ReadTimeout
     return "timeout" in name or "connection" in name
@@ -42,7 +45,9 @@ def _is_transient(exc: BaseException) -> bool:
 
 def _model_name(model) -> str:
     """Best-effort display name for traces (`model_name`, then `model`, then the class name)."""
-    return str(getattr(model, "model_name", None) or getattr(model, "model", None) or type(model).__name__)
+    return str(
+        getattr(model, "model_name", None) or getattr(model, "model", None) or type(model).__name__
+    )
 
 
 def _accepts_config(function) -> bool:
@@ -63,8 +68,9 @@ def _as_runnable(model, role: str) -> Runnable:
         return model
     if hasattr(model, "invoke"):
         if _accepts_config(model.invoke):
-            return RunnableLambda(lambda prompt, config: model.invoke(prompt, config=config),
-                                  name=_model_name(model))
+            return RunnableLambda(
+                lambda prompt, config: model.invoke(prompt, config=config), name=_model_name(model)
+            )
         return RunnableLambda(lambda prompt: model.invoke(prompt), name=_model_name(model))
     if callable(model):
         return RunnableLambda(lambda prompt: model(role, prompt), name=_model_name(model))
@@ -94,7 +100,9 @@ def _bind_tools(model, tools: list, tool_choice: str | None):
     """Bind `tools` to `model`; models that cannot bind tools are returned as-is."""
     if not hasattr(model, "bind_tools"):
         return model
-    return model.bind_tools(tools, tool_choice=tool_choice) if tool_choice else model.bind_tools(tools)
+    return (
+        model.bind_tools(tools, tool_choice=tool_choice) if tool_choice else model.bind_tools(tools)
+    )
 
 
 def _render_prompt(prompt) -> str:
@@ -118,8 +126,16 @@ class ModelRouter:
       failures (see `_is_transient`) are raised at once instead of being retried.
     """
 
-    def __init__(self, primary, fallback=None, *, max_attempts: int = 2, trace=None, callbacks=None,
-                 output_limits=None):
+    def __init__(
+        self,
+        primary,
+        fallback=None,
+        *,
+        max_attempts: int = 2,
+        trace=None,
+        callbacks=None,
+        output_limits=None,
+    ):
         if primary is None:
             raise RuntimeError("model router requires a configured primary model")
         if not isinstance(max_attempts, int) or not 1 <= max_attempts <= MAX_MODEL_ATTEMPTS:
@@ -135,8 +151,13 @@ class ModelRouter:
     # ----- public API -----
 
     def invoke_messages(
-        self, role: str, messages: list[BaseMessage], schema: type[T], *,
-        run_id: str = "", thread_id: str = "",
+        self,
+        role: str,
+        messages: list[BaseMessage],
+        schema: type[T],
+        *,
+        run_id: str = "",
+        thread_id: str = "",
     ) -> T:
         """Call the model and return its output validated as `schema`.
 
@@ -145,57 +166,93 @@ class ModelRouter:
         """
         chain = self._chain(
             _bind_schema(capped_model(self.primary, role, self.output_limits), schema),
-            _bind_schema(capped_model(self.fallback, role, self.output_limits), schema), role,
-        ) | RunnableLambda(lambda raw: self._parse(role, raw, schema), name="parse_structured_output")
+            _bind_schema(capped_model(self.fallback, role, self.output_limits), schema),
+            role,
+        ) | RunnableLambda(
+            lambda raw: self._parse(role, raw, schema), name="parse_structured_output"
+        )
         errors = []
         for attempt in range(1, self.max_attempts + 1):
             config = self._config(role, run_id, thread_id, attempt)
             try:
                 result = chain.invoke(messages, config=config)
             except Exception as exc:
-                transient = _is_transient(exc) or getattr(exc, "status_code", None) in {401, 403, 404}
+                transient = _is_transient(exc) or getattr(exc, "status_code", None) in {
+                    401,
+                    403,
+                    404,
+                }
                 errors.append(redact_text(exc))
                 # The raw error text is withheld from the trace: it can echo model output.
                 message = (
                     f"{type(exc).__name__}: model call failed"
-                    if transient else f"{type(exc).__name__}: invalid structured output"
+                    if transient
+                    else f"{type(exc).__name__}: invalid structured output"
                 )
                 self._emit(
-                    role, run_id, thread_id, attempt, messages,
-                    output_text=message, validation_error=message,
+                    role,
+                    run_id,
+                    thread_id,
+                    attempt,
+                    messages,
+                    output_text=message,
+                    validation_error=message,
                 )
                 if transient:
                     raise RuntimeError(f"model call for {role} failed: {errors[-1]}") from exc
                 continue
             self._emit(
-                role, run_id, thread_id, attempt, messages,
+                role,
+                run_id,
+                thread_id,
+                attempt,
+                messages,
                 output_text=redact_text(result.model_dump_json(indent=2)),
                 decision=redact_value(result.model_dump(mode="json")),
                 message_count=len(messages),
             )
             return result
-        raise ValueError(f"invalid structured output for {role} after {self.max_attempts} attempts: {'; '.join(errors)}")
+        raise ValueError(
+            f"invalid structured output for {role} after {self.max_attempts} attempts: {'; '.join(errors)}"
+        )
 
     def invoke_with_tools(
-        self, role: str, messages: list[BaseMessage], tools: list, *,
-        run_id: str = "", thread_id: str = "", tool_choice: str | None = None,
+        self,
+        role: str,
+        messages: list[BaseMessage],
+        tools: list,
+        *,
+        run_id: str = "",
+        thread_id: str = "",
+        tool_choice: str | None = None,
     ) -> AIMessage:
         """Tool-calling decision: the returned AIMessage carries a final answer or tool calls."""
         chain = self._chain(
             _bind_tools(capped_model(self.primary, role, self.output_limits), tools, tool_choice),
-            None if self.fallback is None else _bind_tools(
-                capped_model(self.fallback, role, self.output_limits), tools, tool_choice),
+            None
+            if self.fallback is None
+            else _bind_tools(
+                capped_model(self.fallback, role, self.output_limits), tools, tool_choice
+            ),
             role,
         )
         raw = chain.invoke(messages, config=self._config(role, run_id, thread_id))
         if not isinstance(raw, AIMessage):
             raise TypeError(f"tool-calling model output for {role} must be an AIMessage")
-        decision = redact_value({
-            "content": raw.content,
-            "tool_calls": [{"name": call["name"], "args": call["args"]} for call in raw.tool_calls],
-        })
+        decision = redact_value(
+            {
+                "content": raw.content,
+                "tool_calls": [
+                    {"name": call["name"], "args": call["args"]} for call in raw.tool_calls
+                ],
+            }
+        )
         self._emit(
-            role, run_id, thread_id, 1, messages,
+            role,
+            run_id,
+            thread_id,
+            1,
+            messages,
             output_text=json.dumps(decision, ensure_ascii=False, indent=2, default=str),
             decision=decision,
             message_count=len(messages),
@@ -209,8 +266,12 @@ class ModelRouter:
         explicit `callbacks` the run inherits the caller's (the traced graph execution's)."""
         config: RunnableConfig = {
             "run_name": f"model.{role}",
-            "metadata": {"role": role, "run_id": run_id, "thread_id": thread_id,
-                         "attempt": attempt},
+            "metadata": {
+                "role": role,
+                "run_id": run_id,
+                "thread_id": thread_id,
+                "attempt": attempt,
+            },
         }
         if self.callbacks:
             config["callbacks"] = self.callbacks

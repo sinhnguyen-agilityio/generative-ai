@@ -20,8 +20,12 @@ def test_make_faithfulness_evaluator_calls_the_async_scorer_with_the_right_argum
 
     async def fake_score(question, report, contexts, *, model, api_key, provider):
         captured.update(
-            question=question, report=report, contexts=contexts,
-            model=model, api_key=api_key, provider=provider,
+            question=question,
+            report=report,
+            contexts=contexts,
+            model=model,
+            api_key=api_key,
+            provider=provider,
         )
         return 0.87
 
@@ -151,7 +155,11 @@ def test_report_sections_drop_scope_limitations_and_sources():
     sections = evaluation.report_sections(REPORT)
 
     # The title line is not a claim; the intro sentence under it still is.
-    assert [s.splitlines()[0] for s in sections] == ["Intro sentence.", "## Meaning", "## Retry-After"]
+    assert [s.splitlines()[0] for s in sections] == [
+        "Intro sentence.",
+        "## Meaning",
+        "## Retry-After",
+    ]
     assert not any("RFC 6585 - https" in s or "No vendor data" in s for s in sections)
 
 
@@ -189,9 +197,15 @@ def test_score_is_computed_per_section_and_in_nli_batches(monkeypatch):
     monkeypatch.setitem(evaluation._JUDGE_LLMS, "openai", lambda model, key: "llm")
     monkeypatch.setattr(evaluation, "NLI_BATCH_SIZE", 4)
 
-    score = asyncio.run(evaluation._score_report_faithfulness_async(
-        "q", REPORT, ["ctx"], model="m", api_key="k",
-    ))
+    score = asyncio.run(
+        evaluation._score_report_faithfulness_async(
+            "q",
+            REPORT,
+            ["ctx"],
+            model="m",
+            api_key="k",
+        )
+    )
 
     assert sorted(calls["sections"]) == ["## Meaning", "## Retry-After", "Intro sentence."]
     assert calls["batches"] == [4, 4, 4, 3]
@@ -212,9 +226,18 @@ def test_score_is_none_when_no_statements_are_extracted(monkeypatch):
     monkeypatch.setattr("ragas.metrics.collections.Faithfulness", FakeFaithfulness)
     monkeypatch.setitem(evaluation._JUDGE_LLMS, "openai", lambda model, key: "llm")
 
-    assert asyncio.run(evaluation._score_report_faithfulness_async(
-        "q", REPORT, ["ctx"], model="m", api_key="k",
-    )) is None
+    assert (
+        asyncio.run(
+            evaluation._score_report_faithfulness_async(
+                "q",
+                REPORT,
+                ["ctx"],
+                model="m",
+                api_key="k",
+            )
+        )
+        is None
+    )
 
 
 def test_ragas_faithfulness_still_exposes_the_two_steps_we_call():
@@ -250,22 +273,28 @@ def test_context_precision_scores_each_question_on_its_ranked_contexts(monkeypat
 
             class Result:
                 value = {"q1": 1.0, "q2": 0.5}[user_input]
+
             return Result()
 
-    monkeypatch.setattr("ragas.metrics.collections.ContextPrecisionWithoutReference",
-                        FakeContextPrecision)
+    monkeypatch.setattr(
+        "ragas.metrics.collections.ContextPrecisionWithoutReference", FakeContextPrecision
+    )
     monkeypatch.setitem(evaluation._JUDGE_LLMS, "openai", lambda model, key: "llm")
     evaluate = evaluation.make_context_precision_evaluator(model="m", api_key="k")
 
-    result = evaluate([
-        {"question": "q1", "contexts": ["top", "second"]},
-        {"question": "q2", "contexts": ["only"]},
-        {"question": "q3", "contexts": []},  # nothing retrieved: skipped
-    ], REPORT)
+    result = evaluate(
+        [
+            {"question": "q1", "contexts": ["top", "second"]},
+            {"question": "q2", "contexts": ["only"]},
+            {"question": "q3", "contexts": []},  # nothing retrieved: skipped
+        ],
+        REPORT,
+    )
 
     assert result["score"] == 0.75
     assert [(d["question"], d["contexts"], d["score"]) for d in result["per_question"]] == [
-        ("q1", 2, 1.0), ("q2", 1, 0.5),
+        ("q1", 2, 1.0),
+        ("q2", 1, 0.5),
     ]
     assert sorted(user for user, _, _ in seen) == ["q1", "q2"]
     assert dict((u, c) for u, _, c in seen)["q1"] == ["top", "second"]  # rank order kept
@@ -292,6 +321,7 @@ def test_response_relevancy_scores_the_body_with_adapted_embeddings(monkeypatch)
 
             class Result:
                 value = 0.66
+
             return Result()
 
     def self_embeddings():
@@ -300,7 +330,9 @@ def test_response_relevancy_scores_the_body_with_adapted_embeddings(monkeypatch)
     monkeypatch.setattr("ragas.metrics.collections.AnswerRelevancy", FakeAnswerRelevancy)
     monkeypatch.setitem(evaluation._JUDGE_LLMS, "openai", lambda model, key: "llm")
     evaluate = evaluation.make_response_relevancy_evaluator(
-        model="m", api_key="k", embeddings=FakeLangChainEmbeddings(),
+        model="m",
+        api_key="k",
+        embeddings=FakeLangChainEmbeddings(),
     )
 
     assert evaluate("What does HTTP 429 mean?", REPORT) == 0.66
@@ -311,7 +343,9 @@ def test_response_relevancy_scores_the_body_with_adapted_embeddings(monkeypatch)
 
 def test_response_relevancy_returns_none_for_an_empty_report():
     evaluate = evaluation.make_response_relevancy_evaluator(
-        model="m", api_key="k", embeddings=object(),
+        model="m",
+        api_key="k",
+        embeddings=object(),
     )
 
     assert evaluate("q", "") is None
@@ -328,8 +362,10 @@ def test_ragas_exposes_the_metric_classes_we_build():
 
 
 def test_title_and_gap_disclosures_are_not_scored_as_claims():
-    report = ("# Latest stable Python\n\n## Answer\n- The latest stable version is 3.14.7 [S1].\n"
-              "- Its release date could not be established from the collected sources [S1].\n")
+    report = (
+        "# Latest stable Python\n\n## Answer\n- The latest stable version is 3.14.7 [S1].\n"
+        "- Its release date could not be established from the collected sources [S1].\n"
+    )
 
     sections = evaluation.report_sections(report)
 
@@ -338,8 +374,11 @@ def test_title_and_gap_disclosures_are_not_scored_as_claims():
 
 
 def test_labeled_assessment_is_not_scored_but_the_cited_facts_are():
-    report = ("## Answer\nLangGraph has about 34.5 million monthly PyPI downloads [S2]. "
-              "Assessment: this is the closest public proxy, not a developer count.\n")
+    report = (
+        "## Answer\nLangGraph has about 34.5 million monthly PyPI downloads [S2]. "
+        "Assessment: this is the closest public proxy, not a developer count.\n"
+    )
 
     assert evaluation.report_sections(report) == [
-        "## Answer\nLangGraph has about 34.5 million monthly PyPI downloads [S2]."]
+        "## Answer\nLangGraph has about 34.5 million monthly PyPI downloads [S2]."
+    ]

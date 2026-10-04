@@ -16,9 +16,12 @@ def test_word_limit_is_measured_without_modifying_report():
 
 def test_latest_simple_word_constraint_supersedes_older_constraint():
     assert effective_requests(["100 words only", "write the report with 50 words only"]) == [
-        "write the report with 50 words only"]
+        "write the report with 50 words only"
+    ]
     assert effective_requests(["100 words and emphasize risks", "50 words only"]) == [
-        "100 words and emphasize risks", "50 words only"]
+        "100 words and emphasize risks",
+        "50 words only",
+    ]
 
 
 def test_old_checkpoint_defaults_do_not_create_research_or_approval():
@@ -42,8 +45,7 @@ def test_completed_synthesis_reused_after_lifecycle_failure(tmp_path):
             raise RuntimeError("simulated crash before checkpoint")
 
     state = {"run_id": "run", "thread_id": "thread"}
-    first = node_wrapper("synthesizing", synthesize, lifecycle=lifecycle,
-                         operation_journal=journal)
+    first = node_wrapper("synthesizing", synthesize, lifecycle=lifecycle, operation_journal=journal)
     with pytest.raises(RuntimeError):
         first(state)
     resumed = node_wrapper("synthesizing", synthesize, operation_journal=journal)
@@ -56,10 +58,15 @@ def test_research_restart_restores_references_without_research(tmp_path):
     from intelligence_collector.contracts import ResearchTodo
 
     vfs = VFS(tmp_path)
-    vfs.write_json("run", "research/task/evidence/result.json",
-                   {"task_id": "task", "sources": [], "indexed_chunks": []}, "evidence_bundle")
-    todo, refs, chunks = run_worker(vfs, None, "run",
-                                   ResearchTodo(todo_id="task", research_question="Question?"), None)
+    vfs.write_json(
+        "run",
+        "research/task/evidence/result.json",
+        {"task_id": "task", "sources": [], "indexed_chunks": []},
+        "evidence_bundle",
+    )
+    todo, refs, chunks = run_worker(
+        vfs, None, "run", ResearchTodo(todo_id="task", research_question="Question?"), None
+    )
     assert todo.status.value == "completed"
     assert refs[0].kind == "evidence_bundle" and refs[0].run_id == "run"
     assert not chunks
@@ -71,15 +78,23 @@ def test_report_judge_rejects_incomplete_or_duplicate_checklists():
 
     class Router:
         def invoke_messages(self, *args, **kwargs):
-            return ReportJudgeVerdict(results=[
-                {"criterion": "Only one", "met": True, "justification": "Okay"}])
+            return ReportJudgeVerdict(
+                results=[{"criterion": "Only one", "met": True, "justification": "Okay"}]
+            )
 
     from intelligence_collector.agents.report_judge import CoverageCriterion
 
-    criteria = [CoverageCriterion("C1", "Only one", "output"), CoverageCriterion("C2", "Omitted", "output")]
+    criteria = [
+        CoverageCriterion("C1", "Only one", "output"),
+        CoverageCriterion("C2", "Omitted", "output"),
+    ]
     with pytest.raises(ValueError, match="no verdict for C2"):
-        ReportJudge(Router()).assess(ResearchBrief(research_question="Research the local cache behavior"),
-                                     criteria, "Report", "Evidence")
+        ReportJudge(Router()).assess(
+            ResearchBrief(research_question="Research the local cache behavior"),
+            criteria,
+            "Report",
+            "Evidence",
+        )
 
 
 def test_recovery_ui_submits_explicit_action_and_retains_identity(tmp_path, monkeypatch):
@@ -103,6 +118,7 @@ def test_recovery_ui_submits_explicit_action_and_retains_identity(tmp_path, monk
 
         def expander(self, label, expanded=False):
             from contextlib import nullcontext
+
             return nullcontext()
 
         spinner = expander
@@ -130,14 +146,23 @@ def test_recovery_ui_submits_explicit_action_and_retains_identity(tmp_path, monk
             decisions.append((thread_id, decision))
             return {**snapshot, "stage": "Awaiting Approval"}
 
-    monkeypatch.setattr(app.Settings, "from_env", lambda: SimpleNamespace(
-        checkpoint_path=str(tmp_path / "absent.sqlite"),
-        run_registry_path=str(tmp_path / "absent-registry.sqlite")))
+    monkeypatch.setattr(
+        app.Settings,
+        "from_env",
+        lambda: SimpleNamespace(
+            checkpoint_path=str(tmp_path / "absent.sqlite"),
+            run_registry_path=str(tmp_path / "absent-registry.sqlite"),
+        ),
+    )
     monkeypatch.setattr(app, "_recovery_service", lambda st: Service())
     ui = UI()
     app._render_recovery_controls(ui, snapshot)
-    assert decisions == [("thread", {"action": "revise", "feedback": "Use a simple paragraph",
-                                      "additional_attempts": 0})]
+    assert decisions == [
+        (
+            "thread",
+            {"action": "revise", "feedback": "Use a simple paragraph", "additional_attempts": 0},
+        )
+    ]
     assert ui.session_state.scope_state["run_id"] == "run"
     assert ui.session_state.scope_thread_id == "thread"
     assert ui.reran

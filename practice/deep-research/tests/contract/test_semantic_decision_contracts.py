@@ -14,10 +14,12 @@ def test_semantic_decisions_reject_workflow_changing_malformed_output():
     with pytest.raises(ValidationError):
         TodoPlan(questions=[f"Question {n}?" for n in range(6)])
     with pytest.raises(ValidationError):
-        TodoPlan.model_validate({
-            "questions": ["Q?"],
-            "todos": [{"research_question": "Q?"}],
-        })
+        TodoPlan.model_validate(
+            {
+                "questions": ["Q?"],
+                "todos": [{"research_question": "Q?"}],
+            }
+        )
     with pytest.raises(ValidationError):
         TodoPlan(questions=["Valid question?"], acceptance_criteria=["Not planned any more."])
 

@@ -61,8 +61,13 @@ class FakeChatModel(BaseChatModel):
         with self._lock:
             self._calls.append(1)
         reply = self._answer(messages)
-        message = AIMessage(content=reply.content, tool_calls=reply.tool_calls,
-                            usage_metadata=USAGE,
-                            response_metadata={"model_name": self.model_name})
-        return ChatResult(generations=[ChatGeneration(message=message)],
-                          llm_output={"model_name": self.model_name})
+        message = AIMessage(
+            content=reply.content,
+            tool_calls=reply.tool_calls,
+            usage_metadata=USAGE,
+            response_metadata={"model_name": self.model_name},
+        )
+        return ChatResult(
+            generations=[ChatGeneration(message=message)],
+            llm_output={"model_name": self.model_name},
+        )

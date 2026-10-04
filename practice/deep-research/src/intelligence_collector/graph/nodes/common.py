@@ -49,6 +49,5 @@ class Node:
 def _activity(state, label: str, status: str = "success"):
     return [
         *state.get("activity", []),
-        {"id": f"{len(state.get('activity', [])) + 1}:{label}",
-         "label": label, "status": status},
+        {"id": f"{len(state.get('activity', [])) + 1}:{label}", "label": label, "status": status},
     ]

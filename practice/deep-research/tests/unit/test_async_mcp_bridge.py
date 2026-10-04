@@ -25,8 +25,12 @@ def test_fetch_operation_trace_contains_redacted_url(stores):
 
     capture = LangfuseCapture()
     with capture.tracer.execution(run_id="run", thread_id="thread", kind="start"):
-        DurableOperations(stores[0]).call("run", "tavily_fetch",
-            {"url": "https://source.test/page?tavilyApiKey=private-key"}, lambda: {"content": "original"})
+        DurableOperations(stores[0]).call(
+            "run",
+            "tavily_fetch",
+            {"url": "https://source.test/page?tavilyApiKey=private-key"},
+            lambda: {"content": "original"},
+        )
 
     span = capture.named("operation.tavily_fetch")[0]
     assert span.input["arguments"]["url"] == "https://source.test/page?tavilyApiKey=[REDACTED]"

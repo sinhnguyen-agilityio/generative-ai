@@ -10,25 +10,47 @@ def _nodes(tmp_path, *, usable: bool):
     nodes = object.__new__(ResearchNodes)
     nodes.vfs = VFS(tmp_path)
     nodes.research_assessor = None
-    failed = ResearchTodo(todo_id="broken", research_question="What changed in v2?",
-                          status=TodoStatus.FAILED)
-    nodes.vfs.write_json("r", "research/broken/outcome.json", {
-        "status": "failed", "question": failed.research_question,
-        "error": "Research sub-agent failed: 401 Unauthorized", "failure_kind": "technical",
-    }, "research_outcome", task_id="broken")
+    failed = ResearchTodo(
+        todo_id="broken", research_question="What changed in v2?", status=TodoStatus.FAILED
+    )
+    nodes.vfs.write_json(
+        "r",
+        "research/broken/outcome.json",
+        {
+            "status": "failed",
+            "question": failed.research_question,
+            "error": "Research sub-agent failed: 401 Unauthorized",
+            "failure_kind": "technical",
+        },
+        "research_outcome",
+        task_id="broken",
+    )
     todos, evidence = [failed], []
     if usable:
-        good = ResearchTodo(todo_id="good", research_question="What is the library?",
-                            status=TodoStatus.COMPLETED)
-        ref = nodes.vfs.write_json("r", "research/good/evidence/result.json", {
-            "task_id": "good", "question": good.research_question, "summary": "An overview.",
-            "sources": [{"url": "https://docs.test/a", "excerpt": "Overview"}],
-            "sufficient": True, "unresolved_gaps": [],
-        }, "evidence_bundle", task_id="good")
+        good = ResearchTodo(
+            todo_id="good", research_question="What is the library?", status=TodoStatus.COMPLETED
+        )
+        ref = nodes.vfs.write_json(
+            "r",
+            "research/good/evidence/result.json",
+            {
+                "task_id": "good",
+                "question": good.research_question,
+                "summary": "An overview.",
+                "sources": [{"url": "https://docs.test/a", "excerpt": "Overview"}],
+                "sufficient": True,
+                "unresolved_gaps": [],
+            },
+            "evidence_bundle",
+            task_id="good",
+        )
         todos.append(good)
         evidence.append(ref.model_dump(mode="json"))
-    return nodes, {"run_id": "r", "todos": [todo.model_dump(mode="json") for todo in todos],
-                   "evidence": evidence}
+    return nodes, {
+        "run_id": "r",
+        "todos": [todo.model_dump(mode="json") for todo in todos],
+        "evidence": evidence,
+    }
 
 
 def test_one_technical_failure_does_not_stop_a_run_with_usable_evidence(tmp_path):

@@ -51,8 +51,12 @@ class LangfuseCapture:
     def __init__(self):
         self.exporter = InMemorySpanExporter()
         # A unique public key gives this test its own Langfuse resource manager and exporter.
-        settings = LangfuseSettings(enabled=True, public_key=f"pk-test-{uuid4()}",
-                                    secret_key="sk-test", host="http://127.0.0.1:9")
+        settings = LangfuseSettings(
+            enabled=True,
+            public_key=f"pk-test-{uuid4()}",
+            secret_key="sk-test",
+            host="http://127.0.0.1:9",
+        )
         self.tracer = RunTracer.from_settings(settings, span_exporter=self.exporter)
         assert self.tracer.enabled, self.tracer.disabled_reason
         # Scores are sent through Langfuse's REST API, not as spans: record them here instead,
@@ -70,21 +74,26 @@ class LangfuseCapture:
         captured = []
         for span in self.exporter.get_finished_spans():
             attributes = dict(span.attributes or {})
-            captured.append(CapturedSpan(
-                name=span.name,
-                span_id=span.context.span_id,
-                parent_id=span.parent.span_id if span.parent else None,
-                trace_id=f"{span.context.trace_id:032x}",
-                type=str(attributes.get("langfuse.observation.type", "")),
-                level=str(attributes.get("langfuse.observation.level", "")),
-                status_message=str(attributes.get("langfuse.observation.status_message", "")),
-                session_id=str(attributes.get("session.id", "")),
-                metadata={key[len(_METADATA):]: _decode(value)
-                          for key, value in attributes.items() if key.startswith(_METADATA)},
-                input=_decode(attributes.get("langfuse.observation.input")),
-                output=_decode(attributes.get("langfuse.observation.output")),
-                start=span.start_time,
-            ))
+            captured.append(
+                CapturedSpan(
+                    name=span.name,
+                    span_id=span.context.span_id,
+                    parent_id=span.parent.span_id if span.parent else None,
+                    trace_id=f"{span.context.trace_id:032x}",
+                    type=str(attributes.get("langfuse.observation.type", "")),
+                    level=str(attributes.get("langfuse.observation.level", "")),
+                    status_message=str(attributes.get("langfuse.observation.status_message", "")),
+                    session_id=str(attributes.get("session.id", "")),
+                    metadata={
+                        key[len(_METADATA) :]: _decode(value)
+                        for key, value in attributes.items()
+                        if key.startswith(_METADATA)
+                    },
+                    input=_decode(attributes.get("langfuse.observation.input")),
+                    output=_decode(attributes.get("langfuse.observation.output")),
+                    start=span.start_time,
+                )
+            )
         return sorted(captured, key=lambda item: item.start)
 
     def named(self, name: str) -> list[CapturedSpan]:
@@ -112,11 +121,16 @@ class LangfuseCapture:
 
         def walk(parent, depth):
             for span in children.get(parent, []):
-                extra = {key: span.metadata[key] for key in ("todo_id", "execution_kind",
-                         "interrupt_kind", "node") if key in span.metadata}
+                extra = {
+                    key: span.metadata[key]
+                    for key in ("todo_id", "execution_kind", "interrupt_kind", "node")
+                    if key in span.metadata
+                }
                 level = f" level={span.level}" if span.level not in ("", "DEFAULT") else ""
-                lines.append(f"{'  ' * depth}{span.name} [{span.type}]{level}"
-                             + (f" {extra}" if extra else ""))
+                lines.append(
+                    f"{'  ' * depth}{span.name} [{span.type}]{level}"
+                    + (f" {extra}" if extra else "")
+                )
                 walk(span.span_id, depth + 1)
 
         walk(None, 0)

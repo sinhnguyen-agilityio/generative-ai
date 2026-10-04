@@ -25,6 +25,7 @@ def ensure_ragas_importable() -> None:
     """Call once, before the first ``import ragas``, to work around the missing module."""
     try:
         import langchain_community.chat_models.vertexai  # noqa: F401
+
         return
     except ImportError:
         pass

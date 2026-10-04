@@ -14,15 +14,24 @@ from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.tools.mcp import ControlledMCP
-from tests.fixtures.fake_models import FakeAcceptanceModel, FakeReportModel, FakeResearchModel, cited_report
+from tests.fixtures.fake_models import (
+    FakeAcceptanceModel,
+    FakeReportModel,
+    FakeResearchModel,
+    cited_report,
+)
 from tests.integration.test_approval_gate import GOOD, PASS, URL, _initial_state, _router
 
 URL2 = "https://controlled.test/eviction"
 REQUEST = "Add a section on eviction specifically."
 TOPIC = "How does a local cache evict entries?"
-EXTENDED = cited_report(["A cache stores reusable data for later access [S1].",
-                         "Old entries are evicted when the cache is full [S2]."],
-                        {"S1": URL, "S2": URL2})
+EXTENDED = cited_report(
+    [
+        "A cache stores reusable data for later access [S1].",
+        "Old entries are evicted when the cache is full [S2].",
+    ],
+    {"S1": URL, "S2": URL2},
+)
 
 
 class ScriptedModel:
@@ -42,33 +51,52 @@ def _graph(stores, tmp_path, judge_payload, report_model):
 
     def mcp():
         # First run finds the cache page; any later research finds the eviction page.
-        rows = ([{"url": URL, "content": "A cache stores reusable data for later access."}]
-                if not searches else
-                [{"url": URL2, "content": "Old entries are evicted when the cache is full."}])
+        rows = (
+            [{"url": URL, "content": "A cache stores reusable data for later access."}]
+            if not searches
+            else [{"url": URL2, "content": "Old entries are evicted when the cache is full."}]
+        )
         searches.append(1)
         return ControlledMCP(rows)
 
     nodes = ResearchNodes(
-        vfs, index, ResearchAgent(ModelRouter(FakeResearchModel()), mcp),
+        vfs,
+        index,
+        ResearchAgent(ModelRouter(FakeResearchModel()), mcp),
         report_writer=ReportWriter(ModelRouter(report_model)),
         report_judge=ReportJudge(ModelRouter(FakeAcceptanceModel([PASS]))),
         recovery_budget=3,
     )
     judge_model = ScriptedModel(judge_payload)
     _, router = _router({"route": "extend", "reason": "Adds a section.", "topic": TOPIC})
-    graph = build_graph(research_nodes=nodes, vfs=vfs, checkpointer=MemorySaver(),
-                        with_approval=True, output_dir=str(tmp_path / "exports"),
-                        feedback_router=router,
-                        extension_judge=ExtensionJudge(ModelRouter(judge_model)))
+    graph = build_graph(
+        research_nodes=nodes,
+        vfs=vfs,
+        checkpointer=MemorySaver(),
+        with_approval=True,
+        output_dir=str(tmp_path / "exports"),
+        feedback_router=router,
+        extension_judge=ExtensionJudge(ModelRouter(judge_model)),
+    )
     return graph, searches, judge_model
 
 
 def test_stored_evidence_is_enough_so_the_section_is_written_without_research(stores, tmp_path):
-    with_section = GOOD.replace("## Sources", "## Storage\nA cache keeps data for reuse [S1].\n\n## Sources")
+    with_section = GOOD.replace(
+        "## Sources", "## Storage\nA cache keeps data for reuse [S1].\n\n## Sources"
+    )
     report_model = FakeReportModel([GOOD, with_section])
-    graph, searches, judge_model = _graph(stores, tmp_path, {
-        "sufficient": True, "relevant_source_ids": ["S1"], "missing_points": [],
-        "summary": "A cache stores reusable data for later access."}, report_model)
+    graph, searches, judge_model = _graph(
+        stores,
+        tmp_path,
+        {
+            "sufficient": True,
+            "relevant_source_ids": ["S1"],
+            "missing_points": [],
+            "summary": "A cache stores reusable data for later access.",
+        },
+        report_model,
+    )
     config = {"configurable": {"thread_id": "approval-run"}}
 
     graph.invoke(_initial_state(), config)
@@ -86,9 +114,17 @@ def test_stored_evidence_is_enough_so_the_section_is_written_without_research(st
 
 def test_missing_evidence_researches_only_the_added_task(stores, tmp_path):
     report_model = FakeReportModel([GOOD, EXTENDED])
-    graph, searches, _ = _graph(stores, tmp_path, {
-        "sufficient": False, "relevant_source_ids": [],
-        "missing_points": ["eviction policy when the cache is full"], "summary": ""}, report_model)
+    graph, searches, _ = _graph(
+        stores,
+        tmp_path,
+        {
+            "sufficient": False,
+            "relevant_source_ids": [],
+            "missing_points": ["eviction policy when the cache is full"],
+            "summary": "",
+        },
+        report_model,
+    )
     config = {"configurable": {"thread_id": "approval-run"}}
 
     graph.invoke(_initial_state(), config)

@@ -40,8 +40,7 @@ def _bounded_int(name: str, default: int, maximum: int) -> int:
     try:
         value = int(raw)
     except ValueError as exc:
-        raise ValueError(
-            f"{name} must be an integer between 1 and {maximum}") from exc
+        raise ValueError(f"{name} must be an integer between 1 and {maximum}") from exc
     if not 1 <= value <= maximum:
         raise ValueError(f"{name} must be between 1 and {maximum}")
     return value
@@ -103,35 +102,25 @@ class Settings:
     faithfulness_provider: str = "openai"
     # RAGAS metrics scored on the final report (judge = the faithfulness model above).
     eval_metrics: tuple[str, ...] = EVAL_METRICS
-    report_guidelines: list[str] = field(
-        default_factory=lambda: list(DEFAULT_REPORT_GUIDELINES))
+    report_guidelines: list[str] = field(default_factory=lambda: list(DEFAULT_REPORT_GUIDELINES))
 
     @classmethod
     def from_env(cls):
         """Build the settings from the environment. Raises ``ValueError`` for an out-of-range limit
         or malformed JSON.
         """
-        checkpoint_path = os.getenv(
-            "INTELLIGENCE_CHECKPOINT_PATH", cls.checkpoint_path
-        )
-        registry_default = str(
-            Path(checkpoint_path).expanduser().with_name("run_registry.sqlite3")
-        )
+        checkpoint_path = os.getenv("INTELLIGENCE_CHECKPOINT_PATH", cls.checkpoint_path)
+        registry_default = str(Path(checkpoint_path).expanduser().with_name("run_registry.sqlite3"))
         return cls(
             vfs_root=os.getenv("INTELLIGENCE_VFS_ROOT", cls.vfs_root),
             checkpoint_path=checkpoint_path,
-            run_registry_path=os.getenv(
-                "INTELLIGENCE_RUN_REGISTRY_PATH", registry_default),
+            run_registry_path=os.getenv("INTELLIGENCE_RUN_REGISTRY_PATH", registry_default),
             chroma_path=os.getenv("INTELLIGENCE_CHROMA_PATH", cls.chroma_path),
-            embedding_model=os.getenv(
-                "INTELLIGENCE_EMBEDDING_MODEL", cls.embedding_model),
-            embedding_provider=os.getenv(
-                "INTELLIGENCE_EMBEDDING_PROVIDER", cls.embedding_provider
-            ),
+            embedding_model=os.getenv("INTELLIGENCE_EMBEDDING_MODEL", cls.embedding_model),
+            embedding_provider=os.getenv("INTELLIGENCE_EMBEDDING_PROVIDER", cls.embedding_provider),
             evidence_top_k=_bounded_int("INTELLIGENCE_EVIDENCE_TOP_K", 6, 20),
             output_dir=os.getenv("INTELLIGENCE_OUTPUT_DIR", cls.output_dir),
-            max_search_calls=_bounded_int(
-                "INTELLIGENCE_MAX_SEARCH_CALLS", 5, MAX_SEARCH_CALLS),
+            max_search_calls=_bounded_int("INTELLIGENCE_MAX_SEARCH_CALLS", 5, MAX_SEARCH_CALLS),
             max_sources_per_task=_bounded_int(
                 "INTELLIGENCE_MAX_SOURCES_PER_TASK", 5, MAX_SOURCES_PER_TASK
             ),
@@ -144,9 +133,7 @@ class Settings:
             report_guidelines=_json_string_list(
                 "INTELLIGENCE_REPORT_GUIDELINES", DEFAULT_REPORT_GUIDELINES
             ),
-            faithfulness_model=os.getenv(
-                "INTELLIGENCE_FAITHFULNESS_MODEL", cls.faithfulness_model
-            ),
+            faithfulness_model=os.getenv("INTELLIGENCE_FAITHFULNESS_MODEL", cls.faithfulness_model),
             faithfulness_provider=os.getenv(
                 "INTELLIGENCE_FAITHFULNESS_PROVIDER", cls.faithfulness_provider
             ),
@@ -183,8 +170,7 @@ class RoleModelSettings:
         try:
             value = float(raw)
         except ValueError as exc:
-            raise ValueError(
-                f"{name} must be a number of seconds between 5 and 600") from exc
+            raise ValueError(f"{name} must be a number of seconds between 5 and 600") from exc
         if not 5 <= value <= 600:
             raise ValueError(f"{name} must be between 5 and 600 seconds")
         return value
@@ -210,10 +196,8 @@ class RoleModelSettings:
         return cls(
             reasoning_model=reasoning_model,
             standard_model=standard_model,
-            reasoning_provider=os.getenv(
-                "INTELLIGENCE_REASONING_PROVIDER") or None,
-            standard_provider=os.getenv(
-                "INTELLIGENCE_STANDARD_PROVIDER") or None,
+            reasoning_provider=os.getenv("INTELLIGENCE_REASONING_PROVIDER") or None,
+            standard_provider=os.getenv("INTELLIGENCE_STANDARD_PROVIDER") or None,
             # max_tokens guards against reasoning_effort="high" silently exhausting its whole
             # budget on the hidden reasoning trace and emitting zero characters of the actual
             # JSON answer (surfaces as an empty failed_generation / json_validate_failed on Groq)
@@ -222,20 +206,18 @@ class RoleModelSettings:
             reasoning_kwargs=cls._json_object(
                 "INTELLIGENCE_REASONING_KWARGS", '{"reasoning_effort":"low","max_tokens":4096}'
             ),
-            standard_kwargs=cls._json_object(
-                "INTELLIGENCE_STANDARD_KWARGS", "{}"),
-            reasoning_fallback_model=os.getenv(
-                "INTELLIGENCE_REASONING_FALLBACK_MODEL") or None,
-            reasoning_fallback_provider=os.getenv(
-                "INTELLIGENCE_REASONING_FALLBACK_PROVIDER") or None,
-            standard_fallback_model=os.getenv(
-                "INTELLIGENCE_STANDARD_FALLBACK_MODEL") or None,
-            standard_fallback_provider=os.getenv(
-                "INTELLIGENCE_STANDARD_FALLBACK_PROVIDER") or None,
+            standard_kwargs=cls._json_object("INTELLIGENCE_STANDARD_KWARGS", "{}"),
+            reasoning_fallback_model=os.getenv("INTELLIGENCE_REASONING_FALLBACK_MODEL") or None,
+            reasoning_fallback_provider=os.getenv("INTELLIGENCE_REASONING_FALLBACK_PROVIDER")
+            or None,
+            standard_fallback_model=os.getenv("INTELLIGENCE_STANDARD_FALLBACK_MODEL") or None,
+            standard_fallback_provider=os.getenv("INTELLIGENCE_STANDARD_FALLBACK_PROVIDER") or None,
             reasoning_timeout=cls._bounded_seconds(
-                "INTELLIGENCE_REASONING_TIMEOUT", cls.reasoning_timeout),
+                "INTELLIGENCE_REASONING_TIMEOUT", cls.reasoning_timeout
+            ),
             standard_timeout=cls._bounded_seconds(
-                "INTELLIGENCE_STANDARD_TIMEOUT", cls.standard_timeout),
+                "INTELLIGENCE_STANDARD_TIMEOUT", cls.standard_timeout
+            ),
         )
 
 
@@ -258,7 +240,10 @@ class LangfuseSettings:
         or when `required` and tracing is disabled.
         """
         enabled = os.getenv("INTELLIGENCE_LANGFUSE_ENABLED", "false").lower() in {
-            "1", "true", "yes", "on",
+            "1",
+            "true",
+            "yes",
+            "on",
         }
         settings = cls(
             enabled=enabled,
@@ -268,15 +253,14 @@ class LangfuseSettings:
                 os.getenv("LANGFUSE_BASE_URL")
                 or os.getenv("LANGFUSE_HOST")
                 or "https://cloud.langfuse.com"
-            ).strip().rstrip("/"),
-            environment=os.getenv("LANGFUSE_ENVIRONMENT",
-                                  "development").strip(),
+            )
+            .strip()
+            .rstrip("/"),
+            environment=os.getenv("LANGFUSE_ENVIRONMENT", "development").strip(),
             release=os.getenv("LANGFUSE_RELEASE", "local").strip(),
         )
         if required and not settings.enabled:
-            raise RuntimeError(
-                "Langfuse tracing must be enabled for live execution")
+            raise RuntimeError("Langfuse tracing must be enabled for live execution")
         if settings.enabled and (not settings.public_key or not settings.secret_key):
-            raise RuntimeError(
-                "Langfuse tracing credentials are not configured")
+            raise RuntimeError("Langfuse tracing credentials are not configured")
         return settings

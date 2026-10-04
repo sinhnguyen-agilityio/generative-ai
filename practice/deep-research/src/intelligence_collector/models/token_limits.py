@@ -27,8 +27,7 @@ def output_limits_from_env() -> dict[str, int]:
         raise ValueError("INTELLIGENCE_NODE_OUTPUT_TOKENS must be a JSON object")
     if set(overrides) - DEFAULT_OUTPUT_LIMITS.keys():
         raise ValueError("INTELLIGENCE_NODE_OUTPUT_TOKENS contains unknown roles")
-    if any(type(value) is not int or not 64 <= value <= 32768
-           for value in overrides.values()):
+    if any(type(value) is not int or not 64 <= value <= 32768 for value in overrides.values()):
         raise ValueError("Output token limits must be integers between 64 and 32768")
     return {**DEFAULT_OUTPUT_LIMITS, **overrides}
 

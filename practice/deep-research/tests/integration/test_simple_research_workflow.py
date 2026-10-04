@@ -16,31 +16,63 @@ def test_exhausted_core_gap_presents_honest_report_for_approval(stores, tmp_path
 
     class Assessor:
         def assess(self, *args, **kwargs):
-            return ResearchEvidenceVerdict(status="INSUFFICIENT", limitations=["No official release evidence"],
-                                          questions=[{"todo_id": "t", "sufficient": False,
-                                                      "missing_evidence": "Find official release announcement"}])
+            return ResearchEvidenceVerdict(
+                status="INSUFFICIENT",
+                limitations=["No official release evidence"],
+                questions=[
+                    {
+                        "todo_id": "t",
+                        "sufficient": False,
+                        "missing_evidence": "Find official release announcement",
+                    }
+                ],
+            )
 
     class EmptyResearch:
         calls = 0
+
         def delegate(self, run_id, todos, **kwargs):
             self.calls += 1
             for todo in todos:
                 todo.status = TodoStatus.FAILED
             return [(todo, [], []) for todo in todos]
 
-    nodes = ResearchNodes(vfs, index, None, research_assessor=Assessor(),
-                          report_writer=ReportWriter(ModelRouter(writer)),
-                          report_judge=ReportJudge(ModelRouter(FakeAcceptanceModel([
-                              {"results": [{"criterion": "All", "met": True, "justification": "Honest"}]}]))))
+    nodes = ResearchNodes(
+        vfs,
+        index,
+        None,
+        research_assessor=Assessor(),
+        report_writer=ReportWriter(ModelRouter(writer)),
+        report_judge=ReportJudge(
+            ModelRouter(
+                FakeAcceptanceModel(
+                    [{"results": [{"criterion": "All", "met": True, "justification": "Honest"}]}]
+                )
+            )
+        ),
+    )
     empty = EmptyResearch()
     nodes.supervisor = empty
     config = {"configurable": {"thread_id": "r"}}
     saver = MemorySaver()
-    graph = build_graph(research_nodes=nodes, vfs=vfs, checkpointer=saver,
-                        with_approval=True, output_dir=str(tmp_path / "exports"))
-    result = graph.invoke({"run_id": "r", "thread_id": "r",
-                           "scoped_request": {"research_question": "What is the latest stable Python version?"},
-                           "todos": [ResearchTodo(todo_id="t", research_question="Official stable version?").model_dump()]}, config)
+    graph = build_graph(
+        research_nodes=nodes,
+        vfs=vfs,
+        checkpointer=saver,
+        with_approval=True,
+        output_dir=str(tmp_path / "exports"),
+    )
+    result = graph.invoke(
+        {
+            "run_id": "r",
+            "thread_id": "r",
+            "scoped_request": {"research_question": "What is the latest stable Python version?"},
+            "todos": [
+                ResearchTodo(todo_id="t", research_question="Official stable version?").model_dump()
+            ],
+        },
+        config,
+    )
     # One pre-draft gap retry, then an honest draft that still requires human report approval.
     assert result["stage"] == "Awaiting Approval"
     assert result.get("__interrupt__")

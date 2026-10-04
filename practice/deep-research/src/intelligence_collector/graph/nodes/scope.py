@@ -81,24 +81,36 @@ class PlannerNodes:
         brief = ResearchBrief.model_validate(state["scoped_request"])
         if hasattr(self.planner_agent, "plan"):
             todos, shape = self.planner_agent.plan(
-                brief, self.vfs, state["run_id"], thread_id=state.get("thread_id", ""))
+                brief, self.vfs, state["run_id"], thread_id=state.get("thread_id", "")
+            )
         else:
-            todos, shape = self.planner_agent.write_todos(
-                brief, self.vfs, state["run_id"], thread_id=state.get("thread_id", "")), ""
+            todos, shape = (
+                self.planner_agent.write_todos(
+                    brief, self.vfs, state["run_id"], thread_id=state.get("thread_id", "")
+                ),
+                "",
+            )
         plan = plan_record(brief, todos, shape)
         version = state.get("plan_version", 0) + 1
-        ref = self.vfs.write_json(state["run_id"], f"planning/plan.v{version}.json", plan,
-                                  "research_plan")
+        ref = self.vfs.write_json(
+            state["run_id"], f"planning/plan.v{version}.json", plan, "research_plan"
+        )
         return {
             **state,
             "stage": Stage.PLANNING.value,
             "current_action": f"Plan with {len(todos)} research task(s) ready for approval",
             "todos": [todo.model_dump(mode="json") for todo in todos],
-            "plan": plan, "plan_version": version, "plan_approval": None,
+            "plan": plan,
+            "plan_version": version,
+            "plan_approval": None,
             "draft": "",
             "verification": None,
-            "research_status": "UNKNOWN", "research_limitations": [], "result_incomplete": False,
-            "research_gap_attempt": 0, "research_gap_budget": 1,
-            "repair": None, "repair_researched": [],
+            "research_status": "UNKNOWN",
+            "research_limitations": [],
+            "result_incomplete": False,
+            "research_gap_attempt": 0,
+            "research_gap_budget": 1,
+            "repair": None,
+            "repair_researched": [],
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }

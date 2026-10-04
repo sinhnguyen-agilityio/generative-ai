@@ -32,7 +32,8 @@ class FeedbackRouter:
         """Return `route="approve"` (publish), `"revise"` (rewrite from the same evidence) or
         `"scope"` (re-scope)."""
         messages = FEEDBACK_ROUTER_TEMPLATE.format_messages(
-            feedback=feedback, report=report[:MAX_REPORT_EXCERPT_CHARS],
+            feedback=feedback,
+            report=report[:MAX_REPORT_EXCERPT_CHARS],
         )
         return self.router.invoke_messages(
             "feedback_router",

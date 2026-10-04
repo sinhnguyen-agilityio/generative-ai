@@ -28,14 +28,21 @@ def test_pipeline_rows_stay_hidden_until_their_agent_starts_processing():
 
 
 def test_scope_agent_row_appears_once_it_starts_processing():
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Scoping",
-        "activity": [
-            {"id": "clarify", "label": "Evaluating scope", "agent": "Scope Agent", "status": "running"},
-        ],
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Scoping",
+            "activity": [
+                {
+                    "id": "clarify",
+                    "label": "Evaluating scope",
+                    "agent": "Scope Agent",
+                    "status": "running",
+                },
+            ],
+        }
+    )
 
     text = _visible_text(app)
     assert "Scope Agent" in text
@@ -64,16 +71,28 @@ def test_new_thread_button_starts_a_fresh_run_and_thread():
 
 
 def test_scope_agent_brief_appears_only_once_a_research_brief_exists():
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Planning",
-        "scoped_request": {"research_question": "I want to compare X and Y."},
-        "activity": [
-            {"id": "clarify", "label": "Evaluating scope", "agent": "Scope Agent", "status": "success"},
-            {"id": "plan", "label": "Calling write_todos", "agent": "Planner", "status": "running"},
-        ],
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Planning",
+            "scoped_request": {"research_question": "I want to compare X and Y."},
+            "activity": [
+                {
+                    "id": "clarify",
+                    "label": "Evaluating scope",
+                    "agent": "Scope Agent",
+                    "status": "success",
+                },
+                {
+                    "id": "plan",
+                    "label": "Calling write_todos",
+                    "agent": "Planner",
+                    "status": "running",
+                },
+            ],
+        }
+    )
 
     text = _visible_text(app)
     # Same row, left-to-right: label, then content, then its own status badge — before the
@@ -89,15 +108,26 @@ def test_scope_agent_brief_appears_only_once_a_research_brief_exists():
 def test_scope_agent_is_still_running_while_only_a_clarifying_question_was_asked():
     """A successful clarify_with_user turn that only asked a question is not 'complete' —
     the Scope Agent hasn't produced a brief yet."""
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Scoping",
-        "scope_assessment": {"need_clarification": True, "question": "Which workload?", "verification": ""},
-        "activity": [
-            {"id": "clarify", "label": "Evaluating scope", "agent": "Scope Agent", "status": "success"},
-        ],
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Scoping",
+            "scope_assessment": {
+                "need_clarification": True,
+                "question": "Which workload?",
+                "verification": "",
+            },
+            "activity": [
+                {
+                    "id": "clarify",
+                    "label": "Evaluating scope",
+                    "agent": "Scope Agent",
+                    "status": "success",
+                },
+            ],
+        }
+    )
 
     text = _visible_text(app)
     assert "I want to" not in text  # no brief text was ever produced
@@ -107,19 +137,35 @@ def test_scope_agent_is_still_running_while_only_a_clarifying_question_was_asked
 
 
 def test_planner_section_lists_todo_questions_as_bullets_once_complete():
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Researching",
-        "todos": [
-            {"todo_id": "todo-1", "research_question": "Find primary sources", "status": "planned"},
-            {"todo_id": "todo-2", "research_question": "Compare findings", "status": "planned"},
-        ],
-        "activity": [
-            {"id": "plan", "label": "Calling write_todos", "agent": "Planner", "status": "success"},
-            {"id": "research", "label": "Delegating research", "agent": "Research Supervisor", "status": "running"},
-        ],
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Researching",
+            "todos": [
+                {
+                    "todo_id": "todo-1",
+                    "research_question": "Find primary sources",
+                    "status": "planned",
+                },
+                {"todo_id": "todo-2", "research_question": "Compare findings", "status": "planned"},
+            ],
+            "activity": [
+                {
+                    "id": "plan",
+                    "label": "Calling write_todos",
+                    "agent": "Planner",
+                    "status": "success",
+                },
+                {
+                    "id": "research",
+                    "label": "Delegating research",
+                    "agent": "Research Supervisor",
+                    "status": "running",
+                },
+            ],
+        }
+    )
 
     text = _visible_text(app)
     assert (
@@ -137,26 +183,44 @@ def test_researcher_section_lists_tavily_sources_for_each_completed_todo(tmp_pat
     vfs.write_json(
         "run-ui",
         "research/todo-1/evidence/result.json",
-        {"sources": [
-            {"locator": "https://example.com/a", "provenance": {"title": "Source A"}},
-            {"locator": "https://example.com/b", "provenance": {"title": "Source B"}},
-        ]},
+        {
+            "sources": [
+                {"locator": "https://example.com/a", "provenance": {"title": "Source A"}},
+                {"locator": "https://example.com/b", "provenance": {"title": "Source B"}},
+            ]
+        },
         "evidence_bundle",
         task_id="todo-1",
     )
 
-    app = _app_with_snapshot({
-        "run_id": "run-ui",
-        "thread_id": "thread-ui",
-        "stage": "Researching",
-        "todos": [
-            {"todo_id": "todo-1", "research_question": "Find primary sources", "status": "completed"},
-        ],
-        "activity": [
-            {"id": "research", "label": "Delegating research", "agent": "Research Supervisor", "status": "success"},
-            {"id": "draft", "label": "Drafting report", "agent": "Report Writer", "status": "running"},
-        ],
-    })
+    app = _app_with_snapshot(
+        {
+            "run_id": "run-ui",
+            "thread_id": "thread-ui",
+            "stage": "Researching",
+            "todos": [
+                {
+                    "todo_id": "todo-1",
+                    "research_question": "Find primary sources",
+                    "status": "completed",
+                },
+            ],
+            "activity": [
+                {
+                    "id": "research",
+                    "label": "Delegating research",
+                    "agent": "Research Supervisor",
+                    "status": "success",
+                },
+                {
+                    "id": "draft",
+                    "label": "Drafting report",
+                    "agent": "Report Writer",
+                    "status": "running",
+                },
+            ],
+        }
+    )
 
     assert not app.exception
     text = _visible_text(app)

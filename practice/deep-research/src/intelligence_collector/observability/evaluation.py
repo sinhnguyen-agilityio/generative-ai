@@ -19,9 +19,11 @@ ensure_ragas_importable()
 
 # Output cap per judge call. RAGAS defaults to 1024, which a whole report's statement list or
 # verdicts overflow ("The output is incomplete due to a max_tokens length limit").
-JUDGE_MAX_TOKENS = (None if os.getenv("INTELLIGENCE_DISABLE_OUTPUT_CAPS", "").lower()
-                    in {"1", "true"} else
-                    _bounded_int("INTELLIGENCE_QUALITY_OUTPUT_TOKENS", 2048, 32768))
+JUDGE_MAX_TOKENS = (
+    None
+    if os.getenv("INTELLIGENCE_DISABLE_OUTPUT_CAPS", "").lower() in {"1", "true"}
+    else _bounded_int("INTELLIGENCE_QUALITY_OUTPUT_TOKENS", 2048, 32768)
+)
 # Statements judged per NLI call; each verdict carries a reason, so this bounds the output size.
 NLI_BATCH_SIZE = 12
 # Judge calls in flight at once (statement extraction and NLI batches share the limit).
@@ -39,7 +41,8 @@ GAP_MARKER = "could not be established from the collected sources"
 ANALYSIS_PREFIX = "Assessment:"
 _ANALYSIS_SENTENCE = re.compile(re.escape(ANALYSIS_PREFIX) + r"[^\n]*")
 _GAP_SENTENCE = re.compile(
-    r"[^.\n]*" + re.escape(GAP_MARKER) + r"[^.\n]*\.?(?:\s*\[S\d+\])*", re.IGNORECASE)
+    r"[^.\n]*" + re.escape(GAP_MARKER) + r"[^.\n]*\.?(?:\s*\[S\d+\])*", re.IGNORECASE
+)
 
 
 def report_sections(report: str) -> list[str]:
@@ -56,7 +59,7 @@ def report_sections(report: str) -> list[str]:
         if heading and heading.group(1).strip().lower() in UNSCORED_SECTIONS:
             continue
         chunk = _ANALYSIS_SENTENCE.sub("", _GAP_SENTENCE.sub("", _TITLE.sub("", chunk)))
-        body = chunk[heading.end():] if heading else chunk
+        body = chunk[heading.end() :] if heading else chunk
         if re.sub(r"[\s\-*]", "", body):
             sections.append(chunk.strip())
     return sections
@@ -85,7 +88,9 @@ def _google_judge_llm(model: str, api_key: str):
 
     client = genai.Client(api_key=api_key)
     patched = instructor.from_genai(client, use_async=True)
-    return InstructorLLM(client=patched, model=model, provider="google", max_tokens=JUDGE_MAX_TOKENS)
+    return InstructorLLM(
+        client=patched, model=model, provider="google", max_tokens=JUDGE_MAX_TOKENS
+    )
 
 
 def _openai_judge_llm(model: str, api_key: str):
@@ -105,7 +110,10 @@ def _openai_judge_llm(model: str, api_key: str):
         from openai import AsyncOpenAI
 
     return llm_factory(
-        model, provider="openai", client=AsyncOpenAI(api_key=api_key), max_tokens=JUDGE_MAX_TOKENS,
+        model,
+        provider="openai",
+        client=AsyncOpenAI(api_key=api_key),
+        max_tokens=JUDGE_MAX_TOKENS,
     )
 
 
@@ -113,7 +121,12 @@ _JUDGE_LLMS = {"openai": _openai_judge_llm, "google_genai": _google_judge_llm}
 
 
 async def _score_report_faithfulness_async(
-    question: str, report: str, contexts: list[str], *, model: str, api_key: str,
+    question: str,
+    report: str,
+    contexts: list[str],
+    *,
+    model: str,
+    api_key: str,
     provider: str = "openai",
 ) -> dict | None:
     """RAGAS Faithfulness over the report's scored sections: supported statements / all
@@ -142,16 +155,25 @@ async def _score_report_faithfulness_async(
     statements = [statement for found in per_section for statement in found]
     if not statements:
         return None
-    batches = [statements[i:i + NLI_BATCH_SIZE] for i in range(0, len(statements), NLI_BATCH_SIZE)]
-    verdicts = [v for batch in await asyncio.gather(*(verdicts_of(b) for b in batches)) for v in batch]
+    batches = [
+        statements[i : i + NLI_BATCH_SIZE] for i in range(0, len(statements), NLI_BATCH_SIZE)
+    ]
+    verdicts = [
+        v for batch in await asyncio.gather(*(verdicts_of(b) for b in batches)) for v in batch
+    ]
     if not verdicts or len(verdicts) != len(statements):
         return None
-    return {"score": sum(verdicts) / len(verdicts),
-            "unsupported": [s for s, v in zip(statements, verdicts) if not v]}
+    return {
+        "score": sum(verdicts) / len(verdicts),
+        "unsupported": [s for s, v in zip(statements, verdicts) if not v],
+    }
 
 
 def make_faithfulness_evaluator(
-    *, model: str, api_key: str, provider: str = "openai",
+    *,
+    model: str,
+    api_key: str,
+    provider: str = "openai",
 ) -> FaithfulnessEvaluator:
     """Return a ``(question, report, contexts) -> {"score", "unsupported"}`` callable that scores
     a report's RAGAS Faithfulness (its body sections; see ``report_sections``) with the given
@@ -165,7 +187,9 @@ def make_faithfulness_evaluator(
     """
 
     if provider not in _JUDGE_LLMS:
-        raise ValueError(f"Unsupported faithfulness provider {provider!r}; use one of {sorted(_JUDGE_LLMS)}")
+        raise ValueError(
+            f"Unsupported faithfulness provider {provider!r}; use one of {sorted(_JUDGE_LLMS)}"
+        )
 
     def evaluate(question: str, report: str, contexts: list[str]) -> float | None:
         """Score one report; ``None`` when there is nothing to score."""
@@ -173,7 +197,12 @@ def make_faithfulness_evaluator(
             return None
         return asyncio.run(
             _score_report_faithfulness_async(
-                question, report, contexts, model=model, api_key=api_key, provider=provider,
+                question,
+                report,
+                contexts,
+                model=model,
+                api_key=api_key,
+                provider=provider,
             )
         )
 
@@ -188,7 +217,12 @@ ContextPrecisionEvaluator = Callable[[list[dict], str], "dict | None"]
 
 
 async def _score_context_precision_async(
-    questions: list[dict], report: str, *, model: str, api_key: str, provider: str = "openai",
+    questions: list[dict],
+    report: str,
+    *,
+    model: str,
+    api_key: str,
+    provider: str = "openai",
 ) -> dict:
     """RAGAS Context Precision (without reference) per research question: one judge verdict per
     retrieved context ("was it useful for this report?"), then rank-weighted average precision.
@@ -201,7 +235,9 @@ async def _score_context_precision_async(
     async def score(item: dict) -> float:
         async with limit:
             result = await scorer.ascore(
-                user_input=item["question"], response=report, retrieved_contexts=item["contexts"],
+                user_input=item["question"],
+                response=report,
+                retrieved_contexts=item["contexts"],
             )
         return float(result.value)
 
@@ -216,14 +252,19 @@ async def _score_context_precision_async(
 
 
 def make_context_precision_evaluator(
-    *, model: str, api_key: str, provider: str = "openai",
+    *,
+    model: str,
+    api_key: str,
+    provider: str = "openai",
 ) -> ContextPrecisionEvaluator:
     """Return a ``(questions, report) -> {"score", "per_question"}`` callable scoring whether the
     retrieval ranked the sources that the report needed at the top. ``questions`` is the writer's
     per-question ranked evidence (see ``BVFNodes.synthesizing``). Returns ``None`` when there is
     nothing to score; raises on a judge-LLM failure. Informational only."""
     if provider not in _JUDGE_LLMS:
-        raise ValueError(f"Unsupported judge provider {provider!r}; use one of {sorted(_JUDGE_LLMS)}")
+        raise ValueError(
+            f"Unsupported judge provider {provider!r}; use one of {sorted(_JUDGE_LLMS)}"
+        )
 
     def evaluate(questions: list[dict], report: str) -> dict | None:
         """Score one report's retrieval; ``None`` when there is nothing to score."""
@@ -231,9 +272,15 @@ def make_context_precision_evaluator(
         scored = [item for item in questions if item.get("question") and item.get("contexts")]
         if not body or not scored:
             return None
-        return asyncio.run(_score_context_precision_async(
-            scored, body, model=model, api_key=api_key, provider=provider,
-        ))
+        return asyncio.run(
+            _score_context_precision_async(
+                scored,
+                body,
+                model=model,
+                api_key=api_key,
+                provider=provider,
+            )
+        )
 
     return evaluate
 
@@ -265,21 +312,32 @@ def _ragas_embeddings(embeddings):
 
 
 async def _score_response_relevancy_async(
-    question: str, report: str, *, model: str, api_key: str, provider: str, embeddings,
+    question: str,
+    report: str,
+    *,
+    model: str,
+    api_key: str,
+    provider: str,
+    embeddings,
 ) -> float:
     """RAGAS Response Relevancy: the judge writes questions the report answers; the score is
     their mean cosine similarity to the research question (0 if the report is noncommittal)."""
     from ragas.metrics.collections import AnswerRelevancy
 
     scorer = AnswerRelevancy(
-        llm=_JUDGE_LLMS[provider](model, api_key), embeddings=_ragas_embeddings(embeddings),
+        llm=_JUDGE_LLMS[provider](model, api_key),
+        embeddings=_ragas_embeddings(embeddings),
     )
     result = await scorer.ascore(user_input=question, response=report)
     return float(result.value)
 
 
 def make_response_relevancy_evaluator(
-    *, model: str, api_key: str, embeddings, provider: str = "openai",
+    *,
+    model: str,
+    api_key: str,
+    embeddings,
+    provider: str = "openai",
 ) -> ResponseRelevancyEvaluator:
     """Return a ``(question, report) -> score`` callable scoring how directly the report body
     addresses the research question. ``embeddings`` is a LangChain ``Embeddings``. Scoring the
@@ -287,15 +345,24 @@ def make_response_relevancy_evaluator(
     whole report judged noncommittal (score 0). Returns ``None`` when there is nothing to score;
     raises on a judge or embedding failure. Informational only."""
     if provider not in _JUDGE_LLMS:
-        raise ValueError(f"Unsupported judge provider {provider!r}; use one of {sorted(_JUDGE_LLMS)}")
+        raise ValueError(
+            f"Unsupported judge provider {provider!r}; use one of {sorted(_JUDGE_LLMS)}"
+        )
 
     def evaluate(question: str, report: str) -> float | None:
         """Score one report; ``None`` when there is nothing to score."""
         body = report_body(report)
         if not body or not question.strip():
             return None
-        return asyncio.run(_score_response_relevancy_async(
-            question, body, model=model, api_key=api_key, provider=provider, embeddings=embeddings,
-        ))
+        return asyncio.run(
+            _score_response_relevancy_async(
+                question,
+                body,
+                model=model,
+                api_key=api_key,
+                provider=provider,
+                embeddings=embeddings,
+            )
+        )
 
     return evaluate

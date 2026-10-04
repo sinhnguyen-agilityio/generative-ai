@@ -1,4 +1,5 @@
 """Run async MCP clients from synchronous callers while preserving trace context."""
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context

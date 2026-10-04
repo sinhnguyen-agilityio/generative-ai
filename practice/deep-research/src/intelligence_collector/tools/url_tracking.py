@@ -36,11 +36,13 @@ def normalize_url(url: str) -> str:
     netloc = parts.hostname.lower()
     if port and port != _DEFAULT_PORTS.get(scheme):
         netloc += f":{port}"
-    query = urlencode(sorted(
-        (name, value)
-        for name, value in parse_qsl(parts.query, keep_blank_values=True)
-        if not _is_tracking(name)
-    ))
+    query = urlencode(
+        sorted(
+            (name, value)
+            for name, value in parse_qsl(parts.query, keep_blank_values=True)
+            if not _is_tracking(name)
+        )
+    )
     return urlunsplit((scheme, netloc, parts.path.rstrip("/"), query, ""))
 
 

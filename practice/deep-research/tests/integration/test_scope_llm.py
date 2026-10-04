@@ -10,15 +10,22 @@ from tests.integration.test_langchain_scope import (
     _guardrail_payload,
 )
 
+
 def test_scope_llm_asks_one_focused_question_for_ambiguous_request():
-    fake = RecordingChatModel([_guardrail_payload(), {
-        "need_clarification": True,
-        "question": "Which databases and workload? Choose two named databases for one workload.",
-        "verification": "",
-    }])
+    fake = RecordingChatModel(
+        [
+            _guardrail_payload(),
+            {
+                "need_clarification": True,
+                "question": "Which databases and workload? Choose two named databases for one workload.",
+                "verification": "",
+            },
+        ]
+    )
     result = ScopeAgent(ModelRouter(fake, fake)).assess("Compare databases")
     assert result.need_clarification is True
     assert result.question
+
 
 def test_scope_llm_returns_clear_brief():
     fake = RecordingChatModel([_guardrail_payload(), _clear_payload(), _brief_payload()])

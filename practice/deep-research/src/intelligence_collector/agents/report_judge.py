@@ -44,16 +44,19 @@ class CoverageCriterion:
         return f"[{self.criterion_id}] {self.text}"
 
 
-def build_coverage_criteria(brief: ResearchBrief, guidelines: list[str] = (),
-                            reviewer_requests: list[str] = ()) -> list[CoverageCriterion]:
+def build_coverage_criteria(
+    brief: ResearchBrief, guidelines: list[str] = (), reviewer_requests: list[str] = ()
+) -> list[CoverageCriterion]:
     """Required answers first, then explicit output requirements, operator guidelines and
     reviewer requests."""
     texts = [("answer", f"Answers: {item}") for item in brief.checklist]
     texts += [("output", f"Output requirement: {item}") for item in brief.output_requirements]
     texts += [("output", item) for item in guidelines]
     texts += [("output", f"Satisfies this reviewer request: {item}") for item in reviewer_requests]
-    return [CoverageCriterion(f"C{index}", text, kind)
-            for index, (kind, text) in enumerate(texts, start=1)]
+    return [
+        CoverageCriterion(f"C{index}", text, kind)
+        for index, (kind, text) in enumerate(texts, start=1)
+    ]
 
 
 class ReportJudge:
@@ -69,24 +72,33 @@ class ReportJudge:
             criteria=_bullets([c.label for c in criteria]),
             reviewer_note=(
                 f"Reviewer requests (applied to the report):\n{_bullets(list(reviewer_requests))}\n\n"
-                if reviewer_requests else ""
+                if reviewer_requests
+                else ""
             ),
             evidence=evidence,
             report=report,
         )
         return self.router.invoke_messages(
-            "verify", messages, ReportJudgeVerdict, run_id=run_id, thread_id=thread_id,
+            "verify",
+            messages,
+            ReportJudgeVerdict,
+            run_id=run_id,
+            thread_id=thread_id,
         )
 
     @staticmethod
-    def _match(verdict: ReportJudgeVerdict, criteria: list[CoverageCriterion],
-               found: dict[str, ReportJudgeCriterion]) -> None:
+    def _match(
+        verdict: ReportJudgeVerdict,
+        criteria: list[CoverageCriterion],
+        found: dict[str, ReportJudgeCriterion],
+    ) -> None:
         by_text = {c.text.strip().casefold(): c.criterion_id for c in criteria}
         wanted = {c.criterion_id for c in criteria}
         for item in verdict.results:
             match = _ID.match(item.criterion)
-            criterion_id = match.group(1).upper() if match else by_text.get(
-                item.criterion.strip().casefold())
+            criterion_id = (
+                match.group(1).upper() if match else by_text.get(item.criterion.strip().casefold())
+            )
             if criterion_id in wanted and criterion_id not in found:
                 found[criterion_id] = item
 
@@ -104,12 +116,18 @@ class ReportJudge:
         """Judge every criterion; raises ``ValueError`` (a technical ERROR) when the model cannot
         produce a verdict for each criterion after one supplemental call."""
         found: dict[str, ReportJudgeCriterion] = {}
-        self._match(self._ask(brief, criteria, report, evidence, reviewer_requests,
-                              run_id, thread_id), criteria, found)
+        self._match(
+            self._ask(brief, criteria, report, evidence, reviewer_requests, run_id, thread_id),
+            criteria,
+            found,
+        )
         missing = [c for c in criteria if c.criterion_id not in found]
         if missing:
-            self._match(self._ask(brief, missing, report, evidence, reviewer_requests,
-                                  run_id, thread_id), missing, found)
+            self._match(
+                self._ask(brief, missing, report, evidence, reviewer_requests, run_id, thread_id),
+                missing,
+                found,
+            )
         missing = [c.criterion_id for c in criteria if c.criterion_id not in found]
         if missing:
             raise ValueError("Coverage judge returned no verdict for " + ", ".join(missing))
@@ -129,17 +147,27 @@ def coverage_checks(pairs) -> list[VerificationCheck]:
         if criterion.kind == "answer" and issue == "presentation":
             issue = "draft_defect"
         item = criterion.text.removeprefix("Answers: ")
-        checks.append(VerificationCheck(
-            name=f"coverage_{criterion.criterion_id}",
-            passed=verdict.met,
-            gate="coverage",
-            issue_type=issue if not verdict.met else "draft_defect",
-            item=item,
-            missing_points=[] if verdict.met else list(verdict.missing_points),
-            details=[] if verdict.met else [f"{criterion.text} — {verdict.justification}" + (
-                " Missing: " + "; ".join(verdict.missing_points) if verdict.missing_points else "")],
-            affected_ids=[] if verdict.met else [_affected_id(criterion.text)],
-        ))
+        checks.append(
+            VerificationCheck(
+                name=f"coverage_{criterion.criterion_id}",
+                passed=verdict.met,
+                gate="coverage",
+                issue_type=issue if not verdict.met else "draft_defect",
+                item=item,
+                missing_points=[] if verdict.met else list(verdict.missing_points),
+                details=[]
+                if verdict.met
+                else [
+                    f"{criterion.text} — {verdict.justification}"
+                    + (
+                        " Missing: " + "; ".join(verdict.missing_points)
+                        if verdict.missing_points
+                        else ""
+                    )
+                ],
+                affected_ids=[] if verdict.met else [_affected_id(criterion.text)],
+            )
+        )
     return checks
 
 

@@ -12,4 +12,6 @@ def write_todos(vfs: VFS, run_id: str, todos: list[ResearchTodo]):
         raise ValueError("todo list must not be empty")
     if any(not t.research_question.strip() or t.status != TodoStatus.PLANNED for t in todos):
         raise ValueError("invalid todo")
-    return vfs.write_json(run_id, "planning/todos.v1.json", [t.model_dump(mode="json") for t in todos], "todo_list")
+    return vfs.write_json(
+        run_id, "planning/todos.v1.json", [t.model_dump(mode="json") for t in todos], "todo_list"
+    )

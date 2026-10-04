@@ -26,7 +26,8 @@ def test_write_applies_reviewer_requests_to_the_reviewed_report():
     brief = ResearchBrief(research_question="A sufficiently long research question here.")
 
     result = writer.write(
-        brief, SourceCatalog(bundles=[]),
+        brief,
+        SourceCatalog(bundles=[]),
         reviewer_requests=["Format the report in 1 line"],
         reviewed_report="# Title\n\n## Body\nA fact [S1].",
     )
@@ -54,6 +55,8 @@ def test_write_shows_the_operator_guidelines_to_the_writer():
     writer = ReportWriter(ModelRouter(model))
     brief = ResearchBrief(research_question="A sufficiently long research question here.")
 
-    writer.write(brief, SourceCatalog(bundles=[]), guidelines=["The report MUST be written in English."])
+    writer.write(
+        brief, SourceCatalog(bundles=[]), guidelines=["The report MUST be written in English."]
+    )
 
     assert "The report MUST be written in English." in model.prompts[0]

@@ -33,16 +33,24 @@ from tests.fixtures.langfuse_capture import LangfuseCapture
 from tests.integration.test_approval_gate import BRIEF, GOOD, PASS, URL
 
 RUN, THREAD = "run-topology", "thread-topology"
-QUESTIONS = ["How do caches store data?", "How do caches evict entries?",
-             "How do caches stay consistent?"]
+QUESTIONS = [
+    "How do caches store data?",
+    "How do caches evict entries?",
+    "How do caches stay consistent?",
+]
 BULLETED = GOOD.replace("A cache stores", "- A cache stores")
 
 
 class Stack:
     """The fake models and MCP clients of one graph, with call counters."""
 
-    def __init__(self, *, drafts=(GOOD,), feedback=({"route": "approve", "reason": "ok"},),
-                 failing_query: str = ""):
+    def __init__(
+        self,
+        *,
+        drafts=(GOOD,),
+        feedback=({"route": "approve", "reason": "ok"},),
+        failing_query: str = "",
+    ):
         self.researcher = FakeChatModel(model_name="fake-researcher", delegate=FakeResearchModel())
         self.writer_fake = FakeReportModel(list(drafts))
         self.writer = FakeChatModel(model_name="fake-writer", delegate=self.writer_fake)
@@ -78,29 +86,41 @@ class Stack:
 
         vfs = VFS(tmp_path / "vfs")
         nodes = ResearchNodes(
-            vfs, LocalVectorIndex(tmp_path / "index.json"),
+            vfs,
+            LocalVectorIndex(tmp_path / "index.json"),
             ResearchAgent(ModelRouter(self.researcher), self.mcp),
             report_writer=ReportWriter(ModelRouter(self.writer)),
             report_judge=ReportJudge(ModelRouter(self.judge)),
-            recovery_budget=3, max_concurrent_researchers=3,
+            recovery_budget=3,
+            max_concurrent_researchers=3,
         )
-        return build_graph(research_nodes=nodes, vfs=vfs, checkpointer=MemorySaver(),
-                           with_approval=True, output_dir=str(tmp_path / "exports"),
-                           feedback_router=FeedbackRouter(ModelRouter(self.router)),
-                           tracer=tracer, run_registry=run_registry)
+        return build_graph(
+            research_nodes=nodes,
+            vfs=vfs,
+            checkpointer=MemorySaver(),
+            with_approval=True,
+            output_dir=str(tmp_path / "exports"),
+            feedback_router=FeedbackRouter(ModelRouter(self.router)),
+            tracer=tracer,
+            run_registry=run_registry,
+        )
 
 
 def _state():
-    todos = [ResearchTodo(todo_id=f"todo-{n}", research_question=question).model_dump(mode="json")
-             for n, question in enumerate(QUESTIONS)]
+    todos = [
+        ResearchTodo(todo_id=f"todo-{n}", research_question=question).model_dump(mode="json")
+        for n, question in enumerate(QUESTIONS)
+    ]
     return {"run_id": RUN, "thread_id": THREAD, "scoped_request": BRIEF, "todos": todos}
 
 
 def _start(graph, tracer):
-    with tracer.execution(run_id=RUN, thread_id=THREAD, kind="start",
-                          input={"request": "cache behaviour"}) as execution:
-        result = graph.invoke(_state(), execution.graph_config(
-            {"configurable": {"thread_id": THREAD}}))
+    with tracer.execution(
+        run_id=RUN, thread_id=THREAD, kind="start", input={"request": "cache behaviour"}
+    ) as execution:
+        result = graph.invoke(
+            _state(), execution.graph_config({"configurable": {"thread_id": THREAD}})
+        )
         execution.finish(result)
     return result
 
@@ -121,9 +141,12 @@ def test_one_invocation_is_one_trace_with_nodes_workers_tools_and_generations(tm
     assert {span.session_id for span in spans} == {THREAD}
     execution = roots[0]
     assert execution.metadata["execution_kind"] == "start"
-    assert execution.output == {"stage": "Awaiting Approval",
-                                "draft_version": 1, "verification_outcome": "PASS",
-                                "paused_at": "publication_approval"}
+    assert execution.output == {
+        "stage": "Awaiting Approval",
+        "draft_version": 1,
+        "verification_outcome": "PASS",
+        "paused_at": "publication_approval",
+    }
     # research.execution -> research_graph -> node
     graph_run = capture.named("research_graph")[0]
     assert graph_run.parent_id == execution.span_id
@@ -138,8 +161,11 @@ def test_one_invocation_is_one_trace_with_nodes_workers_tools_and_generations(tm
     worker_of = {w.span_id: w.metadata["todo_id"] for w in workers}
     for search in capture.named("mcp.search"):
         assert search.type == "tool"
-        owner = next(s for s in spans if s.name == "research_agent"
-                     and s.span_id in _ancestor_ids(capture, search))
+        owner = next(
+            s
+            for s in spans
+            if s.name == "research_agent" and s.span_id in _ancestor_ids(capture, search)
+        )
         assert worker_of[owner.span_id] == search.metadata["todo_id"]
         assert search.output == {"results": 1, "urls": [URL]}
     persists = capture.named("research.persist")
@@ -149,8 +175,11 @@ def test_one_invocation_is_one_trace_with_nodes_workers_tools_and_generations(tm
     assert len(generations) == stack.model_calls
     synthesis = next(g for g in generations if "synthesizing" in capture.ancestors(g))
     assert capture.ancestors(synthesis)[:2] == ["model.synthesizer", "synthesizing"]
-    assert all("research_agent" in capture.ancestors(g)
-               for g in generations if "model.researcher" in capture.ancestors(g))
+    assert all(
+        "research_agent" in capture.ancestors(g)
+        for g in generations
+        if "model.researcher" in capture.ancestors(g)
+    )
 
 
 def _ancestor_ids(capture, span):
@@ -171,7 +200,9 @@ def test_tool_error_is_recorded_on_its_own_observation_and_siblings_survive(tmp_
     assert [s.metadata["todo_id"] for s in failed] == ["todo-1"]
     assert "ConnectionError" in failed[0].status_message
     assert sorted(s.metadata["todo_id"] for s in searches if s.level != "ERROR") == [
-        "todo-0", "todo-2"]
+        "todo-0",
+        "todo-2",
+    ]
     # The failed tool call is a task outcome: the workers, persistence and graph completed.
     assert len(capture.named("research.persist")) == 3
     assert capture.named("research.execution")[0].level != "ERROR"
@@ -202,9 +233,10 @@ def test_node_failure_marks_the_node_and_execution_and_keeps_completed_nodes(tmp
 
 def test_resumes_after_pauses_join_the_run_trace_even_in_a_new_process(tmp_path):
     first = LangfuseCapture()
-    stack = Stack(drafts=(GOOD, BULLETED),
-                  feedback=({"route": "revise", "reason": "layout"},
-                            {"route": "approve", "reason": "ok"}))
+    stack = Stack(
+        drafts=(GOOD, BULLETED),
+        feedback=({"route": "revise", "reason": "layout"}, {"route": "approve", "reason": "ok"}),
+    )
     registry = RunRegistry(tmp_path / "registry.sqlite")
     graph = stack.graph(tmp_path, first.tracer, run_registry=registry)
     _start(graph, first.tracer)
@@ -214,14 +246,16 @@ def test_resumes_after_pauses_join_the_run_trace_even_in_a_new_process(tmp_path)
     second = LangfuseCapture()
     service = WorkflowRecoveryService(graph, registry, second.tracer)
     revised = service.resume_interrupt(
-        THREAD, {"reply": "Please use bullet points.", "actor": "reviewer"})
+        THREAD, {"reply": "Please use bullet points.", "actor": "reviewer"}
+    )
     assert revised["stage"] == "Awaiting Approval" and revised["draft"] == BULLETED
     published = service.resume_interrupt(THREAD, {"approved": True, "actor": "reviewer"})
 
     assert published["stage"] == "Published"
     executions = first.named("research.execution") + second.named("research.execution")
-    assert [(e.metadata["execution_kind"], e.metadata.get("interrupt_kind")) for e in executions] == [
-        ("start", None), ("resume", "publication_approval"), ("resume", "publication_approval")]
+    assert [
+        (e.metadata["execution_kind"], e.metadata.get("interrupt_kind")) for e in executions
+    ] == [("start", None), ("resume", "publication_approval"), ("resume", "publication_approval")]
     assert {e.trace_id for e in executions} == {first.tracer.trace_id_for(RUN)}
     assert {e.session_id for e in executions} == {THREAD}
     # Each execution is closed when its invocation returns; none stays open over a pause.
@@ -237,36 +271,69 @@ def test_resumes_after_pauses_join_the_run_trace_even_in_a_new_process(tmp_path)
 def test_plan_approval_resume_runs_research_in_a_new_execution_of_the_same_trace(stores, tmp_path):
     from intelligence_collector.agents.scope import ScopeAgent
     from tests.integration.test_full_graph_workflow import (
-        REPORT, REQUEST, SequencedModel, _scope_responses)
+        REPORT,
+        REQUEST,
+        SequencedModel,
+        _scope_responses,
+    )
 
     vfs, index = stores
     capture = LangfuseCapture()
     registry = RunRegistry(tmp_path / "registry.sqlite")
-    scope_model = FakeChatModel(model_name="fake-scope", delegate=SequencedModel(_scope_responses()))
+    scope_model = FakeChatModel(
+        model_name="fake-scope", delegate=SequencedModel(_scope_responses())
+    )
     nodes = ResearchNodes(
-        vfs, index,
-        ResearchAgent(ModelRouter(FakeChatModel(delegate=FakeResearchModel())),
-                      lambda: ControlledMCP([{"url": URL, "content": "A cache stores data."}])),
+        vfs,
+        index,
+        ResearchAgent(
+            ModelRouter(FakeChatModel(delegate=FakeResearchModel())),
+            lambda: ControlledMCP([{"url": URL, "content": "A cache stores data."}]),
+        ),
         report_writer=ReportWriter(ModelRouter(FakeChatModel(delegate=FakeReportModel([REPORT])))),
-        report_judge=ReportJudge(ModelRouter(FakeChatModel(delegate=FakeAcceptanceModel([
-            {"results": [{"criterion": "all", "met": True, "justification": "Answered."}]}])))),
+        report_judge=ReportJudge(
+            ModelRouter(
+                FakeChatModel(
+                    delegate=FakeAcceptanceModel(
+                        [
+                            {
+                                "results": [
+                                    {"criterion": "all", "met": True, "justification": "Answered."}
+                                ]
+                            }
+                        ]
+                    )
+                )
+            )
+        ),
         faithfulness_evaluator=lambda q, r, c: {"score": 0.96, "unsupported": []},
         require_faithfulness=True,
     )
-    graph = build_graph(scope_agent=ScopeAgent(ModelRouter(scope_model)), vfs=vfs,
-                        research_nodes=nodes, checkpointer=MemorySaver(), with_approval=True,
-                        tracer=capture.tracer, run_registry=registry)
+    graph = build_graph(
+        scope_agent=ScopeAgent(ModelRouter(scope_model)),
+        vfs=vfs,
+        research_nodes=nodes,
+        checkpointer=MemorySaver(),
+        with_approval=True,
+        tracer=capture.tracer,
+        run_registry=registry,
+    )
     with capture.tracer.execution(run_id=RUN, thread_id=THREAD, kind="start") as execution:
-        paused = graph.invoke({"run_id": RUN, "thread_id": THREAD, "request": REQUEST},
-                              execution.graph_config({"configurable": {"thread_id": THREAD}}))
+        paused = graph.invoke(
+            {"run_id": RUN, "thread_id": THREAD, "request": REQUEST},
+            execution.graph_config({"configurable": {"thread_id": THREAD}}),
+        )
         execution.finish(paused)
     WorkflowRecoveryService(graph, registry, capture.tracer).resume_interrupt(
-        THREAD, {"reply": "approve", "actor": "reviewer"})
+        THREAD, {"reply": "approve", "actor": "reviewer"}
+    )
 
     first, second = capture.named("research.execution")
     assert first.output["paused_at"] == "plan_approval"
     assert (second.metadata["execution_kind"], second.metadata["interrupt_kind"]) == (
-        "resume", "plan_approval")
+        "resume",
+        "plan_approval",
+    )
     assert first.trace_id == second.trace_id
     # Nothing was retrieved before the approval; research belongs to the resumed execution.
     research = capture.named("researching")[0]
@@ -279,7 +346,8 @@ def test_plan_approval_resume_runs_research_in_a_new_execution_of_the_same_trace
     assert evaluator.type == "evaluator" and evaluator.output == {"score": 0.96, "unsupported": 0}
     assert capture.ancestors(evaluator)[0] == "verifying"
     assert [(score["name"], score["value"], score["trace_id"]) for score in capture.scores] == [
-        ("faithfulness", 0.96, first.trace_id)]
+        ("faithfulness", 0.96, first.trace_id)
+    ]
 
 
 def test_instrumentation_never_repeats_model_or_tool_calls(tmp_path):
@@ -299,8 +367,11 @@ def test_instrumentation_never_repeats_model_or_tool_calls(tmp_path):
 
 def test_disabled_or_misconfigured_langfuse_does_not_change_the_workflow(tmp_path, monkeypatch):
     monkeypatch.setattr("langfuse.Langfuse.auth_check", lambda self: False)
-    misconfigured = RunTracer.from_settings(LangfuseSettings(
-        enabled=True, public_key="pk-wrong-project", secret_key="sk", host="http://127.0.0.1:9"))
+    misconfigured = RunTracer.from_settings(
+        LangfuseSettings(
+            enabled=True, public_key="pk-wrong-project", secret_key="sk", host="http://127.0.0.1:9"
+        )
+    )
     assert not misconfigured.enabled
     assert "LANGFUSE_BASE_URL" in misconfigured.disabled_reason
     monkeypatch.setenv("INTELLIGENCE_LANGFUSE_ENABLED", "true")
@@ -308,8 +379,11 @@ def test_disabled_or_misconfigured_langfuse_does_not_change_the_workflow(tmp_pat
     missing_keys = RunTracer.from_env()
     assert not missing_keys.enabled and "credentials" in missing_keys.disabled_reason
 
-    for name, tracer in (("misconfigured", misconfigured), ("missing", missing_keys),
-                         ("off", RunTracer())):
+    for name, tracer in (
+        ("misconfigured", misconfigured),
+        ("missing", missing_keys),
+        ("off", RunTracer()),
+    ):
         result = _start(Stack().graph(tmp_path / name, tracer), tracer)
         assert result["stage"] == "Awaiting Approval"
         assert result["verification"]["passed"] is True
@@ -318,11 +392,14 @@ def test_disabled_or_misconfigured_langfuse_does_not_change_the_workflow(tmp_pat
 def test_exported_payloads_are_redacted_and_bounded():
     capture = LangfuseCapture()
     with capture.tracer.execution(run_id=RUN, thread_id=THREAD, kind="start"):
-        with traced("operation.fetch", input={
-            "api_key": "sk-live-secret",
-            "url": "https://source.test/page?tavilyApiKey=tvly-secret&q=1",
-            "excerpt": "x" * 10_000,
-        }):
+        with traced(
+            "operation.fetch",
+            input={
+                "api_key": "sk-live-secret",
+                "url": "https://source.test/page?tavilyApiKey=tvly-secret&q=1",
+                "excerpt": "x" * 10_000,
+            },
+        ):
             pass
     span = capture.named("operation.fetch")[0]
     exported = repr(span.input)
@@ -341,9 +418,20 @@ def test_long_report_rewrite_keeps_one_execution_per_invocation(tmp_path):
     """A revision cycle (verify FAIL -> fix -> rewrite) stays inside one execution."""
     capture = LangfuseCapture()
     stack = Stack(drafts=(GOOD, GOOD))
-    stack.judge.delegate = FakeAcceptanceModel([
-        {"results": [{"criterion": "all criteria", "met": False,
-                      "justification": "A claim lost its citation."}]}, PASS])
+    stack.judge.delegate = FakeAcceptanceModel(
+        [
+            {
+                "results": [
+                    {
+                        "criterion": "all criteria",
+                        "met": False,
+                        "justification": "A claim lost its citation.",
+                    }
+                ]
+            },
+            PASS,
+        ]
+    )
     _start(stack.graph(tmp_path, capture.tracer), capture.tracer)
 
     assert len(capture.named("research.execution")) == 1

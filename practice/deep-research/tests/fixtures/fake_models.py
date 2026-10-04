@@ -37,19 +37,31 @@ class FakeResearchModel:
         if question in self.fail_questions:
             raise RuntimeError(f"forced research failure for {question}")
         if "compress raw web search results" in messages[0].content:
-            return AIMessage(content=json.dumps(self.findings.get(question, {
-                "summary": f"Findings for {question} [https://controlled.test]",
-                "sufficient": True,
-                "unresolved_gaps": [],
-            })))
+            return AIMessage(
+                content=json.dumps(
+                    self.findings.get(
+                        question,
+                        {
+                            "summary": f"Findings for {question} [https://controlled.test]",
+                            "sufficient": True,
+                            "unresolved_gaps": [],
+                        },
+                    )
+                )
+            )
         done = sum(isinstance(message, ToolMessage) for message in messages)
         queries = self.queries.get(question, [question])
         if done < len(queries):
-            return AIMessage(content="", tool_calls=[{
-                "name": "tavily_search",
-                "args": {"query": queries[done]},
-                "id": f"call-{done}",
-            }])
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "tavily_search",
+                        "args": {"query": queries[done]},
+                        "id": f"call-{done}",
+                    }
+                ],
+            )
         return AIMessage(content="I have enough evidence to answer.")
 
 
@@ -63,11 +75,16 @@ class FakeReportModel:
 
     def __init__(self, drafts, reflections=None):
         self.drafts = list(drafts)
-        self.reflections = list(reflections or [{
-            "diagnosis": "A sentence had no citation.",
-            "lessons": ["End every body sentence with a catalog citation such as [S1]."],
-            "strategy": "Add the missing citations and keep wording close to the excerpts.",
-        }])
+        self.reflections = list(
+            reflections
+            or [
+                {
+                    "diagnosis": "A sentence had no citation.",
+                    "lessons": ["End every body sentence with a catalog citation such as [S1]."],
+                    "strategy": "Add the missing citations and keep wording close to the excerpts.",
+                }
+            ]
+        )
         self.calls: list[tuple[str, list]] = []
 
     @staticmethod
@@ -82,13 +99,23 @@ class FakeReportModel:
         return AIMessage(content=json.dumps({"report_markdown": self._next(self.drafts)}))
 
     def prompts(self, kind: str) -> list[str]:
-        return ["\n".join(str(m.content) for m in messages) for k, messages in self.calls if k == kind]
+        return [
+            "\n".join(str(m.content) for m in messages) for k, messages in self.calls if k == kind
+        ]
 
 
 def cited_report(claims: list[str], sources: dict[str, str], *, limitations: list[str] = ()) -> str:
     """Build a report in the source-verification format: claims already carry [S#] markers."""
-    parts = ["# Research report", "", "## Scope", "This report answers the research brief.", "",
-             "## Findings", *claims, ""]
+    parts = [
+        "# Research report",
+        "",
+        "## Scope",
+        "This report answers the research brief.",
+        "",
+        "## Findings",
+        *claims,
+        "",
+    ]
     if limitations:
         parts += ["## Limitations", *(f"- {gap}" for gap in limitations), ""]
     parts += ["## Sources", *(f"- [{sid}] Source - {url}" for sid, url in sources.items())]
@@ -119,15 +146,24 @@ class FakeAcceptanceModel:
         selected = []
         for item in scripted["results"]:
             label = item["criterion"]
-            index = (1 if label == "Fairly represents the gathered evidence" else
-                     2 if label == "Explains uncertainty and evidence gaps" else
-                     int(label[2:-1]) - 1 if label.startswith("[C") and label.endswith("]") else 0)
+            index = (
+                1
+                if label == "Fairly represents the gathered evidence"
+                else 2
+                if label == "Explains uncertainty and evidence gaps"
+                else int(label[2:-1]) - 1
+                if label.startswith("[C") and label.endswith("]")
+                else 0
+            )
             matches = [c for c in criteria if label in c]
             criterion = matches[0] if matches else criteria[min(index, len(criteria) - 1)]
             selected.append({**item, "criterion": criterion})
         used = {item["criterion"] for item in selected}
-        selected.extend({"criterion": criterion, "met": True, "justification": "Satisfied."}
-                        for criterion in criteria if criterion not in used)
+        selected.extend(
+            {"criterion": criterion, "met": True, "justification": "Satisfied."}
+            for criterion in criteria
+            if criterion not in used
+        )
         return AIMessage(content=json.dumps({"results": selected}))
 
     def prompts(self) -> list[str]:
@@ -136,6 +172,7 @@ class FakeAcceptanceModel:
 
 class FakeModel:
     """A deterministic role-aware model substitute for tests."""
+
     def __init__(self, responses=None, error_roles=None):
         self.responses = responses or {}
         self.error_roles = set(error_roles or ())
@@ -146,4 +183,3 @@ class FakeModel:
         if role in self.error_roles:
             raise RuntimeError(f"forced model failure for {role}")
         return self.responses.get(role, prompt)
-

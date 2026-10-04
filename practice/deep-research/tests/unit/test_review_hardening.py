@@ -2,12 +2,18 @@ import hashlib
 
 from intelligence_collector.contracts import FeedbackDecision, VerificationResult
 from intelligence_collector.graph.nodes import ApprovalNodes
-from intelligence_collector.source_verification import catalog_from_bundles, citation_errors, load_catalog
+from intelligence_collector.source_verification import (
+    catalog_from_bundles,
+    citation_errors,
+    load_catalog,
+)
 from intelligence_collector.storage.vfs import VFS
 
 
 def test_citations_require_known_ids_and_matching_source_urls():
-    catalog = catalog_from_bundles([{"task_id": "t", "sources": [{"url": "https://source.test/a"}]}])
+    catalog = catalog_from_bundles(
+        [{"task_id": "t", "sources": [{"url": "https://source.test/a"}]}]
+    )
     good = "Fact [S1].\n## Sources\n- [S1] https://source.test/a"
     assert citation_errors(good, catalog) == []
     assert citation_errors(good.replace("source.test", "attacker.test"), catalog)
@@ -19,9 +25,13 @@ def test_active_catalog_excludes_old_scope_without_renumbering(tmp_path):
     vfs = VFS(tmp_path)
     refs = []
     for todo in ["old", "new"]:
-        ref = vfs.write_json("r", f"{todo}.json", {
-            "task_id": todo, "sources": [{"url": f"https://source.test/{todo}"}]},
-            "evidence", task_id=todo)
+        ref = vfs.write_json(
+            "r",
+            f"{todo}.json",
+            {"task_id": todo, "sources": [{"url": f"https://source.test/{todo}"}]},
+            "evidence",
+            task_id=todo,
+        )
         refs.append(ref.model_dump(mode="json"))
     catalog = load_catalog(vfs, "r", refs, active_todo_ids=["new"])
     assert list(catalog.sources) == ["S2"]
@@ -34,7 +44,9 @@ def test_conditional_approval_cannot_be_overridden_by_classifier(tmp_path):
             return FeedbackDecision(route="approve")
 
     nodes = ApprovalNodes(VFS(tmp_path), str(tmp_path / "exports"), Router())
-    result = nodes.classify_feedback({"human_feedback": "Approve but fix the citations", "draft": "draft"})
+    result = nodes.classify_feedback(
+        {"human_feedback": "Approve but fix the citations", "draft": "draft"}
+    )
     assert result["feedback_route"] == "revise"
     assert result["approval"] is None
 
@@ -42,7 +54,11 @@ def test_conditional_approval_cannot_be_overridden_by_classifier(tmp_path):
 def test_failed_publication_invalidates_approval_and_verification(tmp_path):
     nodes = ApprovalNodes(VFS(tmp_path), str(tmp_path / "exports"))
     verification = VerificationResult(artifact_hash=hashlib.sha256(b"old").hexdigest(), passed=True)
-    state = {"run_id": "r", "draft": "changed", "verification": verification.model_dump(mode="json")}
+    state = {
+        "run_id": "r",
+        "draft": "changed",
+        "verification": verification.model_dump(mode="json"),
+    }
     state["approval"] = nodes._approval_for(state, True)
     result = nodes.publishing(state)
     assert result["stage"] == "NEEDS_REVIEW"
@@ -67,14 +83,21 @@ def test_index_failure_resume_reuses_durable_retrieved_outcome(tmp_path):
 
     class Researcher:
         calls = 0
+
         def research(self, question, **kwargs):
             self.calls += 1
-            return ResearchOutcome(question=question, search_budget=1, mcp_server="test", mcp_tool="search",
-                                   sources=[{"url": "https://source.test/a", "content": "facts"}],
-                                   findings=ResearchFindings(summary="facts", sufficient=True))
+            return ResearchOutcome(
+                question=question,
+                search_budget=1,
+                mcp_server="test",
+                mcp_tool="search",
+                sources=[{"url": "https://source.test/a", "content": "facts"}],
+                findings=ResearchFindings(summary="facts", sufficient=True),
+            )
 
     class Index:
         fail = True
+
         def index(self, chunks):
             if self.fail:
                 raise RuntimeError("index unavailable")
@@ -99,6 +122,7 @@ def test_authentication_errors_are_not_retried_as_invalid_schema():
 
     class Model:
         calls = 0
+
         def invoke(self, messages):
             self.calls += 1
             raise Unauthorized("invalid credential")

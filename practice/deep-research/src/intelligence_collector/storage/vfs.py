@@ -35,9 +35,7 @@ def _secret_field(key: Any) -> bool:
 def _artifact_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            key: "[REDACTED]"
-            if _secret_field(key)
-            else _artifact_safe(item)
+            key: "[REDACTED]" if _secret_field(key) else _artifact_safe(item)
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
@@ -86,8 +84,13 @@ class VFS:
             digest = hashlib.sha256(previous).hexdigest()
             archive = target.with_name(target.name.replace(".v1.", f".{digest}."))
             if not archive.exists():
-                self.write(run_id, str(archive.relative_to(self.root / run_id)), previous, kind,
-                           task_id=task_id)
+                self.write(
+                    run_id,
+                    str(archive.relative_to(self.root / run_id)),
+                    previous,
+                    kind,
+                    task_id=task_id,
+                )
         fd, temporary = tempfile.mkstemp(dir=target.parent, prefix=".tmp-")
         try:
             with os.fdopen(fd, "wb") as handle:

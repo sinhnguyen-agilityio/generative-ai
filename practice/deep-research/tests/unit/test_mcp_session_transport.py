@@ -9,6 +9,7 @@ import pytest
 def test_transport_callback_is_not_passed_as_session_timeout(monkeypatch, operation):
     from intelligence_collector.tools import mcp as research
     from intelligence_collector.storage import mcp_vector_index as storage
+
     module = storage if operation == "storage" else research
     reader, writer = object(), object()
     calls = []
@@ -35,15 +36,26 @@ def test_transport_callback_is_not_passed_as_session_timeout(monkeypatch, operat
         async def call_tool(self, tool, arguments, *, read_timeout_seconds):
             assert read_timeout_seconds == timedelta(seconds=30)
             if operation == "search":
-                assert arguments == {"query": "question", "max_results": 3, "include_raw_content": True}
+                assert arguments == {
+                    "query": "question",
+                    "max_results": 3,
+                    "include_raw_content": True,
+                }
             calls.append(tool)
-            return SimpleNamespace(isError=False, structured_content={"results": [
-                {"url": "https://source.test/", "raw_content": "original"}]}, content=[])
+            return SimpleNamespace(
+                isError=False,
+                structured_content={
+                    "results": [{"url": "https://source.test/", "raw_content": "original"}]
+                },
+                content=[],
+            )
 
     monkeypatch.setattr(module, "streamable_http_client", transport)
     monkeypatch.setattr(module, "ClientSession", Session)
     if operation == "storage":
-        storage.MCPStorageTransport("http://localhost:8000/mcp", timeout_seconds=30).call("embed", {})
+        storage.MCPStorageTransport("http://localhost:8000/mcp", timeout_seconds=30).call(
+            "embed", {}
+        )
     else:
         adapter = research.TavilyMCP("https://mcp.tavily.com/mcp/", "fake-key", timeout_seconds=30)
         if operation == "search":

@@ -3,7 +3,9 @@
 Tracing does not use this module: ``observability.tracing.traced`` follows the active
 execution through OpenTelemetry's own context.
 """
+
 from contextvars import ContextVar
+
 operation_vfs = ContextVar("operation_vfs", default=None)
 operation_run = ContextVar("operation_run", default="")
 

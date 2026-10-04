@@ -7,7 +7,12 @@ import hashlib
 import os
 import tempfile
 from pathlib import Path
-from intelligence_collector.contracts import ApprovalDecision, PublicationRecord, VerificationResult, now
+from intelligence_collector.contracts import (
+    ApprovalDecision,
+    PublicationRecord,
+    VerificationResult,
+    now,
+)
 
 
 def can_request_approval(verification: VerificationResult) -> bool:
@@ -15,12 +20,18 @@ def can_request_approval(verification: VerificationResult) -> bool:
     return verification.passed and bool(verification.artifact_hash)
 
 
-def approval_for(artifact_hash: str, verification_id: str, approved: bool, actor: str) -> ApprovalDecision:
+def approval_for(
+    artifact_hash: str, verification_id: str, approved: bool, actor: str
+) -> ApprovalDecision:
     """Build an ``ApprovalDecision`` for the given text hash and verification."""
-    return ApprovalDecision(artifact_hash=artifact_hash, verification_id=verification_id, approved=approved, actor=actor)
+    return ApprovalDecision(
+        artifact_hash=artifact_hash, verification_id=verification_id, approved=approved, actor=actor
+    )
 
 
-def publish(content: str, destination: str, approval: ApprovalDecision, verification: VerificationResult):
+def publish(
+    content: str, destination: str, approval: ApprovalDecision, verification: VerificationResult
+):
     """Write `content` only if it is the verified report and the human approved exactly it."""
     digest = hashlib.sha256(content.encode()).hexdigest()
     authorized = (
@@ -30,15 +41,25 @@ def publish(content: str, destination: str, approval: ApprovalDecision, verifica
         and approval.verification_id == verification.verification_id
     )
     if not authorized:
-        return PublicationRecord(destination=destination, artifact_hash=digest, approval_id=approval.approval_id, published=False, error="approval/hash/verification mismatch")
+        return PublicationRecord(
+            destination=destination,
+            artifact_hash=digest,
+            approval_id=approval.approval_id,
+            published=False,
+            error="approval/hash/verification mismatch",
+        )
     target = Path(destination)
     target.parent.mkdir(parents=True, exist_ok=True)
     # A crash can occur after the atomic replace but before the graph checkpoints.
     # Recheck authorization above, then reuse the exact already-published bytes.
     if target.is_file() and target.read_bytes() == content.encode("utf-8"):
-        return PublicationRecord(destination=destination, artifact_hash=digest,
-                                 approval_id=approval.approval_id, published=True,
-                                 published_at=now())
+        return PublicationRecord(
+            destination=destination,
+            artifact_hash=digest,
+            approval_id=approval.approval_id,
+            published=True,
+            published_at=now(),
+        )
     fd, tmp = tempfile.mkstemp(dir=target.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -49,4 +70,10 @@ def publish(content: str, destination: str, approval: ApprovalDecision, verifica
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
-    return PublicationRecord(destination=destination, artifact_hash=digest, approval_id=approval.approval_id, published=True, published_at=now())
+    return PublicationRecord(
+        destination=destination,
+        artifact_hash=digest,
+        approval_id=approval.approval_id,
+        published=True,
+        published_at=now(),
+    )
