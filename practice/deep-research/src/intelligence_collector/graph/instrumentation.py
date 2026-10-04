@@ -1,68 +1,45 @@
 """Cross-cutting behaviour applied uniformly to every graph node.
 
-Nodes stay pure ``state -> state update`` functions; this module layers on
-lifecycle notifications (UI progress) and tracing. State persistence between turns is
-LangGraph's own checkpointer (``SqliteSaver`` in the app), not this wrapper.
+Nodes stay pure ``state -> state update`` functions; this module layers on lifecycle
+notifications (UI progress), the run registry, the synthesis operation journal and trace
+annotations. The node's Langfuse observation itself is opened by the LangChain callback that
+``RunTracer.execution`` passes in the graph config (see ``observability/tracing.py``); this
+wrapper only adds low-cardinality metadata and scores to it, so each node appears once.
+State persistence between turns is LangGraph's own checkpointer, not this wrapper.
 """
 
 from collections.abc import Callable
-import json
 
 from langgraph.errors import GraphInterrupt
 
 from intelligence_collector.contracts import Stage, WorkflowStatus
 from intelligence_collector.graph.state import GraphState
 from intelligence_collector.graph.migration import normalize_checkpoint
+from intelligence_collector.observability.tracing import annotate_current
 
-# State fields exported to Langfuse as trace scores: {state key: score name}.
+# State fields exported to Langfuse as trace scores: {state key: (score name, producing node)}.
+# Only the node that computes a score exports it; later nodes carry the field forward unchanged.
 SCORE_FIELDS = {
-    "faithfulness_score": "faithfulness",
-    "context_precision_score": "context_precision",
-    "response_relevancy_score": "response_relevancy",
+    "faithfulness_score": ("faithfulness", "verifying"),
+    "context_precision_score": ("context_precision", "evaluating_quality"),
+    "response_relevancy_score": ("response_relevancy", "evaluating_quality"),
 }
 
 NodeFn = Callable[[GraphState], GraphState]
 Lifecycle = Callable[[str, str], None]
 
 
-def _to_json(payload: dict) -> str:
-    return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
-
-
-def _trace_input(state: GraphState) -> str:
-    return _to_json({
-        "stage": state.get("stage"),
-        "request": state.get("request", ""),
-        "messages": [
-            {
-                "role": getattr(message, "type", "message"),
-                "content": getattr(message, "content", str(message)),
-            }
-            for message in state.get("messages", [])
-        ],
-        "scope_assessment": state.get("scope_assessment"),
-        "research_brief": state.get("scoped_request"),
-    })
-
-
-def _trace_output(result: GraphState) -> str:
-    return _to_json({
-        "stage": result.get("stage"),
-        "status": result.get("status"),
-        "scope_assessment": result.get("scope_assessment"),
-        "research_brief": result.get("scoped_request"),
-        "todos": result.get("todos"),
-        # Present only on the quality node, so its results are readable in the trace itself.
-        **{
-            key: result[key]
-            for key in (
-                "faithfulness_score", "faithfulness_error",
-                "context_precision_score", "context_precision_error", "context_precision_details",
-                "response_relevancy_score", "response_relevancy_error",
-            )
-            if result.get(key) not in (None, "")
-        },
-    })
+def _annotate(name: str, result: GraphState) -> None:
+    """Correlation fields of the node run: low-cardinality identifiers only, never payloads."""
+    annotate_current(
+        node=name,
+        run_id=result.get("run_id"),
+        stage=result.get("stage"),
+        draft_version=result.get("draft_version") or None,
+        improvement_cycle=result.get("recovery_attempt") or None,
+        plan_version=result.get("plan_version") or None,
+        verification_outcome=result.get("verification_outcome"),
+    )
 
 
 def node_wrapper(
@@ -73,13 +50,14 @@ def node_wrapper(
     run_registry=None,
     operation_journal=None,
 ) -> NodeFn:
-    """Wrap a graph node with UI lifecycle notifications and a Langfuse span.
+    """Wrap a graph node with UI lifecycle notifications, run-registry updates and trace
+    annotations.
 
     `lifecycle(node, status)` is called with "running", then "success" or "failure"; a
     ``GraphInterrupt`` (the human-review pause) is re-raised without being marked failed. With a
-    `tracer`, the node runs inside a ``graph.<name>`` span and any score fields in its result
-    (see ``SCORE_FIELDS``) are attached to the trace. Raises ``TypeError`` if the node returns
-    something other than a mapping.
+    `tracer`, the node's observation gets correlation metadata and any score fields in its
+    result (see ``SCORE_FIELDS``) are attached to the trace. Raises ``TypeError`` if the node
+    returns something other than a mapping.
     """
     notify = lifecycle or (lambda _node, _status: None)
 
@@ -127,22 +105,14 @@ def node_wrapper(
         return WorkflowStatus.WAITING_FOR_CLARIFICATION
 
     def run(state: GraphState) -> GraphState:
-        """Run the node, inside a Langfuse span when tracing is on."""
-        if tracer is None:
-            return fn(state)
-        with tracer.span(
-            f"graph.{name}",
-            state.get("run_id", ""),
-            state.get("thread_id", ""),
-            input=_trace_input(state),
-            node=name,
-        ) as span:
-            result = fn(state)
-            span.output = _trace_output(result)
-            for key, score_name in SCORE_FIELDS.items():
-                if result.get(key) is not None:
+        """Run the node; with a `tracer`, annotate its observation and export score fields."""
+        result = fn(state)
+        if tracer is not None and isinstance(result, dict):
+            _annotate(name, result)
+            for key, (score_name, producer) in SCORE_FIELDS.items():
+                if name == producer and result.get(key) is not None:
                     tracer.score(score_name, float(result[key]))
-            return result
+        return result
 
     def wrapped(state: GraphState) -> GraphState:
         """Report lifecycle status around the node and check that it returns a mapping."""

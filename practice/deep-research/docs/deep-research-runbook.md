@@ -10,15 +10,12 @@ uv run ruff check src tests
 
 Artifacts are written under `.data/vfs/<run_id>/`; checkpoints and vector index are local files.
 Permanent output is under `exports/` and is written only after approval bound to the verified report
-hash. Live app executions require Langfuse credentials configured through environment variables.
-Each chat thread has one Langfuse trace (session ID = the durable `thread_id`) with a single
-`research.thread` root that is opened on its first turn and ended when the thread is published,
-needs review, or "New thread" is clicked, so its duration covers the whole thread. Every
-submission adds one `research.turn` span under that root, which nests LangGraph node spans plus LangChain model generations. The trace
-metadata correlates the durable `run_id`, per-submission `execution_id`, prompt version, role, model
-attempt, structured-output validation, fallback, and safe error details. Export is flushed before the
-execution completes; credential-shaped fields are redacted. Ragas evaluation uses
-the deterministic local faithfulness baseline and does not publish a report.
+hash. Langfuse tracing is optional: with `INTELLIGENCE_LANGFUSE_ENABLED=true` and keys configured,
+each research run is one Langfuse trace (ID derived from `run_id`, session ID = `thread_id`), and
+every graph invocation (new request, plan or report approval, recovery) adds one
+`research.execution` with the graph nodes, research sub-agents, MCP calls and LLM generations
+beneath it. A missing or rejected key disables tracing with a warning; research runs unchanged.
+Credentials and long payloads are masked before export. See `docs/observability.md`.
 
 A report that passes verification is scored (informational only) by the RAGAS judge
 `INTELLIGENCE_FAITHFULNESS_MODEL`: Faithfulness, Context Precision (per research question, on the
@@ -53,8 +50,9 @@ $env:RUN_LIVE_LLM = "1"
 uv run pytest -q tests/integration/test_scope_live_smoke.py
 ```
 
-Confirm in Langfuse that the emitted trace is named `intelligence-collector`, its session ID equals
-`live-smoke`, and the `research.turn` observation contains the Scope and Planning node spans with nested model
-generations. The test never prints API keys.
+Confirm in Langfuse that the emitted trace is named `deep-research`, its session ID equals
+`live-smoke`, and its `research.execution` observation contains the `research_graph` run with the
+Scope and Planning node observations and their nested model generations. The test never prints
+API keys.
 
 Never commit `.env`, credentials, `.data/`, runtime checkpoints, or exported reports.

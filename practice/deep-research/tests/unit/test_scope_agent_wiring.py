@@ -28,10 +28,6 @@ def _fake_st():
     return SimpleNamespace(session_state=_SessionState())
 
 
-def _fake_tracer():
-    return SimpleNamespace(model_event=lambda **_: None, callbacks=[])
-
-
 def _recording_init_chat_model(monkeypatch):
     calls = []
 
@@ -66,7 +62,7 @@ def test_reasoning_tier_is_gpt_and_standard_tier_is_gemini(monkeypatch):
     _set_role_env(monkeypatch, standard_fallback=True)
     calls = _recording_init_chat_model(monkeypatch)
 
-    router = _get_model_routers(_fake_st(), _fake_tracer())
+    router = _get_model_routers(_fake_st())
 
     assert isinstance(router, ModelRouters)
     assert calls == [
@@ -84,7 +80,7 @@ def test_no_fallback_configured_means_no_fallback_on_either_tier(monkeypatch):
     _set_role_env(monkeypatch)
     _recording_init_chat_model(monkeypatch)
 
-    router = _get_model_routers(_fake_st(), _fake_tracer())
+    router = _get_model_routers(_fake_st())
 
     assert router.reasoning.fallback is None
     assert router.standard.fallback is None
@@ -93,8 +89,8 @@ def test_no_fallback_configured_means_no_fallback_on_either_tier(monkeypatch):
 def test_missing_reasoning_model_returns_none(monkeypatch):
     monkeypatch.delenv("INTELLIGENCE_REASONING_MODEL", raising=False)
 
-    assert _get_model_routers(_fake_st(), _fake_tracer()) is None
-    assert _get_scope_agent(_fake_st(), _fake_tracer()) is None
+    assert _get_model_routers(_fake_st()) is None
+    assert _get_scope_agent(_fake_st()) is None
 
 
 def test_model_routers_are_cached_on_session_state(monkeypatch):
@@ -102,8 +98,8 @@ def test_model_routers_are_cached_on_session_state(monkeypatch):
     calls = _recording_init_chat_model(monkeypatch)
     st = _fake_st()
 
-    first = _get_model_routers(st, _fake_tracer())
-    second = _get_model_routers(st, _fake_tracer())
+    first = _get_model_routers(st)
+    second = _get_model_routers(st)
 
     assert first is second
     assert len(calls) == 2  # reasoning + standard primaries only; no new construction on reuse
@@ -114,8 +110,8 @@ def test_scope_agent_gets_reasoning_router_and_standard_guardrail_and_is_cached(
     _recording_init_chat_model(monkeypatch)
     st = _fake_st()
 
-    agent = _get_scope_agent(st, _fake_tracer())
-    second = _get_scope_agent(st, _fake_tracer())
+    agent = _get_scope_agent(st)
+    second = _get_scope_agent(st)
 
     assert agent is second
     assert agent.router is st.session_state.model_routers.reasoning

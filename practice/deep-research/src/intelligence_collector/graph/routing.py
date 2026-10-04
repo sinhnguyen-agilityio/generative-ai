@@ -13,6 +13,9 @@ from intelligence_collector.contracts import RecoveryAction
 # Outcomes of route_after_verify; build.py maps "passed" to approval or END.
 PASSED, FIX, NEEDS_REVIEW = "passed", "fix", "needs_review"
 
+# Outcome of route_after_publish when the report was written; build.py maps it to END.
+PUBLISHED = "published"
+
 # Outcomes of route_after_approval; build.py maps these to PUBLISH or CLASSIFY_FEEDBACK.
 APPROVED, REJECTED = "approved", "rejected"
 
@@ -92,6 +95,11 @@ def route_after_research(state: GraphState) -> str:
     if state.get("research_gap_attempt", 0) >= min(state.get("research_gap_budget", 1), 1):
         return Node.SYNTHESIZE
     return Node.PREPARE_GAP_RESEARCH
+
+
+def route_after_publish(state: GraphState) -> str:
+    """A written report ends the run; a refused or failed write goes to review."""
+    return PUBLISHED if (state.get("publication") or {}).get("published") else Node.NEEDS_REVIEW
 
 
 def route_after_approval(state: GraphState) -> str:

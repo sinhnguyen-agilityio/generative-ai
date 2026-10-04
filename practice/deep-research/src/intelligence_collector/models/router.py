@@ -1,11 +1,19 @@
-"""One model tier: a primary chat model, an optional fallback, and validated structured output."""
+"""One model tier: a primary chat model, an optional fallback, and validated structured output.
 
+Tracing: every call runs as a LangChain chain named ``model.<role>``. Without explicit
+``callbacks`` the call inherits the callbacks of the LangGraph run it is made from, so the
+Langfuse handler of the current execution records it (with model, usage and latency) under the
+calling node or sub-agent. The optional ``trace`` hook is a lightweight observer (tests,
+diagnostics); it does not export anything.
+"""
+
+import inspect
 import json
 from typing import TypeVar
 
 from pydantic import BaseModel
 from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.runnables import Runnable, RunnableLambda
+from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 
 from intelligence_collector.models.redaction import redact_text, redact_value
 from intelligence_collector.models.token_limits import DEFAULT_OUTPUT_LIMITS, capped_model
@@ -37,19 +45,29 @@ def _model_name(model) -> str:
     return str(getattr(model, "model_name", None) or getattr(model, "model", None) or type(model).__name__)
 
 
-def _as_runnable(model, role: str, config) -> Runnable:
+def _accepts_config(function) -> bool:
+    try:
+        return "config" in inspect.signature(function).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _as_runnable(model, role: str) -> Runnable:
     """Make `model` usable with `with_fallbacks`, which only accepts Runnables.
 
     Real chat models already are Runnables. Duck-typed models (test fakes exposing `.invoke()`,
-    or plain `(role, prompt)` callables) are wrapped. `config` is forwarded to a fake's
-    `.invoke()` only when callbacks are configured, as fakes may not accept the argument.
+    or plain `(role, prompt)` callables) are wrapped; a fake's `.invoke()` receives the run
+    config only when it declares a `config` parameter.
     """
     if isinstance(model, Runnable):
         return model
     if hasattr(model, "invoke"):
-        return RunnableLambda(lambda prompt: model.invoke(prompt, config=config) if config else model.invoke(prompt))
+        if _accepts_config(model.invoke):
+            return RunnableLambda(lambda prompt, config: model.invoke(prompt, config=config),
+                                  name=_model_name(model))
+        return RunnableLambda(lambda prompt: model.invoke(prompt), name=_model_name(model))
     if callable(model):
-        return RunnableLambda(lambda prompt: model(role, prompt))
+        return RunnableLambda(lambda prompt: model(role, prompt), name=_model_name(model))
     raise TypeError("configured model must be callable or expose invoke()")
 
 
@@ -108,7 +126,7 @@ class ModelRouter:
             raise ValueError(f"max_attempts must be between 1 and {MAX_MODEL_ATTEMPTS}")
         self.primary, self.fallback = primary, fallback
         self.max_attempts = max_attempts
-        self.trace = trace  # called as trace(**event); None disables tracing (and its rendering cost)
+        self.trace = trace  # observer called as trace(**event); None skips prompt rendering
         self.callbacks = list(callbacks or [])
         self.output_limits = dict(DEFAULT_OUTPUT_LIMITS if output_limits is None else output_limits)
         # A fallback that rescues a call is visible in the callback trace as the child model run.
@@ -122,16 +140,18 @@ class ModelRouter:
     ) -> T:
         """Call the model and return its output validated as `schema`.
 
-        Retries up to `max_attempts` when the output is invalid; every attempt is traced.
+        Retries up to `max_attempts` when the output is invalid. Parsing is part of the chain,
+        so an invalid answer is recorded as an error on that attempt's ``model.<role>`` run.
         """
-        config = self._config(role, run_id, thread_id)
         chain = self._chain(
             _bind_schema(capped_model(self.primary, role, self.output_limits), schema),
-            _bind_schema(capped_model(self.fallback, role, self.output_limits), schema), role, config)
+            _bind_schema(capped_model(self.fallback, role, self.output_limits), schema), role,
+        ) | RunnableLambda(lambda raw: self._parse(role, raw, schema), name="parse_structured_output")
         errors = []
         for attempt in range(1, self.max_attempts + 1):
+            config = self._config(role, run_id, thread_id, attempt)
             try:
-                result = self._parse(role, chain.invoke(messages, config=config), schema)
+                result = chain.invoke(messages, config=config)
             except Exception as exc:
                 transient = _is_transient(exc) or getattr(exc, "status_code", None) in {401, 403, 404}
                 errors.append(redact_text(exc))
@@ -161,14 +181,13 @@ class ModelRouter:
         run_id: str = "", thread_id: str = "", tool_choice: str | None = None,
     ) -> AIMessage:
         """Tool-calling decision: the returned AIMessage carries a final answer or tool calls."""
-        config = self._config(role, run_id, thread_id)
         chain = self._chain(
             _bind_tools(capped_model(self.primary, role, self.output_limits), tools, tool_choice),
             None if self.fallback is None else _bind_tools(
                 capped_model(self.fallback, role, self.output_limits), tools, tool_choice),
-            role, config,
+            role,
         )
-        raw = chain.invoke(messages, config=config)
+        raw = chain.invoke(messages, config=self._config(role, run_id, thread_id))
         if not isinstance(raw, AIMessage):
             raise TypeError(f"tool-calling model output for {role} must be an AIMessage")
         decision = redact_value({
@@ -185,28 +204,24 @@ class ModelRouter:
 
     # ----- internals -----
 
-    def _config(self, role: str, run_id: str, thread_id: str) -> dict | None:
-        """LangChain run config so callbacks (Langfuse) group model runs by session and role.
-        None when no callbacks are configured."""
-        if not self.callbacks:
-            return None
-        return {
-            "callbacks": self.callbacks,
+    def _config(self, role: str, run_id: str, thread_id: str, attempt: int = 1) -> RunnableConfig:
+        """LangChain run config: a ``model.<role>`` run name and correlation metadata. Without
+        explicit `callbacks` the run inherits the caller's (the traced graph execution's)."""
+        config: RunnableConfig = {
             "run_name": f"model.{role}",
-            "metadata": {
-                "langfuse_session_id": thread_id,
-                "run_id": run_id,
-                "thread_id": thread_id,
-                "role": role,
-            },
+            "metadata": {"role": role, "run_id": run_id, "thread_id": thread_id,
+                         "attempt": attempt},
         }
+        if self.callbacks:
+            config["callbacks"] = self.callbacks
+        return config
 
     @staticmethod
-    def _chain(primary, fallback, role: str, config) -> Runnable:
+    def _chain(primary, fallback, role: str) -> Runnable:
         """primary, then `fallback` if the primary raises. Built once per call, not per attempt."""
-        chain = _as_runnable(primary, role, config)
+        chain = _as_runnable(primary, role)
         if fallback is not None:
-            chain = chain.with_fallbacks([_as_runnable(fallback, role, config)])
+            chain = chain.with_fallbacks([_as_runnable(fallback, role)])
         return chain
 
     @staticmethod

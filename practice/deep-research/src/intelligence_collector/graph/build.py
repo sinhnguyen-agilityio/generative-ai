@@ -28,6 +28,7 @@ from intelligence_collector.graph.routing import (
     PLAN_APPROVED,
     PLAN_CHANGE,
     PLAN_DECLINED,
+    PUBLISHED,
     REJECTED,
     REPLACEMENT_DECLINED,
     TO_EXTEND,
@@ -40,6 +41,7 @@ from intelligence_collector.graph.routing import (
     route_after_feedback,
     route_after_fix,
     route_after_plan_approval,
+    route_after_publish,
     route_after_verify,
     route_after_recovery,
     route_after_research,
@@ -262,9 +264,8 @@ def build_graph(
             route_after_approval,
             {APPROVED: Node.PUBLISH, REJECTED: Node.CLASSIFY_FEEDBACK},
         )
-        graph.add_conditional_edges(Node.PUBLISH,
-                                    lambda state: END if (state.get("publication") or {}).get("published")
-                                    else Node.NEEDS_REVIEW, [END, Node.NEEDS_REVIEW])
+        graph.add_conditional_edges(Node.PUBLISH, route_after_publish,
+                                    {PUBLISHED: END, Node.NEEDS_REVIEW: Node.NEEDS_REVIEW})
         graph.add_conditional_edges(
             Node.CLASSIFY_FEEDBACK,
             route_after_feedback,

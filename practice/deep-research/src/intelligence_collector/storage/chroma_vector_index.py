@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Protocol
 
 from intelligence_collector.contracts import IndexedChunk
+from intelligence_collector.observability.tracing import traced
 
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-2"
 DEFAULT_EMBEDDING_PROVIDER = "google_genai"
@@ -79,6 +80,7 @@ class ChromaVectorIndex:
 
         Path(path).mkdir(parents=True, exist_ok=True)
         self._embeddings = embeddings or default_embeddings(model, provider)
+        self._embedding_model = f"{provider}/{model}"
         self._collection = chromadb.PersistentClient(path=str(path)).get_or_create_collection(
             collection_name or collection_for(provider, model)
         )
@@ -87,6 +89,12 @@ class ChromaVectorIndex:
         """Embed and upsert the chunks; returns their ids."""
         if not chunks:
             return []
+        with traced("vector_index.upsert", as_type="embedding", metadata={
+                "embedding_model": self._embedding_model, "chunks": len(chunks)}):
+            self._upsert(chunks)
+        return [chunk.chunk_id for chunk in chunks]
+
+    def _upsert(self, chunks: list[IndexedChunk]) -> None:
         vectors = self._embeddings.embed_documents([chunk.text for chunk in chunks])
         self._collection.upsert(
             ids=[chunk.chunk_id for chunk in chunks],
@@ -103,7 +111,6 @@ class ChromaVectorIndex:
                 for chunk in chunks
             ],
         )
-        return [chunk.chunk_id for chunk in chunks]
 
     def retrieve(
         self,
@@ -116,12 +123,16 @@ class ChromaVectorIndex:
         """Nearest chunks to `query`, optionally scoped to one run and one research question."""
         if self._collection.count() == 0:
             return []
-        result = self._collection.query(
-            query_embeddings=[self._embeddings.embed_query(query)],
-            n_results=limit,
-            where=_where(run_id, todo_id),
-        )
-        ids = result.get("ids") or [[]]
+        with traced("vector_index.query", as_type="retriever", input={"query": query},
+                    metadata={"todo_id": todo_id, "limit": limit,
+                              "embedding_model": self._embedding_model}) as observation:
+            result = self._collection.query(
+                query_embeddings=[self._embeddings.embed_query(query)],
+                n_results=limit,
+                where=_where(run_id, todo_id),
+            )
+            ids = result.get("ids") or [[]]
+            observation.output = {"hits": len(ids[0])}
         documents = result.get("documents") or [[]]
         metadatas = result.get("metadatas") or [[]]
         return [

@@ -1229,3 +1229,21 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   `route_after_research` sends straight to `needs_review` with `research_gaps` naming the failed
   tasks. `retry_research_assessment` now only retries a failed research assessor. Tests:
   `tests/unit/test_research_failures.py`.
+- [X] T176 Langfuse trace topology and code organisation: one trace per research run (ID derived
+  from `run_id`, session = `thread_id`) and one `research.execution` per graph invocation,
+  replacing the in-memory `research.thread` root kept open across human pauses and the per-node
+  `graph.<node>` spans. `RunTracer` (`observability/tracing.py`) passes a per-invocation Langfuse
+  `CallbackHandler` in the graph config; `ModelRouter` no longer passes callbacks (model calls
+  inherit them, so each is one generation) and parses inside the chain; the duplicate
+  `model.validation.*` generations are gone. `traced()` records `mcp.search`, `research.persist`,
+  `vector_index.*`, `ragas.*` and durable operations; `research_agent` runs carry `todo_id`.
+  `WorkflowRecoveryService` traces every invocation. Payloads are masked (credentials, secret URL
+  parameters such as `?tavilyApiKey=`, which `redact_text` previously missed, strings over 4,000
+  characters). Langfuse misconfiguration disables tracing instead of stopping the app; executions
+  no longer flush synchronously. Scores are exported only by the node that computes them (the
+  faithfulness score was sent twice). Code organisation: `graph/nodes.py` split into the
+  `graph/nodes/` package by phase, composition root moved from `app.py` to `runtime.py`, publish
+  router named `route_after_publish`, unused `operation_tracer`/`operation_thread` ContextVars
+  removed. Docs: `docs/observability.md`. Tests: `tests/integration/test_trace_topology.py`,
+  `tests/integration/test_langfuse_tracing.py`, `tests/ui/test_streamlit_trace_boundary.py`,
+  `tests/contract/test_observability_contract.py`, `tests/unit/test_async_mcp_bridge.py`.

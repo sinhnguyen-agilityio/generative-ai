@@ -1,5 +1,4 @@
 import asyncio
-from contextlib import contextmanager
 from contextvars import ContextVar
 
 from intelligence_collector.tools.async_bridge import run_async
@@ -21,22 +20,14 @@ def test_sync_bridge_inside_event_loop_and_worker_preserves_context():
 
 
 def test_fetch_operation_trace_contains_redacted_url(stores):
-    from intelligence_collector.services.operation_context import operation_tracer
     from intelligence_collector.services.workflow import DurableOperations
-    spans = []
+    from tests.fixtures.langfuse_capture import LangfuseCapture
 
-    class Tracer:
-        @contextmanager
-        def span(self, *args, **kwargs):
-            spans.append((args, kwargs))
-            yield
-
-    token = operation_tracer.set(Tracer())
-    try:
+    capture = LangfuseCapture()
+    with capture.tracer.execution(run_id="run", thread_id="thread", kind="start"):
         DurableOperations(stores[0]).call("run", "tavily_fetch",
             {"url": "https://source.test/page?tavilyApiKey=private-key"}, lambda: {"content": "original"})
-    finally:
-        operation_tracer.reset(token)
-    assert spans[0][0][0] == "operation.tavily_fetch"
-    assert "https://source.test/page" in spans[0][1]["input"]["arguments"]["url"]
-    assert "private-key" not in str(spans)
+
+    span = capture.named("operation.tavily_fetch")[0]
+    assert span.input["arguments"]["url"] == "https://source.test/page?tavilyApiKey=[REDACTED]"
+    assert "private-key" not in repr(capture.exporter.get_finished_spans()[0].attributes)

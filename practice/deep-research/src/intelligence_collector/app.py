@@ -5,183 +5,70 @@ reviewer's reply.
 
 from __future__ import annotations
 import json
-import os
-import sqlite3
 import time
 from pathlib import Path
 from uuid import uuid4
 from langgraph.types import Command
-from intelligence_collector.agents.report_judge import ReportJudge
-from intelligence_collector.agents.extension_judge import ExtensionJudge
-from intelligence_collector.agents.feedback_router import FeedbackRouter
-from intelligence_collector.agents.researcher import ResearchAgent
-from intelligence_collector.agents.scope import ScopeAgent
-from intelligence_collector.config import RoleModelSettings, Settings, load_local_env
+from intelligence_collector.config import Settings, load_local_env
 from intelligence_collector.contracts import Stage, VerificationResult
 from intelligence_collector.guardrails import GuardrailViolation, normalize_text, validate_request
-from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.recovery import WorkflowRecoveryService
-from intelligence_collector.graph.nodes import Node, ResearchNodes
-from intelligence_collector.models.factory import ModelFactory
-from intelligence_collector.observability.evaluation import (
-    make_context_precision_evaluator,
-    make_faithfulness_evaluator,
-    make_response_relevancy_evaluator,
-)
-from intelligence_collector.observability.tracing import Tracer
+from intelligence_collector.graph.nodes import Node
+from intelligence_collector.observability.tracing import RunTracer
 from intelligence_collector.publication import can_request_approval
-from intelligence_collector.storage.chroma_vector_index import ChromaVectorIndex, default_embeddings
+from intelligence_collector.runtime import (
+    build_model_routers,
+    build_runtime,
+    build_scope_agent,
+)
 from intelligence_collector.storage.run_registry import RunRegistry
 from intelligence_collector.storage.vfs import VFS
-from intelligence_collector.tools.mcp import TavilyMCP
+
+
+# ===== SESSION-CACHED DEPENDENCIES (built once per browser session, see runtime.py) =====
 
 
 def _get_tracer(st):
     if "tracer" not in st.session_state:
-        st.session_state.tracer = Tracer.from_env(required=True)
+        st.session_state.tracer = RunTracer.from_env()
     return st.session_state.tracer
 
 
-def _get_model_routers(st, tracer):
-    """Reasoning-tier (xhigh) and standard-tier models, each with its own fallback; every agent
-    is handed the tier it needs (see RoleModelSettings)."""
+def _get_model_routers(st):
+    """Reasoning-tier and standard-tier models, each with its own fallback; every agent is
+    handed the tier it needs (see RoleModelSettings). Model calls are traced through the graph
+    execution they run in, so the routers carry no tracing dependency."""
     if "model_routers" in st.session_state:
         return st.session_state.model_routers
-    if not os.getenv("INTELLIGENCE_REASONING_MODEL", "").strip():
-        return None
-    routers = ModelFactory().create_routers(
-        RoleModelSettings.from_env(),
-        trace=tracer.model_event, callbacks=tracer.callbacks,
-    )
-    st.session_state.model_routers = routers
+    routers = build_model_routers()
+    if routers is not None:
+        st.session_state.model_routers = routers
     return routers
 
 
-def _get_scope_agent(st, tracer):
+def _get_scope_agent(st):
     if "scope_agent" in st.session_state:
         return st.session_state.scope_agent
-    routers = _get_model_routers(st, tracer)
+    routers = _get_model_routers(st)
     if routers is None:
         return None
-    # Scope runs on the reasoning tier; its content-safety guardrail is a cheap binary check.
-    agent = ScopeAgent(routers.reasoning, guardrail_router=routers.standard)
-    st.session_state.scope_agent = agent
-    return agent
-
-
-def _open_checkpoint_connection(checkpoint_path: str):
-    path = Path(checkpoint_path).expanduser()
-    if path.exists() and path.is_dir():
-        raise RuntimeError(
-            f"Checkpoint path points to a directory, not a SQLite file: {path}"
-        )
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return sqlite3.connect(path, check_same_thread=False)
-    except (OSError, sqlite3.Error) as exc:
-        raise RuntimeError(
-            f"Cannot open SQLite checkpoint database at '{path}'. "
-            "Check INTELLIGENCE_CHECKPOINT_PATH and directory write permissions."
-        ) from exc
-
-
-def _quality_evaluators(settings, embeddings) -> dict:
-    """RAGAS evaluators keyed by their ``ResearchNodes`` argument. Faithfulness is the third
-    verification gate, so it is always built when the judge key is set; Context Precision and
-    Response Relevancy follow ``INTELLIGENCE_EVAL_METRICS``. The judge (default OpenAI
-    gpt-4.1-mini) is independent of the app's reasoning/standard tier models. Without the
-    judge key no evaluator exists and verification reports ERROR (see ``require_faithfulness``).
-    Response Relevancy reuses the vector index's embeddings."""
-    judge_key_env = "GOOGLE_API_KEY" if settings.faithfulness_provider == "google_genai" else "OPENAI_API_KEY"
-    api_key = os.getenv(judge_key_env, "").strip()
-    if not api_key:
-        return {}
-    judge = {"model": settings.faithfulness_model, "api_key": api_key,
-             "provider": settings.faithfulness_provider}
-    factories = {
-        "faithfulness": ("faithfulness_evaluator",
-                         lambda: make_faithfulness_evaluator(**judge)),
-        "context_precision": ("context_precision_evaluator",
-                              lambda: make_context_precision_evaluator(**judge)),
-        "response_relevancy": ("response_relevancy_evaluator",
-                               lambda: make_response_relevancy_evaluator(**judge, embeddings=embeddings)),
-    }
-    metrics = dict.fromkeys(["faithfulness", *settings.eval_metrics])
-    return {factories[m][0]: factories[m][1]() for m in metrics}
+    st.session_state.scope_agent = build_scope_agent(routers)
+    return st.session_state.scope_agent
 
 
 def _get_scope_graph(st, agent, tracer):
     if "scope_graph" in st.session_state:
         return st.session_state.scope_graph
-    from langgraph.checkpoint.sqlite import SqliteSaver
-
-    settings = Settings.from_env()
-    connection = _open_checkpoint_connection(settings.checkpoint_path)
-    run_registry = RunRegistry(settings.run_registry_path)
-    vfs = VFS(settings.vfs_root)
-    research_nodes = None
-    tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
-    tavily_url = os.getenv("TAVILY_MCP_URL", "").strip()
-    if not (tavily_key and tavily_url):
-        st.warning("Research is disabled: configure TAVILY_API_KEY and TAVILY_MCP_URL. "
-                   "This run can only clarify the request and prepare a plan.")
-    judge_key = ("GOOGLE_API_KEY" if settings.faithfulness_provider == "google_genai"
-                 else "OPENAI_API_KEY")
-    if tavily_key and tavily_url and not os.getenv(judge_key, "").strip():
-        st.warning(f"Report verification needs RAGAS Faithfulness: configure {judge_key}. "
-                   "Until then every verification ends in ERROR and no report can be approved.")
-    if tavily_key and tavily_url:
-        researcher = ResearchAgent(
-            st.session_state.model_routers.standard,
-            # Each research sub-agent gets its own MCP client and per-task search budget.
-            mcp_factory=lambda: TavilyMCP(
-                tavily_url,
-                tavily_key,
-                max_calls=settings.max_search_calls,
-            ),
-            max_search_calls=settings.max_search_calls,
-            max_sources=settings.max_sources_per_task,
-        )
-        embeddings = default_embeddings(settings.embedding_model, settings.embedding_provider)
-        research_nodes = ResearchNodes(
-            vfs,
-            # Real semantic retrieval: Gemini embeddings, persisted locally via Chroma. Used to
-            # narrow the Build/Fix prompt to each question's most relevant sources; Verify always
-            # re-reads the full evidence independently, so this never affects what gets checked.
-            ChromaVectorIndex(settings.chroma_path, embeddings=embeddings,
-                              model=settings.embedding_model, provider=settings.embedding_provider),
-            researcher,
-            # Coverage gate; shares the scope/planner reasoning-tier model. Research readiness is
-            # derived from the stored bundles without an extra assessor call.
-            report_judge=ReportJudge(agent.router),
-            report_guidelines=settings.report_guidelines,
-            max_concurrent_researchers=settings.max_concurrent_researchers,
-            recovery_budget=settings.recovery_attempts,
-            evidence_top_k=settings.evidence_top_k,
-            require_faithfulness=True,
-            **_quality_evaluators(settings, embeddings),
-        )
-    graph = build_graph(
-        scope_agent=agent,
-        vfs=vfs,
-        research_nodes=research_nodes,
-        checkpointer=SqliteSaver(connection),
-        tracer=tracer,
+    runtime = build_runtime(
+        st.session_state.model_routers, agent, tracer,
         lifecycle=lambda node, status: st.session_state.get(
-            "_lifecycle_callback", lambda *_: None
-        )(node, status),
-        run_registry=run_registry,
-        with_approval=True,
-        output_dir=settings.output_dir,
-        # A cheap binary classification, so the standard tier (fewer rate-limit failures).
-        feedback_router=FeedbackRouter(st.session_state.model_routers.standard),
-        # Decides whether stored evidence already covers a section the reviewer asked to add.
-        extension_judge=ExtensionJudge(st.session_state.model_routers.standard),
+            "_lifecycle_callback", lambda *_: None)(node, status),
+        warn=st.warning,
     )
-    st.session_state.scope_checkpoint_connection = connection
-    st.session_state.run_registry = run_registry
-    st.session_state.scope_graph = graph
-    return graph
+    st.session_state.scope_checkpoint_connection = runtime.checkpoint_connection
+    st.session_state.run_registry = runtime.run_registry
+    st.session_state.scope_graph = runtime.graph
+    return runtime.graph
 
 
 def _get_vfs(st):
@@ -191,9 +78,8 @@ def _get_vfs(st):
 
 
 def _start_new_thread(st):
-    """Reset conversation-scoped state only; cached model/graph/tracer connections stay put."""
-    if "tracer" in st.session_state and "scope_thread_id" in st.session_state:
-        st.session_state.tracer.end_thread(st.session_state.scope_thread_id)
+    """Reset conversation-scoped state only; cached model/graph/tracer connections stay put.
+    Nothing is open in Langfuse between turns, so there is nothing to close here."""
     new_thread_id = str(uuid4())
     st.session_state.scope_thread_id = new_thread_id
     st.session_state.scope_state = {"run_id": str(uuid4()), "thread_id": new_thread_id}
@@ -636,14 +522,17 @@ def _stream_graph_turn(st, graph, config, graph_input, placeholders, vfs_for_ui)
     human-in-the-loop review. Every step redraws the pipeline and activity-log placeholders
     immediately. Returns the clean final state dict — LangGraph's own `"__interrupt__"` marker
     (present only when this turn paused at the review) is stripped out, since its meaning is
-    already captured by `stage` staying "Awaiting Approval"."""
+    already captured by `stage` staying "Awaiting Approval". It is returned separately, so the
+    trace can record where the turn paused."""
     result: dict = {}
+    interrupted: tuple = ()
     for chunk in graph.stream(graph_input, config, stream_mode="values"):
+        interrupted = chunk.get("__interrupt__") or interrupted
         result = {key: value for key, value in chunk.items() if key != "__interrupt__"}
         live_snapshot = {**result, "activity": list(st.session_state.activity)}
         _render_agent_pipeline(st, placeholders, live_snapshot, vfs_for_ui)
         _render_activity_log(st, placeholders[_ACTIVITY_LOG], st.session_state.activity)
-    return result
+    return result, interrupted
 
 
 _ACTIVITY_LOG = "__activity_log__"  # placeholders key of the activity log (not an agent row)
@@ -660,15 +549,31 @@ _PROGRESS_BY_STAGE = {
 _THREAD_DONE_STAGES = {Stage.PUBLISHED.value, Stage.INCOMPLETE.value, "Cancelled", "Exported Incomplete"}
 
 
+def _chat_turn_trace(text, *, reviewing, clarifying, planning) -> tuple[str, str, dict]:
+    """(execution kind, interrupt answered, observation input) of one chat turn."""
+    if reviewing:
+        return "resume", "publication_approval", {"review_reply": text}
+    if planning:
+        return "resume", "plan_approval", {"plan_reply": text}
+    if clarifying:
+        return "resume", "clarification_required", {"clarification_reply": text}
+    return "start", "", {"request": text}
+
+
 def _run_chat_turn(st, text, *, reviewing, clarifying=False, planning=False, placeholders, vfs_for_ui):
     """One chat message drives one graph turn: a new request (or scope answer) starts/continues
     the research; while a report awaits review, the message is the reviewer's reply and resumes
-    the paused graph, whose feedback classifier reads it as approve / format / scope."""
+    the paused graph, whose feedback classifier reads it as approve / format / scope.
+
+    The turn is one ``research.execution`` in the run's Langfuse trace (see
+    ``observability/tracing.py``); a Streamlit rerun without a message runs no turn."""
     tracer = _get_tracer(st)
     run_id = st.session_state.scope_state["run_id"]
     thread_id = st.session_state.scope_thread_id
     st.session_state._execution_id = str(uuid4())
     resuming = reviewing or clarifying or planning
+    kind, interrupt_kind, trace_input = _chat_turn_trace(
+        text, reviewing=reviewing, clarifying=clarifying, planning=planning)
     with st.status("Processing your reply" if resuming else "Processing research request",
                    expanded=False) as indicator:
         def lifecycle(node, status):
@@ -677,62 +582,31 @@ def _run_chat_turn(st, text, *, reviewing, clarifying=False, planning=False, pla
             indicator.update(label=item["label"], state="running")
 
         st.session_state._lifecycle_callback = lifecycle
-        trace_input = (
-            {"review_reply": text} if reviewing
-            else {"plan_reply": text} if planning
-            else {"clarification_reply": text} if clarifying
-            else {"request": text}
-        )
-        # Every turn of one chat thread (request, clarifications, review replies, re-scoping)
-        # shares one Langfuse trace, keyed by the thread, and nests under the thread's single
-        # `research.thread` root, opened on its first turn and ended once the thread finishes
-        # (or on "New thread"), so Langfuse times the whole thread.
-        trace_key = f"thread:{thread_id}"
-        tracer.start_thread(run_id, thread_id, trace_key=trace_key, input=trace_input)
-        with tracer.execution(
-            run_id, thread_id, input=trace_input, trace_key=trace_key,
-        ) as execution:
-            agent = _get_scope_agent(st, tracer)
-            if agent is None:
-                raise RuntimeError(
-                    "Reasoning-tier model is not configured. "
-                    "Set INTELLIGENCE_REASONING_MODEL and retry."
-                )
-            graph_input = (
-                Command(resume={"reply": text, "actor": "local-user"}) if resuming
-                else {**st.session_state.scope_state, "request": text, "thread_id": thread_id}
+        agent = _get_scope_agent(st)
+        if agent is None:
+            raise RuntimeError(
+                "Reasoning-tier model is not configured. "
+                "Set INTELLIGENCE_REASONING_MODEL and retry."
             )
-            config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
-            graph = _get_scope_graph(st, agent, tracer)
+        graph = _get_scope_graph(st, agent, tracer)
+        graph_input = (
+            Command(resume={"reply": text, "actor": "local-user"}) if resuming
+            else {**st.session_state.scope_state, "request": text, "thread_id": thread_id}
+        )
+        with tracer.execution(run_id=run_id, thread_id=thread_id, kind=kind,
+                              interrupt_kind=interrupt_kind, input=trace_input) as execution:
+            config = execution.graph_config(
+                {"configurable": {"thread_id": thread_id}, "recursion_limit": 100})
             try:
                 # stream_mode="values" yields the full accumulated state after each node, so
                 # every step is redrawn straight into the side panel for live progress. A turn
                 # that reaches a fully-passing report pauses at the human-in-the-loop review.
-                result = _stream_graph_turn(st, graph, config, graph_input, placeholders, vfs_for_ui)
+                result, interrupted = _stream_graph_turn(
+                    st, graph, config, graph_input, placeholders, vfs_for_ui)
             finally:
                 st.session_state.pop("_lifecycle_callback", None)
-            execution.output = json.dumps({
-                "stage": result.get("stage"),
-                "scope_assessment": result.get("scope_assessment"),
-                "research_brief": result.get("scoped_request"),
-                "approval": result.get("approval"),
-                "feedback_route": result.get("feedback_route"),
-                "publication": result.get("publication"),
-                "faithfulness_score": result.get("faithfulness_score"),
-                "faithfulness_error": result.get("faithfulness_error"),
-                "context_precision_score": result.get("context_precision_score"),
-                "context_precision_error": result.get("context_precision_error"),
-                "response_relevancy_score": result.get("response_relevancy_score"),
-                "response_relevancy_error": result.get("response_relevancy_error"),
-                "messages": [
-                    {"role": getattr(message, "type", "message"),
-                     "content": getattr(message, "content", str(message))}
-                    for message in result.get("messages", [])
-                ],
-            }, ensure_ascii=False, indent=2, default=str)
+            execution.finish({**result, "__interrupt__": interrupted})
         indicator.update(label="Processing complete", state="complete", expanded=False)
-    if result.get("stage") in _THREAD_DONE_STAGES:
-        tracer.end_thread(thread_id)
     result["activity"] = list(st.session_state.activity)
     result["trace_id"] = execution.trace_id
     st.session_state.scope_state = result
@@ -744,11 +618,11 @@ def _run_chat_turn(st, text, *, reviewing, clarifying=False, planning=False, pla
 
 def _recovery_service(st):
     tracer = _get_tracer(st)
-    agent = _get_scope_agent(st, tracer)
+    agent = _get_scope_agent(st)
     if agent is None:
         raise RuntimeError("Configure the reasoning model before recovering a run.")
     graph = _get_scope_graph(st, agent, tracer)
-    return WorkflowRecoveryService(graph, st.session_state.run_registry)
+    return WorkflowRecoveryService(graph, st.session_state.run_registry, tracer)
 
 
 def _adopt_recovered_state(st, state):
@@ -832,10 +706,9 @@ def _render_recovery_controls(st, snapshot, checkpoint=None):
             except Exception as exc:
                 st.error(f"Recovery failed: {exc}")
     elif checkpoint is not None and checkpoint.next_nodes and not checkpoint.has_interrupt:
-        service = WorkflowRecoveryService(st.session_state.scope_graph, st.session_state.run_registry)
         if st.button("Continue unfinished run"):
             try:
-                _adopt_recovered_state(st, service.continue_run(snapshot["thread_id"]))
+                _adopt_recovered_state(st, _recovery_service(st).continue_run(snapshot["thread_id"]))
                 st.rerun()
             except Exception as exc:
                 st.error(f"Continuation failed: {exc}")
@@ -868,6 +741,9 @@ def render():
     pending = bool(checkpoint is not None and checkpoint.next_nodes
                    and not checkpoint.has_interrupt and not checkpoint.terminal)
     st.caption(f"{st.session_state.stage} · {st.session_state.progress}")
+    tracing_problem = _get_tracer(st).disabled_reason
+    if tracing_problem:
+        st.caption(f"Langfuse tracing is off ({tracing_problem}); research runs normally.")
     vfs_for_ui = _get_vfs(st)
     chat_col, panel_col = st.columns([3, 2], gap="large")
 

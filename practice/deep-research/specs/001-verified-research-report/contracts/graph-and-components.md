@@ -34,11 +34,15 @@ Every port failure is typed, includes retryability, and preserves already commit
 
 ## Langfuse trace contract
 
-Each chat thread has exactly one trace and one root `research.thread` observation, which stays
-open from the first turn until the thread finishes, so its duration spans the whole thread. Each live graph
-invocation creates one `research.turn` observation nested under that root. Its Langfuse session ID is
-the LangGraph `thread_id`; metadata includes `run_id` and a unique `execution_id`. Graph nodes are
-child spans named `graph.<node>`. LangChain model calls are nested generation observations, while
-structured parsing, retries, selected model, fallback, prompt version, and safe failures are recorded
-as child validation spans. The client flushes before the invocation returns. Trace payloads exclude
-API keys, Langfuse credentials, and environment-variable values.
+Each research run has exactly one trace, whose ID is derived from `run_id`, so any process can
+attach later work to it; its Langfuse session ID is the LangGraph `thread_id`. Every graph
+invocation (start, resume after an interrupt, recovery, continuation) creates one
+`research.execution` observation (metadata `execution_kind`, `interrupt_kind`, `execution_id`)
+that is closed when the invocation returns; no observation stays open across a human pause.
+The Langfuse LangChain callback created for the execution is passed in the graph config, so
+node runs, research sub-agent runs (`research_agent`, with `todo_id`) and model generations
+nest beneath it. MCP calls (`mcp.search`), persistence (`research.persist`), vector-index
+operations and RAGAS evaluators are child observations of the current run. Each LLM call is
+recorded once. Exported payloads are masked (credentials, secret URL parameters, strings over
+4,000 characters). Tracing failures never change workflow behaviour. Details:
+`docs/observability.md`.

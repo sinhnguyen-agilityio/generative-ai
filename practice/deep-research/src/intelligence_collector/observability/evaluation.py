@@ -90,9 +90,19 @@ def _google_judge_llm(model: str, api_key: str):
 
 def _openai_judge_llm(model: str, api_key: str):
     """Build a ragas judge LLM around the OpenAI API. An ``AsyncOpenAI`` client keeps
-    ``Faithfulness.ascore()`` on a native async path (no sync-client patching needed)."""
-    from openai import AsyncOpenAI
+    ``Faithfulness.ascore()`` on a native async path (no sync-client patching needed).
+
+    Inside a traced execution the client is Langfuse's drop-in ``AsyncOpenAI``, so each judge
+    call is a generation (model, usage, cost) under the evaluator observation. The Gemini judge
+    has no such integration: only its evaluator observation is recorded."""
     from ragas.llms import llm_factory
+
+    from intelligence_collector.observability.tracing import tracing_active
+
+    if tracing_active():
+        from langfuse.openai import AsyncOpenAI
+    else:
+        from openai import AsyncOpenAI
 
     return llm_factory(
         model, provider="openai", client=AsyncOpenAI(api_key=api_key), max_tokens=JUDGE_MAX_TOKENS,

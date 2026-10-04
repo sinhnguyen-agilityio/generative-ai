@@ -12,12 +12,10 @@ update behavior itself is verified directly against LangGraph's `stream_mode="va
 from pathlib import Path
 
 import pytest
-from langchain_core.callbacks import BaseCallbackHandler
 
-from intelligence_collector.observability.tracing import Tracer
-from tests.contract.test_observability_contract import FakeLangfuseClient, fake_propagation
-from tests.integration.test_langfuse_tracing import CallbackAwareModel
+from intelligence_collector.observability.tracing import RunTracer
 from tests.integration.test_langchain_scope import (
+    RecordingChatModel,
     _brief_payload,
     _clear_payload,
     _guardrail_payload,
@@ -37,7 +35,6 @@ def disable_local_dotenv(monkeypatch):
 def test_chat_turn_streams_through_the_graph_and_settles_on_the_planned_stage(tmp_path, monkeypatch):
     from streamlit.testing.v1 import AppTest
 
-    monkeypatch.setattr("langfuse.propagate_attributes", fake_propagation)
     monkeypatch.setenv("INTELLIGENCE_REASONING_MODEL", "fake-scope")
     monkeypatch.setenv("INTELLIGENCE_REASONING_PROVIDER", "fake")
     monkeypatch.setenv("INTELLIGENCE_STANDARD_MODEL", "fake-standard")
@@ -49,16 +46,14 @@ def test_chat_turn_streams_through_the_graph_and_settles_on_the_planned_stage(tm
 
     # One shared fake model backs both tiers (init_chat_model is patched to ignore its args),
     # so every invoke_messages call — guardrail, scope, brief, planner — draws from one queue.
-    # CallbackAwareModel (not the plain RecordingChatModel) is required because the real tracer
-    # below has callbacks configured, so ModelRouter passes a `config=` kwarg into `.invoke()`.
-    model = CallbackAwareModel([_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()])
+    model = RecordingChatModel([_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()])
     monkeypatch.setattr(
         "intelligence_collector.models.factory.init_chat_model",
         lambda *args, **kwargs: model,
     )
     monkeypatch.setattr(
         "intelligence_collector.app._get_tracer",
-        lambda st: Tracer(client=FakeLangfuseClient(), callback_handler=BaseCallbackHandler()),
+        lambda st: RunTracer(),
     )
 
     app = AppTest.from_file(APP_PATH).run()

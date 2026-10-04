@@ -44,17 +44,34 @@ class InvalidRecoveryOperation(RecoveryServiceError):
 
 
 class WorkflowRecoveryService:
-    """Discover, inspect, and resume registered LangGraph runs."""
+    """Discover, inspect, and resume registered LangGraph runs.
 
-    def __init__(self, graph, run_registry):
+    With a `tracer` (``observability.tracing.RunTracer``) every graph invocation runs as one
+    ``research.execution`` of the run's trace, so recovered and resumed work joins the trace of
+    the run it continues instead of starting new root traces."""
+
+    def __init__(self, graph, run_registry, tracer=None):
         self.graph = graph
         self.run_registry = run_registry
+        self.tracer = tracer
 
     def _config(self, thread_id: str) -> dict:
         record = self._registered(thread_id)
         return {"configurable": {"thread_id": thread_id,
                                  "checkpoint_ns": record.checkpoint_namespace},
                 "recursion_limit": 100}
+
+    def _invoke(self, payload, thread_id: str, *, kind: str, interrupt_kind: str = "") -> dict:
+        """Invoke the graph for `thread_id`, traced when a tracer is configured."""
+        config = self._config(thread_id)
+        if self.tracer is None:
+            return self._clean_result(self.graph.invoke(payload, config))
+        record = self._registered(thread_id)
+        with self.tracer.execution(run_id=record.run_id, thread_id=record.thread_id, kind=kind,
+                                   interrupt_kind=interrupt_kind) as execution:
+            result = self.graph.invoke(payload, execution.graph_config(config))
+            execution.finish(result)
+        return self._clean_result(result)
 
     def load_state(self, thread_id: str) -> dict:
         """Restore authoritative state without starting a new request or replaying START."""
@@ -76,7 +93,7 @@ class WorkflowRecoveryService:
                          research_gaps=[{"todo_id": todos[0]["todo_id"], "instruction": instruction}],
                          progress_assessment={"ready_for_synthesis": False})
             self.graph.update_state(self._config(thread_id), state, as_node="research_complete")
-            return self._clean_result(self.graph.invoke(None, self._config(thread_id)))
+            return self._invoke(None, thread_id, kind="recovery")
         # Older workflows ended at these human-waiting states. Bridge them through
         # existing graph edges rather than restarting scoping or bypassing approval.
         if not checkpoint.next and not self._interrupts(checkpoint):
@@ -93,7 +110,7 @@ class WorkflowRecoveryService:
                     (state.get("scope_assessment") or {}).get("need_clarification") else None)
             if node is not None:
                 self.graph.update_state(self._config(thread_id), state, as_node=node)
-                return self._clean_result(self.graph.invoke(None, self._config(thread_id)))
+                return self._invoke(None, thread_id, kind="recovery")
         return state
 
     def list_recoverable_runs(self) -> list[RunRecord]:
@@ -228,8 +245,7 @@ class WorkflowRecoveryService:
                          values.get("research_gap_attempt", 0) >= min(values.get("research_gap_budget", 1), 1))
         if "replan" in snapshot.next_nodes or exhausted_gap:
             return self.load_state(thread_id)
-        result = self.graph.invoke(None, self._config(snapshot.thread_id))
-        return self._clean_result(result)
+        return self._invoke(None, snapshot.thread_id, kind="continue")
 
     @staticmethod
     def _validated_resume(kind: str, decision: Mapping[str, Any]) -> dict:
@@ -257,7 +273,5 @@ class WorkflowRecoveryService:
         if not isinstance(decision, Mapping):
             raise TypeError("resume decision must be a mapping")
         payload = self._validated_resume(snapshot.interrupt_kind, decision)
-        result = self.graph.invoke(
-            Command(resume=payload), self._config(snapshot.thread_id)
-        )
-        return self._clean_result(result)
+        return self._invoke(Command(resume=payload), snapshot.thread_id, kind="resume",
+                            interrupt_kind=snapshot.interrupt_kind)

@@ -1,11 +1,12 @@
-from langchain_core.callbacks import BaseCallbackHandler
+"""Scope and planning under a traced execution: every model call is one Langfuse generation,
+with model name, usage and the rendered prompt, nested under the graph node that made it."""
 
 from intelligence_collector.agents.scope import ScopeAgent
 from intelligence_collector.graph.build import build_graph
 from intelligence_collector.models.router import ModelRouter
-from intelligence_collector.observability.tracing import Tracer
 from intelligence_collector.storage.vfs import VFS
-from tests.contract.test_observability_contract import FakeLangfuseClient, fake_propagation
+from tests.fixtures.chat_model import USAGE, FakeChatModel
+from tests.fixtures.langfuse_capture import LangfuseCapture
 from tests.integration.test_langchain_scope import (
     RecordingChatModel,
     _brief_payload,
@@ -15,66 +16,36 @@ from tests.integration.test_langchain_scope import (
 )
 
 
-class CallbackAwareModel(RecordingChatModel):
-    def __init__(self, responses):
-        super().__init__(responses)
-        self.configs = []
+def test_scope_and_planning_generations_nest_under_their_nodes(tmp_path):
+    capture = LangfuseCapture()
+    model = FakeChatModel(model_name="fake-scope-model", delegate=RecordingChatModel(
+        [_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()]))
+    graph = build_graph(scope_agent=ScopeAgent(ModelRouter(model)), vfs=VFS(tmp_path),
+                        tracer=capture.tracer)
 
-    def invoke(self, messages, config=None):
-        self.configs.append(config)
-        return super().invoke(messages)
+    with capture.tracer.execution(run_id="run", thread_id="thread", kind="start",
+                                  input={"request": "bounded request"}) as execution:
+        result = graph.invoke({"run_id": "run", "thread_id": "thread",
+                               "request": "bounded request api_key=do-not-export"},
+                              execution.graph_config({}))
+        execution.finish(result)
 
-
-def test_scope_execution_has_root_nodes_model_events_callbacks_and_flush(monkeypatch, tmp_path):
-    monkeypatch.setattr("langfuse.propagate_attributes", fake_propagation)
-    client = FakeLangfuseClient()
-    callback = BaseCallbackHandler()
-    tracer = Tracer(client=client, callback_handler=callback)
-    model = CallbackAwareModel([_guardrail_payload(), _clear_payload(), _brief_payload(), _plan_payload()])
-    router = ModelRouter(
-        model,
-        trace=tracer.model_event,
-        callbacks=tracer.callbacks,
-    )
-    graph = build_graph(
-        scope_agent=ScopeAgent(router),
-        vfs=VFS(tmp_path),
-        tracer=tracer,
-    )
-
-    with tracer.execution("run", "thread", input={"request": "bounded request"}) as execution:
-        result = graph.invoke(
-            {"run_id": "run", "thread_id": "thread", "request": "bounded request"}
-        )
-        execution.output = {"stage": result["stage"]}
-
-    names = [record["name"] for record in client.records]
-    assert names == [
-        "research.turn",
-        "graph.clarify_with_user",
-        "model.validation.guardrail",
-        "model.validation.scope",
-        "graph.write_research_brief",
-        "model.validation.scope",
-        "graph.planning",
-        "model.validation.planner",
+    assert result["stage"] == "Planning"
+    generations = [span for span in capture.spans() if span.type == "generation"]
+    assert [capture.ancestors(g)[:2] for g in generations] == [
+        ["model.guardrail", "clarify_with_user"],
+        ["model.scope", "clarify_with_user"],
+        ["model.scope", "write_research_brief"],
+        ["model.planner", "planning"],
     ]
-    assert all(record["parent"] for record in client.records[1:])
-    assert len(model.configs) == 4
-    assert all(config["callbacks"] == [callback] for config in model.configs)
-    assert all(config["metadata"]["langfuse_session_id"] == "thread" for config in model.configs)
-    model_records = [record for record in client.records if record["name"] == "model.validation.scope"]
-    assert "You are the Scope Agent" in model_records[0]["input"]
-    assert "bounded request" in model_records[0]["input"]
-    assert '"need_clarification": false' in model_records[0]["updates"][-1]["output"]
-    assert "Restate what the user wants answered" in model_records[1]["input"]
-    assert '"research_question"' in model_records[1]["updates"][-1]["output"]
-    planner_record = next(r for r in client.records if r["name"] == "model.validation.planner")
-    assert "You are the Planner" in planner_record["input"]
-    assert '"questions"' in planner_record["updates"][-1]["output"]
-    assert all(isinstance(record["input"], str) for record in client.records)
-    assert all(
-        isinstance(record["updates"][-1]["output"], str)
-        for record in client.records
-    )
-    assert client.flush_count == 1
+    assert model.calls == 4
+    exported = capture.exporter.get_finished_spans()
+    generation = next(s for s in exported if s.attributes.get("langfuse.observation.type")
+                      == "generation")
+    assert generation.attributes["langfuse.observation.model.name"] == "fake-scope-model"
+    assert '"input": 12' in generation.attributes["langfuse.observation.usage_details"]
+    assert USAGE["output_tokens"] == 5
+    planner_input = str(generations[-1].input)
+    assert "You are the Planner" in planner_input
+    everything = repr([dict(s.attributes or {}) for s in exported])
+    assert "do-not-export" not in everything

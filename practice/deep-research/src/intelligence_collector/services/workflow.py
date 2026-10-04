@@ -125,13 +125,10 @@ class DurableOperations:
             self.vfs.write_json(run_id, relative, record, "operation_attempt")
             operation_progress(operation, key, "running", inputs)
             try:
-                from contextlib import nullcontext
-                from intelligence_collector.services.operation_context import operation_tracer, operation_thread
-                tracer = operation_tracer.get()
-                with (tracer.span(f"operation.{operation}", run_id, operation_thread.get(),
-                                  input={"operation_id": key, "attempt": record["attempts"],
-                                         "arguments": redact_value(inputs)})
-                      if tracer is not None else nullcontext()):
+                from intelligence_collector.observability.tracing import traced
+                with traced(f"operation.{operation}",
+                            input={"arguments": redact_value(inputs)},
+                            metadata={"operation_id": key, "attempt": record["attempts"]}):
                     result = invoke()
                 if validate_result is not None:
                     validate_result(result)

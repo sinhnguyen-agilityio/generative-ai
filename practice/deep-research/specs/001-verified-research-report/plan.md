@@ -63,17 +63,16 @@ of `SystemMessage`, `MessagesPlaceholder`, and data variables. Scope history is 
 state under the thread ID and passed as `HumanMessage`/`AIMessage` turns. Invalid structured output
 is retried within bounds or recorded as an error.
 
-**Langfuse Trace Hierarchy**: A chat thread has one trace (ID seeded from `thread:{thread_id}`) with
-a single `research.thread` root `agent` observation. The tracer opens it on the thread's first
-turn and keeps it open, so Langfuse timestamps the whole thread; it ends when the thread reaches
-`Published` or `Needs review`, on "New thread", or when the tracer is garbage-collected or the
-process exits. Each live Streamlit submission creates a `research.turn` observation as a direct
-child of that root (not via `trace_context`, which Langfuse would mark as a trace root), and the
-root's output follows the latest turn. Langfuse `session_id` equals the LangGraph `thread_id`, while
-`run_id` and a per-submission `execution_id` are propagated metadata. Every graph node creates a
-child span, LangChain's callback handler records nested model generations and token usage, and the
-router records structured validation/fallback metadata. The client flushes after every execution.
-Live execution fails before model invocation when tracing is disabled or misconfigured; offline
+**Langfuse Trace Hierarchy**: A research run has one trace whose ID is derived from `run_id`
+(`create_trace_id(seed=...)`), with `session_id` = LangGraph `thread_id`. Each graph invocation
+(chat turn, interrupt resume, recovery action, continuation) is one `research.execution`
+observation, closed when the invocation returns, so nothing stays open across human pauses or
+restarts. `RunTracer.execution` creates a Langfuse `CallbackHandler` per invocation and
+`Execution.graph_config` passes it in the LangGraph config: node runs, `research_agent`
+sub-agent runs and model generations nest under the execution, and model calls inherit the
+callback instead of passing their own. Non-LangChain operations (MCP, persistence, Chroma,
+RAGAS) use `traced()`. Langfuse problems disable tracing with a reason and never stop research;
+offline
 tests use a recording client and never require or expose credentials.
 
 **Scale/Scope**: One local user and one active run at a time for the first release; dozens of
@@ -195,6 +194,7 @@ alternatives that would violate the constitution or clarified specification.
 ```text
 src/intelligence_collector/
 ├── app.py              # Streamlit UI: chat + framed Pipeline / Activity log / Details panel
+├── runtime.py          # composition root: builds models, agents, stores and the graph (no Streamlit)
 ├── config.py           # Settings, RoleModelSettings (reasoning + standard tiers), LangfuseSettings
 ├── contracts.py        # Pydantic contracts (stages, LLM outputs, verification, approval, publication)
 ├── guardrails.py       # deterministic request checks + content-safety verdict contract
@@ -203,7 +203,8 @@ src/intelligence_collector/
 ├── graph/
 │   ├── state.py            # GraphState
 │   ├── build.py            # wiring only: nodes + edges per topology
-│   ├── nodes.py            # Node names, Scope/Planner/Research/BVF/Approval nodes, stubs
+│   ├── nodes/              # node logic by phase: common, interrupts, scope, research, report,
+│   │                       #   review, recovery, stubs (re-exported from __init__)
 │   ├── routing.py          # named conditional-edge routers
 │   └── instrumentation.py  # node_wrapper: lifecycle notifications + tracing
 ├── agents/
@@ -228,7 +229,7 @@ src/intelligence_collector/
 │   ├── vector_index.py         # VectorIndex Protocol + LocalVectorIndex (lexical, offline)
 │   └── chroma_vector_index.py  # ChromaVectorIndex: Gemini embeddings (default), local Chroma persistence
 ├── models/
-│   ├── router.py       # ModelRouter: primary/fallback, tracing, structured-output parsing
+│   ├── router.py       # ModelRouter: primary/fallback, structured-output parsing (traced via callbacks)
 │   ├── factory.py      # ModelFactory: init_chat_model wiring, create_routers (reasoning + standard)
 │   └── redaction.py
 └── observability/
@@ -249,11 +250,13 @@ tested independently and no UI path can bypass workflow gates.
 
 ### Graph Module Organization (FR-030a)
 
-- `graph/nodes.py` owns the `Node` name constants (single source for wiring, `app.py` activity
-  labels, and `graph.<node>` trace spans) and all node logic. Collaborator-dependent nodes are
-  grouped into injected classes: `ScopeNodes(scope_agent, vfs)`, `PlannerNodes(planner_agent, vfs)`,
-  and `ResearchNodes(vfs, index, researcher, acceptance_verifier=None, max_concurrent_researchers=3)`,
-  which owns a `ResearchSupervisor` and a `BVFNodes` (holding the optional `AcceptanceVerifier`).
+- `graph/nodes/` (a package, one module per phase) owns the node logic: `common.py` (the `Node`
+  name constants, the single source for wiring, `app.py` activity labels and trace observation
+  names, plus workflow limits), `interrupts.py` (every human-in-the-loop pause), `scope.py`
+  (`ScopeNodes`, `PlannerNodes`), `research.py` (`ResearchNodes`), `report.py` (`BVFNodes`),
+  `review.py` (`ApprovalNodes`), `recovery.py` (`RecoveryNodes`) and `stubs.py`. Its
+  `__init__` re-exports every public name, so `from intelligence_collector.graph.nodes import
+  ...` is unchanged. `ResearchNodes` owns a `ResearchSupervisor` and a `BVFNodes`.
   `build_graph(planner_agent=...)` defaults to a `PlannerAgent` sharing the scope agent's model
   router (`scope_agent.router`) — in the live app this is the reasoning-tier router, while `ResearchAgent`
   and `ReportWriter` are constructed with the standard-tier router.

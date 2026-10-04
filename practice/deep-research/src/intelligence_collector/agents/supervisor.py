@@ -17,6 +17,7 @@ from intelligence_collector.agents.worker import restore_research
 from intelligence_collector.agents.worker import research_prefix
 from intelligence_collector.contracts import ResearchFindings
 from intelligence_collector.contracts import ResearchTodo, TodoStatus
+from intelligence_collector.observability.tracing import traced
 from intelligence_collector.tools.mcp import redact_mcp_error
 from intelligence_collector.tools.url_tracking import UrlClaims, UrlRegistry
 
@@ -102,12 +103,16 @@ class ResearchSupervisor:
         for finished in asyncio.as_completed(tasks):
             todo_id, outcome = await finished
             try:
-                payload = asdict(outcome)
-                payload["findings"] = outcome.findings.model_dump(mode="json") if outcome.findings else None
-                self.vfs.write_json(run_id, f"{research_prefix(by_id[todo_id])}/retrieved_outcome.json",
-                                    payload, "retrieved_outcome", task_id=todo_id)
-                results[todo_id] = persist_research(
-                    self.vfs, self.index, run_id, by_id[todo_id], outcome, registry)
+                with traced("research.persist", metadata={"todo_id": todo_id}) as observation:
+                    payload = asdict(outcome)
+                    payload["findings"] = outcome.findings.model_dump(mode="json") if outcome.findings else None
+                    self.vfs.write_json(run_id, f"{research_prefix(by_id[todo_id])}/retrieved_outcome.json",
+                                        payload, "retrieved_outcome", task_id=todo_id)
+                    results[todo_id] = persist_research(
+                        self.vfs, self.index, run_id, by_id[todo_id], outcome, registry)
+                    todo, refs, chunks = results[todo_id]
+                    observation.output = {"status": todo.status.value, "artifacts": len(refs),
+                                          "indexed_chunks": len(chunks)}
             except Exception as exc:
                 # Finish persisting siblings even if one local index/storage operation failed.
                 errors.append(exc)

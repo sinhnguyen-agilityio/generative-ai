@@ -30,6 +30,7 @@ from intelligence_collector.agents.prompts import (
     RESEARCHER_TEMPLATE,
 )
 from intelligence_collector.contracts import ResearchFindings
+from intelligence_collector.observability.tracing import traced
 from intelligence_collector.tools.mcp import MCPResearchPort, redact_mcp_error
 from intelligence_collector.tools.url_tracking import UrlClaims, normalize_url
 
@@ -188,7 +189,8 @@ class ResearchAgent:
             "messages": [HumanMessage(content=f"Research question:\n{question}")],
             "llm_calls": 0,
             "search_calls": 0,
-        })
+        }, config={"run_name": "research_agent",
+                   "metadata": {"todo_id": task_id, "run_id": run_id}})
         outcome.search_calls = final.get("search_calls", 0)
         outcome.sources = final.get("sources", [])
         outcome.errors = final.get("errors", [])
@@ -254,12 +256,22 @@ class ResearchAgent:
                     calls += 1
                     remaining = source_budget - len(owned_urls)
                     try:
-                        rows = mcp.search(
-                            query,
-                            server=outcome.mcp_server,
-                            tool=outcome.mcp_tool,
-                            max_results=remaining,
-                        )
+                        with traced(
+                            "mcp.search", as_type="tool",
+                            input={"query": query, "max_results": remaining},
+                            metadata={"mcp_server": outcome.mcp_server,
+                                      "mcp_tool": outcome.mcp_tool, "todo_id": task_id},
+                        ) as observation:
+                            rows = mcp.search(
+                                query,
+                                server=outcome.mcp_server,
+                                tool=outcome.mcp_tool,
+                                max_results=remaining,
+                            )
+                            # Locators only: page content stays in the VFS captures.
+                            observation.output = {
+                                "results": len(rows),
+                                "urls": [str(row.get("url", "")) for row in rows]}
                     except Exception as exc:  # retrieval failures are task outcomes, not crashes
                         error = redact_mcp_error(exc)
                         errors.append(error)

@@ -9,9 +9,16 @@ _KEY_VALUE = re.compile(r"(?i)\b(api[_-]?key|secret|password|token|authorization
 _BEARER = re.compile(r"(?i)\bbearer\s+[a-z0-9._-]{8,}")
 
 
+# URL query parameters whose name contains a secret marker, e.g. Tavily's `?tavilyApiKey=...`.
+_QUERY_SECRET = re.compile(
+    r"(?i)([?&][\w.-]*(?:api[_-]?key|secret|password|token)[\w.-]*=)[^&\s'\"]+")
+
+
 def redact_text(value: object) -> str:
-    """Stringify `value` and mask `key=value` secrets and `Bearer <token>` credentials."""
-    text = _KEY_VALUE.sub(r"\1=[REDACTED]", str(value))
+    """Stringify `value` and mask `key=value` secrets, secret URL query parameters and
+    `Bearer <token>` credentials."""
+    text = _QUERY_SECRET.sub(r"\1[REDACTED]", str(value))
+    text = _KEY_VALUE.sub(r"\1=[REDACTED]", text)
     return _BEARER.sub("Bearer [REDACTED]", text)
 
 
