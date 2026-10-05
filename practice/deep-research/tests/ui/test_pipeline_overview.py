@@ -24,7 +24,7 @@ def test_pipeline_rows_stay_hidden_until_their_agent_starts_processing():
     assert "Pipeline" in text
     assert "Scope Agent" not in text
     assert "Researcher" not in text
-    assert "⚪ Pending" not in text
+    assert "Pending" not in text
 
 
 def test_scope_agent_row_appears_once_it_starts_processing():
@@ -45,8 +45,7 @@ def test_scope_agent_row_appears_once_it_starts_processing():
     )
 
     text = _visible_text(app)
-    assert "Scope Agent" in text
-    assert "⏳ Running" in text
+    assert 'Scope Agent</span><span class="ic-chip ic-run">Running</span>' in text
     assert "Planner" not in text
 
 
@@ -95,12 +94,11 @@ def test_scope_agent_brief_appears_only_once_a_research_brief_exists():
     )
 
     text = _visible_text(app)
-    # Same row, left-to-right: label, then content, then its own status badge — before the
-    # next agent's row (Planner) begins.
+    # One card per agent: its name with its status chip, then its content — before the next
+    # agent's card (Planner) begins.
     assert (
-        text.index("Scope Agent")
+        text.index('Scope Agent</span><span class="ic-chip ic-ok">Complete</span>')
         < text.index("I want to compare X and Y.")
-        < text.index("✅ Complete")
         < text.index("Planner")
     )
 
@@ -131,7 +129,7 @@ def test_scope_agent_is_still_running_while_only_a_clarifying_question_was_asked
 
     text = _visible_text(app)
     assert "I want to" not in text  # no brief text was ever produced
-    assert text.index("Scope Agent") < text.index("⏳ Running")
+    assert 'Scope Agent</span><span class="ic-chip ic-run">Running</span>' in text
     # Planner hasn't started yet — its row stays hidden rather than showing as "Pending".
     assert "Planner" not in text
 
@@ -174,7 +172,7 @@ def test_planner_section_lists_todo_questions_as_bullets_once_complete():
         < text.index("Compare findings")
         < text.index("Researcher")
     )
-    assert "✅ Complete" in text
+    assert 'Planner</span><span class="ic-chip ic-ok">Complete</span>' in text
 
 
 def test_researcher_section_lists_tavily_sources_for_each_completed_todo(tmp_path, monkeypatch):

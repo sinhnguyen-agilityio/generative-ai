@@ -98,9 +98,8 @@ def test_report_judge_rejects_incomplete_or_duplicate_checklists():
 
 
 def test_recovery_ui_submits_explicit_action_and_retains_identity(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-
-    from intelligence_collector import app
+    from intelligence_collector.ui import resources, state
+    from intelligence_collector.ui.components import recovery
 
     class Session(dict):
         def __getattr__(self, key):
@@ -146,17 +145,11 @@ def test_recovery_ui_submits_explicit_action_and_retains_identity(tmp_path, monk
             decisions.append((thread_id, decision))
             return {**snapshot, "stage": "Awaiting Approval"}
 
-    monkeypatch.setattr(
-        app.Settings,
-        "from_env",
-        lambda: SimpleNamespace(
-            checkpoint_path=str(tmp_path / "absent.sqlite"),
-            run_registry_path=str(tmp_path / "absent-registry.sqlite"),
-        ),
-    )
-    monkeypatch.setattr(app, "_recovery_service", lambda st: Service())
     ui = UI()
-    app._render_recovery_controls(ui, snapshot)
+    monkeypatch.setattr(recovery, "st", ui)
+    monkeypatch.setattr(state, "st", ui)
+    monkeypatch.setattr(resources, "recovery_service", lambda: Service())
+    recovery.render_recovery_controls(snapshot)
     assert decisions == [
         (
             "thread",

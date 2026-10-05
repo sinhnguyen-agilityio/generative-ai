@@ -12,8 +12,9 @@ Artifacts are written under `.data/vfs/<run_id>/`; checkpoints and vector index 
 Permanent output is under `exports/` and is written only after approval bound to the verified report
 hash. Langfuse tracing is optional: with `INTELLIGENCE_LANGFUSE_ENABLED=true` and keys configured,
 each research run is one Langfuse trace (ID derived from `run_id`, session ID = `thread_id`), and
-every graph invocation (new request, plan or report approval, recovery) adds one
-`research.execution` with the graph nodes, research sub-agents, MCP calls and LLM generations
+every graph invocation (new request, plan or report approval, recovery) adds one execution
+observation, named after the turn and the agents that ran (e.g.
+`start: Scope Agent → Planner ⏸ plan_approval`), with the graph nodes (`<Agent> · <node>`), research sub-agents, MCP calls and LLM generations
 beneath it. A missing or rejected key disables tracing with a warning; research runs unchanged.
 Credentials and long payloads are masked before export. See `docs/observability.md`.
 
@@ -51,8 +52,8 @@ uv run pytest -q tests/integration/test_scope_live_smoke.py
 ```
 
 Confirm in Langfuse that the emitted trace is named `deep-research`, its session ID equals
-`live-smoke`, and its `research.execution` observation contains the `research_graph` run with the
-Scope and Planning node observations and their nested model generations. The test never prints
+`live-smoke`, and its execution observation (named `start: Scope Agent → …`) contains the
+`research_graph` run with the `Scope Agent · …` and `Planner · planning` node observations and their nested model generations. The test never prints
 API keys.
 
 Never commit `.env`, credentials, `.data/`, runtime checkpoints, or exported reports.

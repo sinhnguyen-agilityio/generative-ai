@@ -136,7 +136,7 @@ def test_one_invocation_is_one_trace_with_nodes_workers_tools_and_generations(tm
     # One root: the execution. Everything shares the run's deterministic trace ID and session.
     ids = {span.span_id for span in spans}
     roots = [span for span in spans if span.parent_id not in ids]
-    assert [root.name for root in roots] == ["research.execution"], tree
+    assert len(roots) == 1, tree
     assert {span.trace_id for span in spans} == {capture.tracer.trace_id_for(RUN)}
     assert {span.session_id for span in spans} == {THREAD}
     execution = roots[0]
@@ -147,12 +147,20 @@ def test_one_invocation_is_one_trace_with_nodes_workers_tools_and_generations(tm
         "verification_outcome": "PASS",
         "paused_at": "publication_approval",
     }
-    # research.execution -> research_graph -> node
+    # The execution is named after the turn, the agents that ran and where it paused.
+    assert execution.name == (
+        "start: Scope Agent → Planner → Research Supervisor → Research Evidence Judge → Report Writer"
+        " → Verifier → Publisher ⏸ publication_approval"
+    ), tree
+    assert execution.metadata["agents"][0] == "Scope Agent"
+    # execution -> research_graph -> "<agent> · <node>"
     graph_run = capture.named("research_graph")[0]
     assert graph_run.parent_id == execution.span_id
     for node in ("researching", "research_complete", "synthesizing", "verifying", "approval"):
         assert capture.named(node)[0].parent_id == graph_run.span_id, tree
     assert capture.named("verifying")[0].metadata["draft_version"] == 1
+    assert capture.named("researching")[0].name == "Research Supervisor · researching"
+    assert capture.named("verifying")[0].metadata["agent"] == "Verifier"
     # node -> supervisor decisions, and worker tasks (one per todo, run concurrently) -> tool
     # call and generations
     researching = capture.named("researching")[0]
@@ -162,6 +170,7 @@ def test_one_invocation_is_one_trace_with_nodes_workers_tools_and_generations(tm
     assert {d.parent_id for d in decisions} == {researching.span_id}, tree
     workers = capture.named("research_agent")
     assert sorted(w.metadata["todo_id"] for w in workers) == ["todo-0", "todo-1", "todo-2"]
+    assert {w.name for w in workers} == {f"research_agent · todo-{n}" for n in range(3)}
     assert {w.parent_id for w in workers} == {researching.span_id}
     worker_of = {w.span_id: w.metadata["todo_id"] for w in workers}
     for search in capture.named("mcp.search"):
@@ -169,7 +178,7 @@ def test_one_invocation_is_one_trace_with_nodes_workers_tools_and_generations(tm
         owner = next(
             s
             for s in spans
-            if s.name == "research_agent" and s.span_id in _ancestor_ids(capture, search)
+            if s.span_id in worker_of and s.span_id in _ancestor_ids(capture, search)
         )
         assert worker_of[owner.span_id] == search.metadata["todo_id"]
         assert search.output == {"results": 1, "urls": [URL]}
@@ -210,7 +219,7 @@ def test_tool_error_is_recorded_on_its_own_observation_and_siblings_survive(tmp_
     ]
     # The failed tool call is a task outcome: the workers, persistence and graph completed.
     assert len(capture.named("research.persist")) == 3
-    assert capture.named("research.execution")[0].level != "ERROR"
+    assert capture.executions()[0].level != "ERROR"
 
 
 def test_node_failure_marks_the_node_and_execution_and_keeps_completed_nodes(tmp_path):
@@ -231,7 +240,7 @@ def test_node_failure_marks_the_node_and_execution_and_keeps_completed_nodes(tmp
     assert [a.level for a in attempts] == ["ERROR", "ERROR"]
     assert [a.metadata["attempt"] for a in attempts] == [1, 2]
     assert capture.named("synthesizing")[0].level == "ERROR"
-    assert capture.named("research.execution")[0].level == "ERROR"
+    assert capture.executions()[0].level == "ERROR"
     assert capture.named("researching")[0].level != "ERROR"
     assert len(capture.named("research_agent")) == 3
 
@@ -257,7 +266,7 @@ def test_resumes_after_pauses_join_the_run_trace_even_in_a_new_process(tmp_path)
     published = service.resume_interrupt(THREAD, {"approved": True, "actor": "reviewer"})
 
     assert published["stage"] == "Published"
-    executions = first.named("research.execution") + second.named("research.execution")
+    executions = first.executions() + second.executions()
     assert [
         (e.metadata["execution_kind"], e.metadata.get("interrupt_kind")) for e in executions
     ] == [("start", None), ("resume", "publication_approval"), ("resume", "publication_approval")]
@@ -269,7 +278,10 @@ def test_resumes_after_pauses_join_the_run_trace_even_in_a_new_process(tmp_path)
     assert "paused_at" not in executions[2].output
     # The resumed work is under its own execution, in the same trace.
     revision = second.named("synthesizing")[0]
-    assert "research.execution" in second.ancestors(revision)
+    assert "execution" in second.ancestors(revision)
+    assert executions[1].name.startswith(
+        "resume · publication_approval: Publisher → Feedback Router → Report Writer"
+    )
     assert second.named("classify_feedback")[0].metadata["run_id"] == RUN
 
 
@@ -333,7 +345,7 @@ def test_plan_approval_resume_runs_research_in_a_new_execution_of_the_same_trace
         THREAD, {"reply": "approve", "actor": "reviewer"}
     )
 
-    first, second = capture.named("research.execution")
+    first, second = capture.executions()
     assert first.output["paused_at"] == "plan_approval"
     assert (second.metadata["execution_kind"], second.metadata["interrupt_kind"]) == (
         "resume",
@@ -342,7 +354,9 @@ def test_plan_approval_resume_runs_research_in_a_new_execution_of_the_same_trace
     assert first.trace_id == second.trace_id
     # Nothing was retrieved before the approval; research belongs to the resumed execution.
     research = capture.named("researching")[0]
-    assert capture.ancestors(research)[-1] == "research.execution"
+    assert capture.ancestors(research)[-1] == "execution"
+    assert first.name == "start: Scope Agent → Planner ⏸ plan_approval"
+    assert second.name.startswith("resume · plan_approval: Planner → Research Supervisor")
     assert capture.parent(capture.parent(research)).span_id == second.span_id
     for name in ("clarify_with_user", "write_research_brief", "planning"):
         node = capture.named(name)[0]
@@ -439,7 +453,7 @@ def test_long_report_rewrite_keeps_one_execution_per_invocation(tmp_path):
     )
     _start(stack.graph(tmp_path, capture.tracer), capture.tracer)
 
-    assert len(capture.named("research.execution")) == 1
+    assert len(capture.executions()) == 1
     verifications = capture.named("verifying")
     assert [v.metadata.get("draft_version") for v in verifications] == [1, 2]
     assert capture.named("fixing")[0].metadata["improvement_cycle"] == 1

@@ -40,7 +40,7 @@ def test_progress_ui_starts_with_current_stage():
     assert not app.exception
     assert "Scoping" in _visible_text(app)
     assert "No research started" in _visible_text(app)
-    assert app.expander[0].label == "Details"
+    assert [tab.label for tab in app.tabs] == ["Run", "Sources", "Activity", "Details"]
 
 
 def test_thread_identity_is_stable_across_streamlit_reruns():
@@ -226,7 +226,7 @@ def test_paused_clarification_is_static_and_activity_is_chronological():
     assert text.index("Evaluating scope") < text.index("Generating brief")
 
 
-def test_chat_first_transcript_has_one_plain_assistant_message_and_collapsed_details():
+def test_chat_first_transcript_has_one_plain_assistant_message_and_details_in_a_tab():
     app = _app_with_snapshot(
         {
             "run_id": "run-ui",
@@ -262,8 +262,8 @@ def test_chat_first_transcript_has_one_plain_assistant_message_and_collapsed_det
     assert app.chat_message[1].markdown[0].value == (
         "I have enough information and will begin research."
     )
-    assert app.expander[0].label == "Details"
-    assert app.expander[0].proto.expanded is False
+    # Workflow internals live in the side panel's Details tab, not in the chat.
+    assert app.tabs[-1].label == "Details"
     assert "write_todos" not in app.chat_message[1].markdown[0].value
 
 
@@ -285,20 +285,20 @@ def test_pipeline_and_activity_log_live_in_a_framed_side_panel():
         }
     )
 
-    chat_col, panel_col = app.columns[0], app.columns[1]
-    panel_text = "\n".join(
-        str(e.value) for e in list(panel_col.subheader) + list(panel_col.markdown)
-    )
+    # The header has its own columns; the conversation and the tabbed panel are the main two.
+    chat_col = next(column for column in app.columns if len(column.chat_message))
+    panel_col = next(column for column in app.columns if len(column.tabs))
+    panel_text = "\n".join(str(e.value) for e in panel_col.markdown)
     assert "Pipeline" in panel_text and "Activity log" in panel_text
     assert "Evaluating scope" in panel_text
-    assert len(chat_col.chat_message) == 1 and not panel_col.chat_message
+    assert len(chat_col.chat_message) == 1 and not len(panel_col.chat_message)
 
 
 def test_chat_reply_while_awaiting_review_resumes_the_review(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        "intelligence_collector.app._run_chat_turn",
-        lambda st, text, **kwargs: calls.append((text, kwargs["reviewing"])),
+        "intelligence_collector.ui.turn.run_chat_turn",
+        lambda text, **kwargs: calls.append((text, kwargs["view"].reviewing)),
     )
     app = _app_with_snapshot(
         {

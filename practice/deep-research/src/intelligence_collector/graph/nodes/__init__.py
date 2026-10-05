@@ -19,7 +19,9 @@ from intelligence_collector.graph.nodes.common import (
     EXTENSION_PASSAGES,
     FAITHFULNESS_THRESHOLD,
     MAX_STALLED_ATTEMPTS,
+    NODE_AGENT,
     Node,
+    node_agent,
 )
 from intelligence_collector.graph.nodes.interrupts import (
     approval,
@@ -39,7 +41,9 @@ __all__ = [
     "EXTENSION_PASSAGES",
     "FAITHFULNESS_THRESHOLD",
     "MAX_STALLED_ATTEMPTS",
+    "NODE_AGENT",
     "Node",
+    "node_agent",
     "approval",
     "await_clarification",
     "await_plan_approval",

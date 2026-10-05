@@ -97,17 +97,34 @@ class LangfuseCapture:
         return sorted(captured, key=lambda item: item.start)
 
     def named(self, name: str) -> list[CapturedSpan]:
-        return [span for span in self.spans() if span.name == name]
+        """Spans called `name`. A node span (``<agent> · <node>``) also matches its node and a
+        sub-agent span (``research_agent · <todo_id>``) also matches ``research_agent``."""
+        return [
+            span
+            for span in self.spans()
+            if name in (span.name, span.metadata.get("node"), span.name.split(" · ")[0])
+        ]
+
+    def executions(self) -> list[CapturedSpan]:
+        """The execution observations (one per graph invocation): the roots of the trace."""
+        spans = self.spans()
+        ids = {span.span_id for span in spans}
+        return [span for span in spans if span.parent_id not in ids]
 
     def parent(self, span: CapturedSpan) -> CapturedSpan | None:
         return next((item for item in self.spans() if item.span_id == span.parent_id), None)
 
     def ancestors(self, span: CapturedSpan) -> list[str]:
-        """Names from the span's parent up to its execution root."""
+        """Keys from the span's parent up to its execution root: a node span is its node, a
+        sub-agent span ``research_agent`` and the root ``execution``."""
         names, current = [], self.parent(span)
         while current is not None:
-            names.append(current.name)
-            current = self.parent(current)
+            parent = self.parent(current)
+            if parent is None:
+                names.append("execution")
+            else:
+                names.append(current.metadata.get("node") or current.name.split(" · ")[0])
+            current = parent
         return names
 
     def render(self) -> str:

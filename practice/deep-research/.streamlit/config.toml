@@ -1,0 +1,19 @@
+# Intelligence Collector theme: a neutral work surface, one blue for actions, and status colors
+# that also differ in lightness (green = done, blue = working, orange = waiting for you, red =
+# failed). The HTML fragments in src/intelligence_collector/ui_view.py use the same palette.
+[theme]
+base = "light"
+primaryColor = "#1F4FB8"
+backgroundColor = "#F4F4F1"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1B1E22"
+linkColor = "#1F4FB8"
+borderColor = "#E1E1DB"
+baseRadius = "0.6rem"
+font = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap, sans-serif"
+codeFont = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap, monospace"
+headingFontWeights = 600
+greenColor = "#1F7A4D"
+blueColor = "#1F4FB8"
+orangeColor = "#B45309"
+redColor = "#B42318"

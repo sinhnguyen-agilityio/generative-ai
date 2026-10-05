@@ -1,4 +1,4 @@
-"""Model-tier wiring for the live app (app._get_model_routers / _get_scope_agent).
+"""Model-tier wiring for the live app (ui.resources.get_model_routers / get_scope_agent).
 
 The app builds a reasoning-tier and a standard-tier router (each with its own fallback) and
 hands each agent the tier it needs: Scope/Planner/Report Judge/Feedback classifier get the
@@ -7,7 +7,9 @@ reasoning tier; Researcher/Report Writer (and the scope guardrail) get the stand
 
 from types import SimpleNamespace
 
-from intelligence_collector.app import _get_model_routers, _get_scope_agent
+import pytest
+
+from intelligence_collector.ui import resources
 from intelligence_collector.models.factory import ModelRouters
 
 
@@ -24,8 +26,12 @@ class _SessionState(dict):
         self[name] = value
 
 
-def _fake_st():
-    return SimpleNamespace(session_state=_SessionState())
+@pytest.fixture(autouse=True)
+def st(monkeypatch):
+    """A fresh fake Streamlit module for each test: session-scoped caching starts empty."""
+    fake = SimpleNamespace(session_state=_SessionState())
+    monkeypatch.setattr(resources, "st", fake)
+    return fake
 
 
 def _recording_init_chat_model(monkeypatch):
@@ -62,7 +68,7 @@ def test_reasoning_tier_is_gpt_and_standard_tier_is_gemini(monkeypatch):
     _set_role_env(monkeypatch, standard_fallback=True)
     calls = _recording_init_chat_model(monkeypatch)
 
-    router = _get_model_routers(_fake_st())
+    router = resources.get_model_routers()
 
     assert isinstance(router, ModelRouters)
     assert calls == [
@@ -80,7 +86,7 @@ def test_no_fallback_configured_means_no_fallback_on_either_tier(monkeypatch):
     _set_role_env(monkeypatch)
     _recording_init_chat_model(monkeypatch)
 
-    router = _get_model_routers(_fake_st())
+    router = resources.get_model_routers()
 
     assert router.reasoning.fallback is None
     assert router.standard.fallback is None
@@ -89,29 +95,27 @@ def test_no_fallback_configured_means_no_fallback_on_either_tier(monkeypatch):
 def test_missing_reasoning_model_returns_none(monkeypatch):
     monkeypatch.delenv("INTELLIGENCE_REASONING_MODEL", raising=False)
 
-    assert _get_model_routers(_fake_st()) is None
-    assert _get_scope_agent(_fake_st()) is None
+    assert resources.get_model_routers() is None
+    assert resources.get_scope_agent() is None
 
 
 def test_model_routers_are_cached_on_session_state(monkeypatch):
     _set_role_env(monkeypatch)
     calls = _recording_init_chat_model(monkeypatch)
-    st = _fake_st()
 
-    first = _get_model_routers(st)
-    second = _get_model_routers(st)
+    first = resources.get_model_routers()
+    second = resources.get_model_routers()
 
     assert first is second
     assert len(calls) == 2  # reasoning + standard primaries only; no new construction on reuse
 
 
-def test_scope_agent_gets_reasoning_router_and_standard_guardrail_and_is_cached(monkeypatch):
+def test_scope_agent_gets_reasoning_router_and_standard_guardrail_and_is_cached(monkeypatch, st):
     _set_role_env(monkeypatch)
     _recording_init_chat_model(monkeypatch)
-    st = _fake_st()
 
-    agent = _get_scope_agent(st)
-    second = _get_scope_agent(st)
+    agent = resources.get_scope_agent()
+    second = resources.get_scope_agent()
 
     assert agent is second
     assert agent.router is st.session_state.model_routers.reasoning

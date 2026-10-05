@@ -294,3 +294,69 @@ def test_graph_routes_a_supervisor_replan_to_human_approval_of_a_replacement_pla
 
     assert done["todos"][1]["status"] == "completed"
     assert "ProposeReplan" not in str(research_model.supervisor_prompts[-1][0].content)
+
+
+def test_decisions_are_logged_to_the_vfs_and_streamed_to_a_listener(stores):
+    from intelligence_collector.agents.supervisor import decision_listener, read_supervisor_log
+
+    vfs, _ = stores
+    model = RoundAwareModel(
+        [
+            lambda tasks: [think("Research both.")],
+            lambda tasks: [conduct("t1"), conduct("t2"), conduct("t9")],
+            lambda tasks: [conduct("t1", "Find the release date.")],
+            lambda tasks: [COMPLETE],
+        ]
+    )
+    supervisor, _ = _supervisor(stores, model)
+    heard = []
+    token = decision_listener.set(heard.append)
+    try:
+        supervisor.delegate("run", _todos())
+    finally:
+        decision_listener.reset(token)
+
+    log = read_supervisor_log(vfs, "run")
+    assert [entry["kind"] for entry in log] == [
+        "think",
+        "refused",  # t9 is not an approved task
+        "delegate",
+        "result",
+        "result",
+        "delegate",
+        "result",
+        "complete",
+    ]
+    assert heard == log  # the same entries, as they happened
+    first_batch, follow_up = (entry for entry in log if entry["kind"] == "delegate")
+    assert [task["todo_id"] for task in first_batch["tasks"]] == ["t1", "t2"]
+    assert follow_up["tasks"] == [
+        {
+            "todo_id": "t1",
+            "question": "What is LangGraph?",
+            "round": 2,
+            "follow_up": True,
+            "topic": "Find the release date.",
+        }
+    ]
+    result = log[3]
+    assert result["status"] == "completed" and result["sufficient"] is True
+    assert result["sources"] == 1 and "findings" not in result
+
+
+def test_a_failing_listener_never_stops_research(stores):
+    from intelligence_collector.agents.supervisor import decision_listener
+
+    def broken(entry):
+        raise RuntimeError("display failed")
+
+    model = ScriptedSupervisorModel(
+        [lambda tasks: [conduct("t1"), conduct("t2")], lambda tasks: [COMPLETE]]
+    )
+    supervisor, _ = _supervisor(stores, model)
+    token = decision_listener.set(broken)
+    try:
+        results = supervisor.delegate("run", _todos())
+    finally:
+        decision_listener.reset(token)
+    assert [todo.status for todo, _, _ in results] == [TodoStatus.COMPLETED] * 2

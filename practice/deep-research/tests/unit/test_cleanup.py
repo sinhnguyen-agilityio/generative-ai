@@ -24,8 +24,9 @@ def test_importing_manual_scripts_does_not_make_paid_calls(monkeypatch, filename
     assert callable(module.main)
 
 
-def test_recovery_controls_reuse_inspected_checkpoint(tmp_path, monkeypatch):
-    from intelligence_collector import app
+def test_recovery_controls_reuse_inspected_checkpoint(monkeypatch):
+    from intelligence_collector.ui import resources
+    from intelligence_collector.ui.components import recovery
 
     class Session(dict):
         def __getattr__(self, key):
@@ -35,7 +36,7 @@ def test_recovery_controls_reuse_inspected_checkpoint(tmp_path, monkeypatch):
         session_state = Session(scope_graph=object(), run_registry=object())
         buttons = []
 
-        def button(self, label):
+        def button(self, label, **kwargs):
             self.buttons.append(label)
             return False
 
@@ -50,18 +51,12 @@ def test_recovery_controls_reuse_inspected_checkpoint(tmp_path, monkeypatch):
             calls.append(thread)
             return checkpoint
 
-    monkeypatch.setattr(app, "WorkflowRecoveryService", Service)
-    monkeypatch.setattr(
-        app.Settings,
-        "from_env",
-        lambda: SimpleNamespace(
-            checkpoint_path=str(tmp_path / "absent.sqlite"),
-            run_registry_path=str(tmp_path / "absent-registry.sqlite"),
-        ),
-    )
     ui = UI()
+    monkeypatch.setattr(resources, "st", ui)
+    monkeypatch.setattr(recovery, "st", ui)
+    monkeypatch.setattr(resources, "WorkflowRecoveryService", Service)
     snapshot = {"run_id": "run", "thread_id": "thread", "stage": "Synthesizing"}
-    inspected = app._inspect_checkpoint(ui, snapshot)
-    app._render_recovery_controls(ui, snapshot, inspected)
+    inspected = resources.inspect_checkpoint(snapshot)
+    recovery.render_recovery_controls(snapshot, inspected)
     assert calls == ["thread"]
     assert "Continue unfinished run" in ui.buttons

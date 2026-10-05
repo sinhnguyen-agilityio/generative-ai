@@ -195,7 +195,7 @@ class ResearchAgent:
                 "search_calls": 0,
             },
             config={
-                "run_name": "research_agent",
+                "run_name": f"research_agent · {task_id}" if task_id else "research_agent",
                 "metadata": {"todo_id": task_id, "run_id": run_id},
             },
         )

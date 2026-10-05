@@ -65,11 +65,11 @@ is retried within bounds or recorded as an error.
 
 **Langfuse Trace Hierarchy**: A research run has one trace whose ID is derived from `run_id`
 (`create_trace_id(seed=...)`), with `session_id` = LangGraph `thread_id`. Each graph invocation
-(chat turn, interrupt resume, recovery action, continuation) is one `research.execution`
-observation, closed when the invocation returns, so nothing stays open across human pauses or
+(chat turn, interrupt resume, recovery action, continuation) is one execution observation,
+named after the turn and the agents that ran in it (`start: Scope Agent → Planner ⏸ plan_approval`), closed when the invocation returns, so nothing stays open across human pauses or
 restarts. `RunTracer.execution` creates a Langfuse `CallbackHandler` per invocation and
-`Execution.graph_config` passes it in the LangGraph config: node runs, `research_agent`
-sub-agent runs and model generations nest under the execution, and model calls inherit the
+`Execution.graph_config` passes it in the LangGraph config: node runs (renamed
+`<agent> · <node>` by `node_wrapper`), `research_agent · <todo_id>` sub-agent runs and model generations nest under the execution, and model calls inherit the
 callback instead of passing their own. Non-LangChain operations (MCP, persistence, Chroma,
 RAGAS) use `traced()`. Langfuse problems disable tracing with a reason and never stop research;
 offline
@@ -178,7 +178,7 @@ alternatives that would violate the constitution or clarified specification.
 
 | Component | Responsibility | Contract / failure behavior | Integration points |
 |---|---|---|---|
-| Streamlit UI | Chat, stage/progress display, report/evidence review, approval decision, "New thread" reset, one live-updating row per pipeline agent (content left, status badge right) driven by `graph.stream(stream_mode="values")` (`app.py::_render_agent_row`, `_render_agent_pipeline`) | Renders typed state; never writes authoritative artifacts; displays actionable errors; agent status derived from `activity` lifecycle entries grouped by agent name; a row stays hidden (placeholder cleared) until that agent's status leaves `pending`, so the pipeline never lists every agent up front; rows redraw into `st.empty()` placeholders on every streamed step, not only once after the whole run | Graph runner (`.stream()`, not `.invoke()`), VFS read API (reads each completed todo's evidence bundle for its source links) |
+| Streamlit UI (`app.py` entry, package `ui/`, `.streamlit/config.toml`) | `ui/main.py` composes the page; `ui/state.py` owns session-state keys, defaults and every change (`on_click` callbacks for New thread and quick replies, which queue a reply answered like a typed one; Request changes is an `st.form`); `ui/resources.py` builds per-session dependencies (tracer, models, graph, VFS, recovery service); `ui/turn.py` runs one chat turn (lifecycle log, `graph.stream(stream_mode="values")`, live supervisor decisions via `decision_listener`); `ui/components/` render header + stepper, chat (plan and report cards, banner, notices, input), the tabbed panel (`LivePanel` placeholders redrawn every step) and recovery | `ui/run_status.py` (`RunView`) and `ui/evidence.py` derive everything from the snapshot without Streamlit; components never write authoritative artifacts; agent cards stay hidden until their agent leaves `pending`; HTML fragments in `ui/html.py` escape all text, styles in `ui/theme.css` | Graph runner, VFS read API (evidence bundles, supervisor log) |
 | Input Normalizer + Guardrail (`guardrails.py`) | Fold homoglyphs/compatibility forms and strip invisible characters (`normalize_text`); validate shape/size and reject prompt injection or disallowed offensive/violent requests via regex | Returns typed `GuardrailDecision`; rejection has no state mutation | Scope entry edge, audit event |
 | Scope Agent | `check_content_safety` runs a pre-model LLM guardrail (`guardrail` role, standard tier) that blocks vulgar/prohibited messages before any Scope call; `clarify_with_user` evaluates actual message history; `write_research_brief` creates a dedicated validated `ResearchBrief` after a clear decision | Blocked content raises `GuardrailViolation` with zero Scope-model calls; otherwise one-question clarification or complete brief; model/validation/persistence failure cannot become clear | Model router (`guardrail` role, standard tier; `scope` role, reasoning tier), LangGraph thread state, checkpoint, brief VFS artifact |
 | Planner Agent + `write_todos` | `PlannerAgent.define_plan` turns the `ResearchBrief` into research questions; `PlannerAgent.write_todos` converts the questions to `planned` todos and persists them | `TodoPlan` (questions, 1–5, non-blank, unique); invalid output or failed write blocks Research | Model router (`planner` role, reasoning tier), VFS, graph state |
@@ -204,7 +204,15 @@ alternatives that would violate the constitution or clarified specification.
 
 ```text
 src/intelligence_collector/
-├── app.py              # Streamlit UI: chat + framed Pipeline / Activity log / Details panel
+├── ui/                 # Streamlit UI (entry: ../../app.py -> ui/main.py)
+│   ├── main.py         # page composition; answers a reply with one graph turn
+│   ├── state.py        # session-state keys, defaults, on_click callbacks, reply queue
+│   ├── resources.py    # per-session tracer, models, graph, VFS, recovery service
+│   ├── turn.py         # one chat turn: streaming, lifecycle log, live supervisor decisions
+│   ├── run_status.py   # RunView: who acts, input placeholder, agent status (pure)
+│   ├── evidence.py     # stored research read for display (pure)
+│   ├── html.py + theme.css  # escaped HTML fragments and their styles
+│   └── components/     # header, chat, panel (tabs, LivePanel), recovery
 ├── runtime.py          # composition root: builds models, agents, stores and the graph (no Streamlit)
 ├── config.py           # Settings, RoleModelSettings (reasoning + standard tiers), LangfuseSettings
 ├── contracts.py        # Pydantic contracts (stages, LLM outputs, verification, approval, publication)

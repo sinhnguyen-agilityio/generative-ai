@@ -1,4 +1,4 @@
-from intelligence_collector.app import _failure_stage_label
+from intelligence_collector.ui.run_status import failure_stage_label as _failure_stage_label
 
 
 def test_failure_stage_label_names_the_last_active_node():

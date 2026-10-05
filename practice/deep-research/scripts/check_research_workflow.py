@@ -30,7 +30,7 @@ def main():
 
     from langchain_core.callbacks import BaseCallbackHandler
     from langgraph.checkpoint.sqlite import SqliteSaver
-    from intelligence_collector.app import _quality_evaluators
+    from intelligence_collector.runtime import quality_evaluators
     from intelligence_collector.agents.scope import ScopeAgent
     from intelligence_collector.agents.researcher import ResearchAgent
     from intelligence_collector.agents.report_judge import ReportJudge
@@ -98,7 +98,7 @@ def main():
         max_concurrent_researchers=settings.max_concurrent_researchers,
         recovery_budget=settings.recovery_attempts,
         evidence_top_k=settings.evidence_top_k,
-        **_quality_evaluators(settings, embeddings),
+        **quality_evaluators(settings, embeddings),
     )
     started = time.monotonic()
     with sqlite3.connect(root / "checkpoints.sqlite", check_same_thread=False) as connection:

@@ -377,12 +377,13 @@ REPORT_WRITER_PROMPT = """You write a report that directly answers the user's qu
 supplied source catalog. Today's date is {date}.
 
 Content rules:
-1. Answer first. Right after the title, a '## Answer' section gives a clear conclusion for EVERY
-   required answer, in the listed order: the specific value, definition, choice or rule asked
-   for, stated as a fact with its citation (for example "The latest stable version is 3.14.8,
-   released on 30 September 2026 [S1]."). Add a short '## ' section after it only when it helps
-   answer a required item (for example a comparison table); no background, history or feature
-   tours.
+1. Answer first. Right after the title, exactly ONE '## Answer' section gives a clear conclusion
+   for EVERY required answer, in the listed order, one short paragraph or bullet each: the
+   specific value, definition, choice or rule asked for, stated as a fact with its citation (for
+   example "The latest stable version is 3.14.8, released on 30 September 2026 [S1]."). Never
+   repeat the '## Answer' heading and never give a required answer its own heading. Add a short
+   '## ' section after it only when it helps answer a required item (for example a comparison
+   table); no background, history or feature tours. Every '## ' heading appears once.
 2. Write conclusions, not narration about the evidence: never write "the provided evidence",
    "the excerpt states", "the supplied sources" or similar. Name a source in the sentence only
    when the user asked which source says something.
@@ -419,7 +420,8 @@ REPORT_WRITER_TEMPLATE = ChatPromptTemplate.from_messages(
         (
             "human",
             "Original user question (verbatim):\n{original_question}\n\n"
-            "Research brief:\n{brief}\n\nRequired answers (answer each one in '## Answer'):\n"
+            "Research brief:\n{brief}\n\n"
+            "Required answers (answer all of them inside the single '## Answer' section):\n"
             "{required_answers}\n\nOutput requirements:\n{output_requirements}\n\n"
             "Expected report shape:\n{report_shape}\n\n"
             "Source catalog with research findings:\n{evidence}\n\n"

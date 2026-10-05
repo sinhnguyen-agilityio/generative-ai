@@ -163,7 +163,7 @@ def test_writer_receives_question_checklist_constraints_and_answer_first_rules(s
     _run(stores, model)
 
     prompt = model.prompts("write")[0]
-    assert "Required answers (answer each one in '## Answer')" in prompt
+    assert "Required answers (answer all of them inside the single '## Answer' section)" in prompt
     assert "- how a local software cache stores and reuses data" in prompt
     assert 'never write "the provided evidence"' in prompt
     assert "never label the report INCOMPLETE" in prompt
@@ -619,8 +619,10 @@ def test_recovery_revision_replies_in_chat_and_shows_the_new_report(stores):
     )
 
 
-def test_needs_review_ui_shows_the_unverified_draft_and_hides_options_after_a_new_report():
-    from intelligence_collector import app
+def test_needs_review_ui_shows_the_unverified_draft_and_hides_options_after_a_new_report(
+    monkeypatch,
+):
+    from intelligence_collector.ui.components import chat, recovery
 
     class UI:
         def __init__(self):
@@ -654,14 +656,19 @@ def test_needs_review_ui_shows_the_unverified_draft_and_hides_options_after_a_ne
 
     snapshot = {"stage": "NEEDS_REVIEW", "draft": GOOD, "draft_version": 3, "messages": []}
     ui = UI()
-    app._render_transcript(ui, snapshot)
+    for module in (chat, recovery):
+        monkeypatch.setattr(module, "st", ui)
+    chat.render_messages(snapshot)
+    assert ui.markdown_calls == []  # the conversation only; the report has its own card
+    chat.render_report(snapshot, reviewing=False)
     assert GOOD in ui.markdown_calls
     assert any("Unverified draft v3" in caption for caption in ui.captions)
 
-    app._render_recovery_controls(ui, snapshot)
-    app._render_recovery_controls(ui, {**snapshot, "bvf_history": [{"kind": "RECOVERY_DECISION"}]})
+    recovery.render_recovery_controls(snapshot)
+    recovery.render_recovery_controls({**snapshot, "bvf_history": [{"kind": "RECOVERY_DECISION"}]})
     assert ui.expanded == [True, False]
 
     hidden = UI()
-    app._render_recovery_controls(hidden, {**snapshot, "stage": "Awaiting Approval"})
+    monkeypatch.setattr(recovery, "st", hidden)
+    recovery.render_recovery_controls({**snapshot, "stage": "Awaiting Approval"})
     assert hidden.expanded == []

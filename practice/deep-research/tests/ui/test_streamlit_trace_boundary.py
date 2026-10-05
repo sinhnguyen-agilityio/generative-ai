@@ -1,5 +1,5 @@
 """A Streamlit rerun is a re-render, not a research execution: only a submitted chat message
-opens a ``research.execution`` in the run's trace."""
+opens an execution observation in the run's trace."""
 
 from pathlib import Path
 
@@ -41,7 +41,7 @@ def test_reruns_do_not_start_executions_and_a_message_starts_exactly_one(monkeyp
     monkeypatch.setattr(
         "intelligence_collector.models.factory.init_chat_model", lambda *args, **kwargs: model
     )
-    monkeypatch.setattr("intelligence_collector.app._get_tracer", lambda st: capture.tracer)
+    monkeypatch.setattr("intelligence_collector.ui.resources.get_tracer", lambda: capture.tracer)
 
     app = AppTest.from_file(APP_PATH).run()
     app.run()  # a refresh
@@ -49,7 +49,7 @@ def test_reruns_do_not_start_executions_and_a_message_starts_exactly_one(monkeyp
 
     app.chat_input[0].set_value("Compare PostgreSQL and SQLite for local apps").run()
     assert not app.exception
-    executions = capture.named("research.execution")
+    executions = capture.executions()
     assert len(executions) == 1 and executions[0].metadata["execution_kind"] == "start"
     run_id = app.session_state["scope_state"]["run_id"]
     assert executions[0].trace_id == capture.tracer.trace_id_for(run_id)
@@ -58,6 +58,6 @@ def test_reruns_do_not_start_executions_and_a_message_starts_exactly_one(monkeyp
 
     app.run()
     app.run()
-    assert len(capture.named("research.execution")) == 1
+    assert len(capture.executions()) == 1
     assert len(capture.spans()) == span_count
     assert len(model.calls) == 4  # no model call repeated by a rerun

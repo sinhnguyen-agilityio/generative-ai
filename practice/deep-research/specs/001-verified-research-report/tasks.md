@@ -1311,3 +1311,59 @@ page summaries (Session 2026-10-05; FR-047, FR-048, FR-049).
   (Tavily call arguments are covered by `tests/unit/test_tavily_mcp.py`) and
   `tests/unit/test_async_mcp_bridge.py`. `tests/ui/test_plan_checkpoint_controls.py` now asserts
   that a pending plan approval is answered in chat (no recovery buttons). Suite: all pass.
+- [X] T183 UI redesign (FR-050), following the approved design canvas: `.streamlit/config.toml`
+  theme (IBM Plex Sans/Mono, neutral ground, one blue for actions, status colors that also
+  differ in lightness); `ui_view.py` holds the CSS and pure, escaped HTML fragments (header,
+  stage chip, stepper, agent card header, verification gates with the Faithfulness meter,
+  supervisor log, research banner). `app.py`: header with "Recover a run" popover and "New
+  thread"; plan card and report card with quick replies (`_quick_replies`) that feed the same
+  chat-turn path as typed replies; research banner; side panel tabs Run / Sources / Activity /
+  Details; research task cards show rounds, sufficiency, page summaries and stored pages. The
+  supervisor records every decision with `DecisionLog` (`research/supervisor_log.json`) and
+  passes it to `decision_listener`, which the UI sets per turn to render decisions live; the UI
+  keeps `stream_mode="values"` because LangGraph's "custom" mode runs nodes on a thread pool,
+  where Streamlit's session is unavailable (it silently dropped the activity log). Tests:
+  `tests/unit/test_ui_view.py`, `tests/ui/test_redesign.py`,
+  `tests/integration/test_research_supervisor.py` (decision log and listener), and the updated
+  `tests/ui/test_chat_progress.py`, `tests/ui/test_pipeline_overview.py`,
+  `tests/integration/test_bvf_loop.py`.
+- [X] T184 UI restructured into the `intelligence_collector.ui` package following Streamlit
+  practice: a thin `app.py` entry point; `ui/main.py` composes the page; `ui/state.py` holds the
+  session-state keys, one-time defaults and every state change, with `on_click` callbacks
+  (New thread, quick replies queue a reply that the next rerun answers like a typed one) and an
+  `st.form` for Request changes instead of button-return checks followed by `st.rerun()`;
+  `ui/resources.py` caches per-session dependencies (not `st.cache_resource`: the graph holds a
+  per-session SQLite connection and lifecycle callback); `ui/turn.py` runs a chat turn;
+  `ui/components/` holds header, chat, panel (`LivePanel` owns the placeholders a turn redraws)
+  and recovery; `ui/run_status.py` (`RunView`) and `ui/evidence.py` are Streamlit-free; CSS moved
+  to `ui/theme.css`. Modules import `streamlit as st` at module level instead of receiving `st`
+  as a parameter; tests replace it with `monkeypatch`. `scripts/check_research_workflow.py` now
+  imports `runtime.quality_evaluators` (the old `app._quality_evaluators` no longer existed).
+  Tests: `tests/unit/test_ui_run_status.py`, `tests/unit/test_ui_html.py`, plus the migrated UI,
+  recovery and wiring tests.
+- [X] T185 One '## Answer' section per report: with two required answers ("What is LangGraph?",
+  "what is it used for?") the writer wrote one '## Answer' per item, because the prompt said
+  "answer each one in '## Answer'". The writer prompt now asks for exactly one '## Answer'
+  section holding every required answer in order, and `merge_repeated_sections`
+  (`agents/report_writer.py`) folds any repeated '## ' section into its first occurrence
+  (headings in code fences ignored; reports without repeats are returned unchanged). Tests:
+  `tests/unit/test_report_writer_format.py`, `tests/integration/test_bvf_loop.py`.
+- [X] T186 No agent left "Running" after a turn: a click during a long research turn requested a
+  rerun, Streamlit stopped the script inside the `researching` node (a `BaseException`, so the
+  node reported neither success nor failure) and the Researcher card stayed "Running" while the
+  run itself was later continued to completion. Now a reply is accepted in one rerun
+  (`state.start_turn`) and its graph turn runs in the next, which renders every input disabled
+  (`RunView.busy`: chat input, quick replies, Request changes, New thread, Recover a run,
+  Continue unfinished run) and shows the reply being answered; after a failed turn the input is
+  enabled again. `turn.run_chat_turn` marks any node of its turn still running as `stopped` when
+  the turn ends early (Stop button, closed tab), with a "Continue unfinished run" hint, and agent
+  cards show "Stopped". Tests: `tests/ui/test_turn_lifecycle.py` (full run through the UI with the
+  real graph and fake models, a stopped turn, inputs disabled while busy).
+- [X] T187 Langfuse shows which agent ran: every execution observation was named
+  `research.execution`, so a trace's top level did not say which process each turn ran. The
+  execution now opens as `<kind>[ · <interrupt_kind>]` and is renamed on return to
+  `<kind>: <agent> → … ⏸ <paused_at>` (agents also in `agents` metadata); node runs are renamed
+  `<agent> · <node>` with `node`/`agent` metadata (`tracing.enter_node`, called by
+  `node_wrapper`); sub-agents are `research_agent · <todo_id>`. The node → agent mapping moved to
+  `NODE_AGENT` (`graph/nodes/common.py`) and the UI activity log reads it too. Tests:
+  `tests/integration/test_trace_topology.py`, `tests/ui/test_streamlit_trace_boundary.py`.

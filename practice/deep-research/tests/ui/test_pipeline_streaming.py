@@ -1,7 +1,7 @@
 """End-to-end regression test for the graph.invoke() -> graph.stream() switch.
 
 The pipeline rows are redrawn on every step of `graph.stream(state, config,
-stream_mode="values")` (see app.py::render), not only once after the whole run finishes. This
+stream_mode="values")` (see ui/turn.py::stream_graph), not only once after the whole run finishes. This
 test drives a real chat turn through the actual Streamlit script and checks the settled result
 still matches what `graph.invoke()` used to produce -- AppTest can only observe the state after
 `.run()` returns, so it proves the switch didn't change the outcome; the live, node-by-node
@@ -56,8 +56,8 @@ def test_chat_turn_streams_through_the_graph_and_settles_on_the_planned_stage(
         lambda *args, **kwargs: model,
     )
     monkeypatch.setattr(
-        "intelligence_collector.app._get_tracer",
-        lambda st: RunTracer(),
+        "intelligence_collector.ui.resources.get_tracer",
+        lambda: RunTracer(),
     )
 
     app = AppTest.from_file(APP_PATH).run()

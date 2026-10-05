@@ -8,6 +8,7 @@ the previous draft, so it fixes the affected portion instead of rewriting blindl
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 
 from intelligence_collector.agents.prompts import (
@@ -56,6 +57,40 @@ def format_evidence(catalog: SourceCatalog) -> str:
         if blocks
         else "(no evidence)"
     )
+
+
+_H2 = re.compile(r"^##[ \t]+(.+?)[ \t]*#*[ \t]*$")
+_FENCE = re.compile(r"^[ \t]*(```|~~~)")
+
+
+def merge_repeated_sections(markdown: str) -> str:
+    """Keep each '## ' heading once: the body of a repeated section moves to the end of the
+    first section with that heading (case-insensitive), in order. Headings inside code fences
+    are not headings. A report always has one '## Answer', however the model wrote it."""
+    preamble: list[str] = []
+    sections: dict[str, tuple[str, list[str]]] = {}  # key -> (heading line, body lines)
+    current: list[str] = preamble
+    fenced = False
+    headings = 0
+    for line in markdown.split("\n"):
+        if _FENCE.match(line):
+            fenced = not fenced
+        heading = None if fenced else _H2.match(line)
+        if heading is None:
+            current.append(line)
+            continue
+        headings += 1
+        key = heading.group(1).strip().lower()
+        if key not in sections:
+            sections[key] = (line, [])
+        current = sections[key][1]
+    if headings == len(sections):  # nothing repeated: leave the report exactly as written
+        return markdown
+    parts = ["\n".join(preamble).rstrip()] if any(part.strip() for part in preamble) else []
+    for heading, body in sections.values():
+        text = "\n".join(body).strip("\n")
+        parts.append(f"{heading}\n{text}".rstrip() if text else heading)
+    return "\n\n".join(parts) + ("\n" if markdown.endswith("\n") else "")
 
 
 def _readable_chars(catalog: SourceCatalog, bundle: EvidenceBundle) -> int:
@@ -204,4 +239,4 @@ class ReportWriter:
             run_id=run_id,
             thread_id=thread_id,
         )
-        return draft.report_markdown
+        return merge_repeated_sections(draft.report_markdown)

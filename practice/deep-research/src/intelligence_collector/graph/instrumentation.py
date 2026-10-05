@@ -4,7 +4,8 @@ Nodes stay pure ``state -> state update`` functions; this module layers on lifec
 notifications (UI progress), the run registry, the synthesis operation journal and trace
 annotations. The node's Langfuse observation itself is opened by the LangChain callback that
 ``RunTracer.execution`` passes in the graph config (see ``observability/tracing.py``); this
-wrapper only adds low-cardinality metadata and scores to it, so each node appears once.
+wrapper names it ``<agent> · <node>`` and adds low-cardinality metadata and scores to it, so each
+node appears once and says which agent ran it.
 State persistence between turns is LangGraph's own checkpointer, not this wrapper.
 """
 
@@ -13,9 +14,10 @@ from collections.abc import Callable
 from langgraph.errors import GraphInterrupt
 
 from intelligence_collector.contracts import Stage, WorkflowStatus
+from intelligence_collector.graph.nodes.common import node_agent
 from intelligence_collector.graph.state import GraphState
 from intelligence_collector.graph.migration import normalize_checkpoint
-from intelligence_collector.observability.tracing import annotate_current
+from intelligence_collector.observability.tracing import annotate_current, enter_node
 
 # State fields exported to Langfuse as trace scores: {state key: (score name, producing node)}.
 # Only the node that computes a score exports it; later nodes carry the field forward unchanged.
@@ -118,6 +120,8 @@ def node_wrapper(
     def wrapped(state: GraphState) -> GraphState:
         """Report lifecycle status around the node and check that it returns a mapping."""
         state = normalize_checkpoint(state)
+        if tracer is not None:
+            enter_node(name, node_agent(name))
         register(state)
         notify(name, "running")
         try:

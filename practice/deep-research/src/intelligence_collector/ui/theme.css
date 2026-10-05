@@ -1,0 +1,64 @@
+/* Intelligence Collector UI theme: the classes used by ui/html.py. Colors match
+   .streamlit/config.toml: green = done, blue = working, orange = waiting for you,
+   red = failed. */
+.block-container{padding-top:1.25rem;max-width:1440px}
+.ic-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px}
+.ic-brand{font-weight:700;font-size:1.15rem}
+.ic-ids{font-family:'IBM Plex Mono',monospace;font-size:.8rem;color:#59616B}
+.ic-progress{color:#59616B;font-size:.9rem}
+.ic-chip{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;
+  font-size:.8rem;font-weight:600;white-space:nowrap;line-height:1.6}
+.ic-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.ic-ok{background:#E6F3EC;color:#155C39}
+.ic-run{background:#E7EDFA;color:#163A88}
+.ic-wait{background:#FCEFD9;color:#7A4208}
+.ic-fail{background:#FDE8E7;color:#9B1C14}
+.ic-idle{background:#EEEEE9;color:#59616B}
+.ic-steps{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;list-style:none;
+  margin:.25rem 0 .75rem;padding:10px 14px;background:#FFFFFF;border:1px solid #E1E1DB;
+  border-radius:10px;font-size:.9rem}
+.ic-steps li{margin:0}
+.ic-step{display:flex;align-items:center;gap:6px;color:#59616B}
+.ic-dot{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;
+  justify-content:center;font-size:.72rem;border:2px solid #CFCFC8;box-sizing:border-box}
+.ic-step.done{color:#1F7A4D;font-weight:600}
+.ic-step.done .ic-dot{background:#1F7A4D;border-color:#1F7A4D;color:#FFFFFF}
+.ic-step.run{color:#163A88;font-weight:600}
+.ic-step.run .ic-dot{background:#E7EDFA;border-color:#1F4FB8}
+.ic-step.wait{color:#7A4208;font-weight:600}
+.ic-step.wait .ic-dot{background:#FCEFD9;border-color:#B45309}
+.ic-step.fail{color:#9B1C14;font-weight:600}
+.ic-step.fail .ic-dot{background:#FDE8E7;border-color:#B42318}
+.ic-bar{width:28px;height:2px;background:#E1E1DB}
+.ic-bar.done{background:#1F7A4D}
+.ic-label{font-size:.72rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:#59616B;margin:.25rem 0}
+.ic-agent{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.ic-agent-name{font-weight:600}
+.ic-gate{display:flex;gap:10px;padding:10px 12px;border-radius:10px;border:1px solid #CFE6D9;
+  background:#F5FBF7;margin-bottom:8px}
+.ic-gate.fail{border-color:#F3C1BD;background:#FEF6F5}
+.ic-gate-body{flex:1;min-width:0}
+.ic-gate-name{font-weight:600;display:flex;justify-content:space-between}
+.ic-gate-detail{font-size:.85rem;color:#3A4048}
+.ic-meter{position:relative;height:8px;border-radius:4px;background:#E1E1DB;margin:6px 0 2px}
+.ic-meter>span{display:block;height:8px;border-radius:4px;background:#1F7A4D}
+.ic-gate.fail .ic-meter>span{background:#B42318}
+.ic-meter>i{position:absolute;left:90%;top:-4px;width:2px;height:16px;background:#1B1E22}
+.ic-log{list-style:none;margin:0;padding:0}
+.ic-log li{display:flex;gap:12px;padding:8px 0;border-bottom:1px solid #F0F0EB;margin:0}
+.ic-tool{flex:none;width:104px;font-family:'IBM Plex Mono',monospace;font-size:.78rem;
+  padding-top:2px}
+.ic-think{color:#6B4FA0}
+.ic-act{color:#1F4FB8}
+.ic-note{color:#59616B}
+.ic-quote{font-style:italic;color:#3A4048}
+.ic-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.ic-mono{font-family:'IBM Plex Mono',monospace}
+.ic-cite{font-family:'IBM Plex Mono',monospace;font-size:.75rem;padding:1px 6px;
+  border-radius:4px;background:#E7EDFA;color:#163A88}
+.ic-muted{color:#59616B;font-size:.85rem}
+.ic-banner{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 14px;
+  background:#FFFFFF;border:1px solid #E1E1DB;border-radius:10px;font-size:.9rem;
+  color:#59616B;margin-bottom:.5rem}
+.ic-banner b{color:#1B1E22;font-weight:600}

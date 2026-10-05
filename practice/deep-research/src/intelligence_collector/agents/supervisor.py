@@ -24,8 +24,10 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import Counter
+from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 
 from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
 
@@ -59,6 +61,47 @@ DEFAULT_MAX_CONCURRENT_RESEARCHERS = 3
 MAX_CONCURRENT_RESEARCHERS = 5
 DEFAULT_MAX_SUPERVISOR_TURNS = 8
 DEFAULT_MAX_ATTEMPTS_PER_TASK = 2
+SUPERVISOR_LOG_PATH = "research/supervisor_log.json"
+
+
+# Set by a UI that shows decisions live. It is called on the thread running the graph node, which
+# for a ``stream_mode="values"`` run is the caller's thread (LangGraph's "custom" stream mode
+# would move nodes onto a thread pool, out of reach of the UI framework's session).
+decision_listener: ContextVar[Callable[[dict], None] | None] = ContextVar(
+    "supervisor_decision_listener", default=None
+)
+
+
+class DecisionLog:
+    """What the supervisor decided, for people watching the run: appended to
+    ``research/supervisor_log.json`` in the VFS and passed to the ``decision_listener``."""
+
+    def __init__(self, vfs, run_id: str):
+        self.vfs, self.run_id = vfs, run_id
+        try:
+            self.entries: list[dict] = json.loads(vfs.read(run_id, SUPERVISOR_LOG_PATH))
+        except FileNotFoundError:
+            self.entries = []
+
+    def add(self, kind: str, **fields) -> None:
+        entry = {"kind": kind, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        entry.update(fields)
+        self.entries.append(entry)
+        self.vfs.write_json(self.run_id, SUPERVISOR_LOG_PATH, self.entries, "supervisor_log")
+        listener = decision_listener.get()
+        if listener is not None:
+            try:
+                listener(entry)
+            except Exception:  # a display problem must never stop research
+                pass
+
+
+def read_supervisor_log(vfs, run_id: str) -> list[dict]:
+    """The run's supervisor decisions, oldest first; empty before any research."""
+    try:
+        return json.loads(vfs.read(run_id, SUPERVISOR_LOG_PATH))
+    except FileNotFoundError:
+        return []
 
 
 @dataclass
@@ -168,6 +211,7 @@ class ResearchSupervisor:
         if allow_replan:
             tools.append(PROPOSE_REPLAN_TOOL)
         messages: list[BaseMessage] = [HumanMessage(content=self._task_list(pending, brief))]
+        log = DecisionLog(self.vfs, run_id)
 
         for _ in range(self.max_turns):
             response = self.router.invoke_with_tools(
@@ -190,12 +234,13 @@ class ResearchSupervisor:
                 if not unresearched:
                     break
                 messages.append(HumanMessage(content=self._incomplete(unresearched)))
+                log.add("refused", text=self._incomplete(unresearched))
                 continue
             replies, jobs, finished, replan = self._decide(
-                response.tool_calls, by_id, rounds, pending, allow_replan
+                response.tool_calls, by_id, rounds, pending, allow_replan, log
             )
             if jobs:
-                replies.update(self._research_batch(run_id, jobs, thread_id, claims, results))
+                replies.update(self._research_batch(run_id, jobs, thread_id, claims, results, log))
             messages.extend(
                 ToolMessage(content=replies[call["id"]], tool_call_id=call["id"])
                 for call in response.tool_calls
@@ -214,10 +259,12 @@ class ResearchSupervisor:
                     thread_id,
                     claims,
                     results,
+                    log,
+                    automatic=True,
                 )
         return results, replan
 
-    def _decide(self, calls, by_id, rounds, pending, allow_replan):
+    def _decide(self, calls, by_id, rounds, pending, allow_replan, log: DecisionLog):
         """Validate one response's tool calls. Returns the replies for calls answered directly,
         the research jobs to run, whether research is complete, and any replan proposal."""
         replies: dict[str, str] = {}
@@ -228,7 +275,9 @@ class ResearchSupervisor:
         for call in calls:
             name, args, call_id = call["name"], call.get("args") or {}, call["id"]
             if name == THINK_TOOL_NAME:
-                replies[call_id] = think(str(args.get("reflection", "")))
+                reflection = str(args.get("reflection", ""))
+                replies[call_id] = think(reflection)
+                log.add("think", text=reflection)
             elif name == CONDUCT_RESEARCH_TOOL_NAME:
                 todo_id = str(args.get("todo_id", "")).strip()
                 topic = str(args.get("research_topic", "")).strip()
@@ -260,6 +309,7 @@ class ResearchSupervisor:
                 else:
                     replies[call_id] = "Research complete."
                     finished = True
+                    log.add("complete")
             elif name == PROPOSE_REPLAN_TOOL_NAME and allow_replan:
                 todo_ids = [str(tid) for tid in args.get("todo_ids") or [] if str(tid) in by_id]
                 reason = str(args.get("reason", "")).strip()
@@ -268,8 +318,11 @@ class ResearchSupervisor:
                 else:
                     replies[call_id] = "Replan proposed; a human will review a replacement plan."
                     replan = ReplanProposal(reason=reason, todo_ids=todo_ids)
+                    log.add("replan", text=reason, todo_ids=todo_ids)
             else:
                 replies[call_id] = f"Unknown tool {name!r}."
+            if replies.get(call_id, "").startswith(("Refused", "Not complete", "Unknown tool")):
+                log.add("refused", text=replies[call_id])
         return replies, jobs, finished, replan
 
     @staticmethod
@@ -295,22 +348,41 @@ class ResearchSupervisor:
 
     # ----- research execution -----
 
-    def _research_batch(self, run_id, jobs, thread_id, claims, results) -> dict[str, str]:
+    def _research_batch(
+        self, run_id, jobs, thread_id, claims, results, log: DecisionLog, *, automatic=False
+    ) -> dict[str, str]:
         """Run one batch of research jobs in parallel and persist them; returns the supervisor's
-        reply per ConductResearch call id."""
+        reply per ConductResearch call id. `automatic` marks tasks the code delegated after the
+        supervisor's turn limit."""
         previous = {job.todo.todo_id: results.get(job.todo.todo_id) for job in jobs}
         for job in jobs:
             if job.follow_up:
                 job.todo.research_attempt += 1
                 job.todo.research_instruction = job.topic
                 job.todo.status = TodoStatus.PLANNED
+        log.add(
+            "delegate",
+            automatic=automatic,
+            tasks=[
+                {
+                    "todo_id": job.todo.todo_id,
+                    "question": job.todo.research_question,
+                    "round": job.todo.research_attempt,
+                    "follow_up": job.follow_up,
+                    "topic": job.topic,
+                }
+                for job in jobs
+            ],
+        )
         outcomes = self._run_sub_agents(run_id, jobs, thread_id, claims)
         replies = {}
         for job in jobs:
             todo_id = job.todo.todo_id
             todo, refs, chunks = outcomes[todo_id]
+            summary = self._result_summary(run_id, todo)
+            log.add("result", **{key: value for key, value in summary.items() if key != "findings"})
             if job.call_id:
-                replies[job.call_id] = self._result_report(run_id, todo)
+                replies[job.call_id] = self._format_result(summary)
             earlier = previous[todo_id]
             if job.follow_up and earlier is not None:
                 if todo.status == TodoStatus.FAILED:
@@ -321,23 +393,47 @@ class ResearchSupervisor:
             results[todo_id] = (todo, refs, chunks)
         return replies
 
-    def _result_report(self, run_id: str, todo: ResearchTodo) -> str:
-        """What the supervisor reads about one task after a research round."""
-        header = f"Task {todo.todo_id} (round {todo.research_attempt}): {todo.status.value}"
+    def _result_summary(self, run_id: str, todo: ResearchTodo) -> dict:
+        """One task's outcome after a research round, read from what was persisted."""
+        summary = {
+            "todo_id": todo.todo_id,
+            "question": todo.research_question,
+            "round": todo.research_attempt,
+            "status": todo.status.value,
+        }
         try:
             bundle = json.loads(self.vfs.read(run_id, _evidence_path(todo)))
         except FileNotFoundError:
             try:
                 failure = json.loads(self.vfs.read(run_id, f"{research_prefix(todo)}/outcome.json"))
-                return f"{header}\nNo usable evidence: {failure.get('error', 'unknown error')}"
+                return {**summary, "error": str(failure.get("error", "unknown error"))}
             except FileNotFoundError:
-                return f"{header}\nNo usable evidence."
-        gaps = bundle.get("unresolved_gaps") or []
+                return {**summary, "error": ""}
+        return {
+            **summary,
+            "sufficient": bool(bundle.get("sufficient")),
+            "sources": len(bundle.get("sources", [])),
+            "gaps": list(bundle.get("unresolved_gaps") or []),
+            "findings": str(bundle.get("summary", "")),
+        }
+
+    @staticmethod
+    def _format_result(summary: dict) -> str:
+        """What the supervisor model reads about one task after a research round."""
+        header = f"Task {summary['todo_id']} (round {summary['round']}): {summary['status']}"
+        if "error" in summary:
+            error = summary["error"]
+            return (
+                f"{header}\nNo usable evidence: {error}"
+                if error
+                else f"{header}\nNo usable evidence."
+            )
+        gaps = summary["gaps"]
         return (
-            f"{header}\nSufficient: {'yes' if bundle.get('sufficient') else 'no'}\n"
-            f"Sources: {len(bundle.get('sources', []))}\n"
+            f"{header}\nSufficient: {'yes' if summary['sufficient'] else 'no'}\n"
+            f"Sources: {summary['sources']}\n"
             f"Unresolved gaps: {'; '.join(gaps) if gaps else 'none'}\n"
-            f"Findings:\n{bundle.get('summary', '')}"
+            f"Findings:\n{summary['findings']}"
         )
 
     def _run_sub_agents(self, run_id: str, jobs: list[ResearchJob], thread_id: str, claims):

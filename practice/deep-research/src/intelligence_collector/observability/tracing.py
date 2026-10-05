@@ -8,8 +8,10 @@ stay open in memory while the graph waits for a human. ``session_id`` is the Lan
 ID, which groups the run with anything else recorded for the same chat thread.
 
 Every graph invocation (a new request, a resume after an interrupt, a recovery action, a
-continuation) opens one ``research.execution`` observation in that trace and closes it when
-the invocation returns, including when the graph pauses at an interrupt. The Langfuse
+continuation) opens one execution observation in that trace and closes it when the invocation
+returns, including when the graph pauses at an interrupt. It is named after the turn
+(``start``, ``resume · plan_approval``, ...) and, once it returns, after the agents that ran
+in it and where it paused, so the trace's top level reads as the run's history. The Langfuse
 LangChain ``CallbackHandler`` created for that execution is passed in the graph's config, so
 LangGraph nodes, nested graphs (research sub-agents) and LangChain model calls become its
 descendants. Code that is not a LangChain runnable (MCP calls, persistence, vector index,
@@ -18,15 +20,17 @@ current, also inside asyncio tasks and worker threads, because both the OpenTele
 and the active client travel in ``contextvars``.
 
     trace  (research run; session = thread)
-      research.execution  [kind=start]
-        research_graph                     LangGraph root run
-          <node>                           one per graph node
-            model.<role>                   LangChain chain -> generation
-            research_agent  [todo_id]      sub-agent graph, one per worker task
-              tool_node -> mcp.search      MCP tool call
-            research.persist [todo_id]     VFS + vector index writes
-      research.execution  [kind=resume, interrupt=plan_approval]
-        research_graph -> ...
+      start: Scope Agent → Planner ⏸ plan_approval          execution [kind=start]
+        research_graph                              LangGraph root run
+          <Agent> · <node>                          one per graph node, e.g. Planner · planning
+            model.<role>                            LangChain chain -> generation
+      resume · plan_approval: Research Supervisor → ... ⏸ publication_approval
+        research_graph
+          Research Supervisor · researching
+            model.supervisor
+            research_agent · <todo_id>              sub-agent graph, one per worker task
+              tool_node -> mcp.search               MCP tool call
+            research.persist [todo_id]              VFS + vector index writes
 
 Tracing never decides workflow behaviour: when Langfuse is disabled or misconfigured the
 tracer is inert and the graph runs exactly the same.
@@ -56,6 +60,8 @@ MAX_TRACE_TEXT = 4000
 # The Langfuse client of the execution in progress. A ContextVar, so asyncio tasks and threads
 # started with copied contexts (asyncio.to_thread, asyncio.run, anyio.run) see the same client.
 _ACTIVE_CLIENT: ContextVar[Any] = ContextVar("langfuse_active_client", default=None)
+# Agents that ran in the execution in progress, in order (consecutive repeats collapsed).
+_ACTIVE_AGENTS: ContextVar[list[str] | None] = ContextVar("langfuse_active_agents", default=None)
 
 
 # ===== PAYLOAD MASKING =====
@@ -178,6 +184,37 @@ def annotate_current(**metadata: Any) -> None:
         logger.exception("Langfuse: could not annotate the current observation")
 
 
+def enter_node(node: str, agent: str) -> None:
+    """Name the current observation (the LangGraph node run) ``<agent> · <node>`` and record
+    the agent on the execution in progress. No-op outside a traced execution."""
+    client = _ACTIVE_CLIENT.get()
+    if client is None:
+        return
+    agents = _ACTIVE_AGENTS.get()
+    if agents is not None and (not agents or agents[-1] != agent):
+        agents.append(agent)
+    if client.get_current_observation_id() is None:
+        return
+    try:
+        client.update_current_span(
+            name=f"{agent} · {node}", metadata={"node": node, "agent": agent}
+        )
+    except Exception:
+        logger.exception("Langfuse: could not name the node observation")
+
+
+def execution_name(kind: str, interrupt_kind: str = "") -> str:
+    """Observation name of a graph invocation, e.g. ``start`` or ``resume · plan_approval``."""
+    return f"{kind} · {interrupt_kind}" if interrupt_kind else kind
+
+
+def _finished_name(base: str, agents: list[str], paused_at: str) -> str:
+    """``<turn>: <agent> → <agent> ⏸ <interrupt>``: what ran in the execution and where it
+    stopped."""
+    name = f"{base}: {' → '.join(agents)}" if agents else base
+    return f"{name} ⏸ {paused_at}" if paused_at else name
+
+
 def score_current_trace(name: str, value: float, *, comment: str = "") -> None:
     """Attach a numeric score (e.g. RAGAS faithfulness) to the run's trace."""
     client = _ACTIVE_CLIENT.get()
@@ -241,7 +278,7 @@ class Execution:
 
 
 class RunTracer:
-    """Owns the Langfuse client and opens one ``research.execution`` per graph invocation."""
+    """Owns the Langfuse client and opens one execution observation per graph invocation."""
 
     def __init__(self, client=None, *, public_key: str = "", disabled_reason: str = ""):
         self.client = client
@@ -309,7 +346,7 @@ class RunTracer:
         input: Any = None,
         interrupt_kind: str = "",
     ) -> Iterator[Execution]:
-        """Open ``research.execution`` for one graph invocation and make it current.
+        """Open the execution observation of one graph invocation and make it current.
 
         `kind` is ``start``, ``resume``, ``recovery`` or ``continue``; `interrupt_kind` names the
         interrupt a resume answers (``plan_approval``, ``publication_approval``, ...)."""
@@ -336,11 +373,14 @@ class RunTracer:
         # A fresh handler per execution: no callback state is shared between invocations,
         # Streamlit reruns or concurrently open runs.
         execution.callbacks = [CallbackHandler(public_key=self.public_key or None)]
+        name = execution_name(kind, interrupt_kind)
+        agents: list[str] = []
         token = _ACTIVE_CLIENT.set(self.client)
+        agents_token = _ACTIVE_AGENTS.set(agents)
         try:
             with (
                 self.client.start_as_current_observation(
-                    name="research.execution",
+                    name=name,
                     as_type="agent",
                     trace_context={"trace_id": execution.trace_id},
                     input=input,
@@ -363,12 +403,16 @@ class RunTracer:
                         )
                     raise
                 finally:
-                    observation.update(output=execution.outcome or None)
-                    if execution.outcome.get("paused_at"):
-                        observation.update(
-                            status_message=(f"{PAUSED_MESSAGE} ({execution.outcome['paused_at']})")
-                        )
+                    paused_at = execution.outcome.get("paused_at", "")
+                    observation.update(
+                        name=_finished_name(name, agents, paused_at),
+                        output=execution.outcome or None,
+                        metadata={"agents": list(agents)},
+                    )
+                    if paused_at:
+                        observation.update(status_message=f"{PAUSED_MESSAGE} ({paused_at})")
         finally:
+            _ACTIVE_AGENTS.reset(agents_token)
             # No synchronous flush: the SDK exports in the background (and at exit), so an
             # unreachable Langfuse never delays a chat turn.
             _ACTIVE_CLIENT.reset(token)

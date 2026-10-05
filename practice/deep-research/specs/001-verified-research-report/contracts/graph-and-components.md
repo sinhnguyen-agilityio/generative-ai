@@ -37,10 +37,12 @@ Every port failure is typed, includes retryability, and preserves already commit
 Each research run has exactly one trace, whose ID is derived from `run_id`, so any process can
 attach later work to it; its Langfuse session ID is the LangGraph `thread_id`. Every graph
 invocation (start, resume after an interrupt, recovery, continuation) creates one
-`research.execution` observation (metadata `execution_kind`, `interrupt_kind`, `execution_id`)
-that is closed when the invocation returns; no observation stays open across a human pause.
+execution observation (metadata `execution_kind`, `interrupt_kind`, `execution_id`, `agents`),
+named `<kind>[ · <interrupt_kind>]: <agent> → … ⏸ <paused_at>`, that is closed when the
+invocation returns; no observation stays open across a human pause.
 The Langfuse LangChain callback created for the execution is passed in the graph config, so
-node runs, research sub-agent runs (`research_agent`, with `todo_id`) and model generations
+node runs (named `<agent> · <node>` from `NODE_AGENT`), research sub-agent runs
+(`research_agent · <todo_id>`) and model generations
 nest beneath it. MCP calls (`mcp.search`), persistence (`research.persist`), vector-index
 operations and RAGAS evaluators are child observations of the current run. Each LLM call is
 recorded once. Exported payloads are masked (credentials, secret URL parameters, strings over

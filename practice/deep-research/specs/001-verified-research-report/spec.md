@@ -795,6 +795,17 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   stored separately: a run records which index holds its chunks, and before retrieval a run whose
   index identity changed (e.g. a new embedding model) MUST be re-chunked and re-indexed from the
   VFS once.
+- **FR-050**: The UI MUST show, at all times, the run's stage with who has to act (a status chip:
+  done, working, waiting for the user, failed) and a six-step stepper (Scope, Plan, Research,
+  Write, Verify, Publish). A plan awaiting approval and a verified report awaiting review MUST be
+  shown as cards whose quick-reply buttons (approve, request changes, cancel for a plan) send
+  exactly the replies the chat input accepts. While research runs, the research supervisor's
+  decisions (reflections, delegations, task results, refusals, completion or replan) MUST appear
+  live and be kept in `research/supervisor_log.json`. A tabbed side panel MUST offer Run (agent
+  cards, the three verification gates with the Faithfulness score against 0.90, RAGAS signals
+  marked as not a gate, research limits), Sources (every source under its report `[S#]` id with
+  what the LLMs read), Activity (node log and supervisor log) and Details. All page and model
+  text in HTML fragments MUST be escaped.
 
 ### Key Entities *(include if feature involves data)*
 
