@@ -369,24 +369,6 @@ class ResearchFindings(Model):
         return self
 
 
-MAX_KEY_EXCERPTS = 5
-
-
-class PageSummary(Model):
-    """Page summarizer output: what one fetched page says about the research topic, plus up to
-    five verbatim quotes. The researcher reads this instead of the page's raw text."""
-
-    summary: str = Field(min_length=1)
-    key_excerpts: list[str] = Field(default_factory=list, max_length=MAX_KEY_EXCERPTS)
-
-    @model_validator(mode="after")
-    def validate_summary(self):
-        if not self.summary.strip():
-            raise ValueError("page summary must not be blank")
-        self.key_excerpts = [quote.strip() for quote in self.key_excerpts if quote.strip()]
-        return self
-
-
 class ResearchEvidenceCheck(Model):
     todo_id: str
     sufficient: bool

@@ -16,6 +16,7 @@ import sqlite3
 
 from intelligence_collector.agents.extension_judge import ExtensionJudge
 from intelligence_collector.agents.feedback_router import FeedbackRouter
+from intelligence_collector.agents.passage_selector import PassageSelector
 from intelligence_collector.agents.report_judge import ReportJudge
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.scope import ScopeAgent
@@ -30,6 +31,7 @@ from intelligence_collector.observability.evaluation import (
 )
 from intelligence_collector.observability.tracing import RunTracer
 from intelligence_collector.storage.chroma_vector_index import ChromaVectorIndex, default_embeddings
+from intelligence_collector.storage.embedding_cache import CachingEmbeddings
 from intelligence_collector.storage.run_registry import RunRegistry
 from intelligence_collector.storage.vfs import VFS
 from intelligence_collector.tools.mcp import TavilyMCP
@@ -121,14 +123,18 @@ def _research_nodes(
             f"Report verification needs RAGAS Faithfulness: configure {judge_key}. "
             "Until then every verification ends in ERROR and no report can be approved."
         )
+    embeddings = default_embeddings(settings.embedding_model, settings.embedding_provider)
+    # Passage selection and the vector index embed the same page chunks: the index reuses the
+    # vectors selection computed instead of embedding them twice.
+    chunk_embeddings = CachingEmbeddings(embeddings)
     researcher = ResearchAgent(
         routers.standard,
         # Each research sub-agent gets its own MCP client and per-task search budget.
         mcp_factory=lambda: TavilyMCP(tavily_url, tavily_key, max_calls=settings.max_search_calls),
         max_search_calls=settings.max_search_calls,
         max_sources=settings.max_sources_per_task,
+        passage_selector=PassageSelector(chunk_embeddings),
     )
-    embeddings = default_embeddings(settings.embedding_model, settings.embedding_provider)
     return ResearchNodes(
         vfs,
         # Real semantic retrieval, persisted locally via Chroma. Used to narrow the Build/Fix
@@ -136,7 +142,7 @@ def _research_nodes(
         # evidence independently, so this never affects what gets checked.
         ChromaVectorIndex(
             settings.chroma_path,
-            embeddings=embeddings,
+            embeddings=chunk_embeddings,
             model=settings.embedding_model,
             provider=settings.embedding_provider,
         ),

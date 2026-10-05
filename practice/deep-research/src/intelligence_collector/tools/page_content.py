@@ -1,10 +1,10 @@
 """Raw page content: cleaning, size limits, chunking and stable source ids.
 
 Tavily returns each page's full text (``raw_content``). It is stored in the VFS and chunked for
-the vector index, and never enters an LLM prompt whole: the researcher sees a per-page summary
-instead (``agents/page_summarizer.py``). Every function here is pure, so the same page always
-gives the same cleaned text and the same chunks — chunks can be rebuilt from the VFS at any time
-(for example after switching the embedding model).
+the vector index, and never enters an LLM prompt whole: the researcher sees only the chunks most
+relevant to its question (``agents/passage_selector.py``). Every function here is pure, so the
+same page always gives the same cleaned text and the same chunks — chunks can be rebuilt from the
+VFS at any time (for example after switching the embedding model).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from intelligence_collector.tools.url_tracking import normalize_url
 MAX_PAGE_CHARS = 60_000
 # Below this, the "page" is usually a cookie wall, paywall or script shell: use the snippet.
 MIN_PAGE_CHARS = 500
-CHUNK_CHARS = 2_000  # about 500 tokens
+CHUNK_CHARS = 1_000  # about 250 tokens: one passage the LLMs may read
 CHUNK_OVERLAP = 200
 
 _IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
@@ -56,7 +56,7 @@ def clean_page(text: str) -> tuple[str, bool]:
 
 
 def usable_page(text: str) -> bool:
-    """Whether a cleaned page has enough text to be worth summarizing and indexing."""
+    """Whether a cleaned page has enough text to be worth reading and indexing."""
     return len(text) >= MIN_PAGE_CHARS
 
 

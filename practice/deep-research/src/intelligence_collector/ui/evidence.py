@@ -16,13 +16,13 @@ class SourceView:
 
     locator: str
     title: str
-    excerpt: str  # what the LLMs read: the page summary, or the search snippet
+    excerpt: str  # what the LLMs read: the page's selected passages, or the search snippet
     page_stored: bool  # the full page is in the VFS and indexed
     linked: bool  # captured by another task and only referenced here
 
     @property
     def summary(self) -> str:
-        """The excerpt without its verbatim key quotes."""
+        """The excerpt without the key quotes of an older page summary."""
         return self.excerpt.split("\n\nKey excerpts:", 1)[0].strip()
 
 

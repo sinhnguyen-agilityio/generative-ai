@@ -1,5 +1,5 @@
 """Raw page content end to end: Tavily's full page goes to the VFS and the vector index, while
-every LLM prompt only ever sees the page summary."""
+every LLM prompt only ever sees the page's selected passages."""
 
 import json
 
@@ -12,7 +12,8 @@ from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.storage.evidence_index import ensure_run_indexed, reindex_run
 from intelligence_collector.storage.vector_index import LocalVectorIndex
 from intelligence_collector.tools.mcp import ControlledMCP
-from intelligence_collector.tools.page_content import source_id_for
+from intelligence_collector.agents.passage_selector import MAX_PASSAGES_PER_PAGE, PASSAGE_SEPARATOR
+from intelligence_collector.tools.page_content import CHUNK_CHARS, source_id_for
 from tests.fixtures.fake_models import FakeResearchModel
 
 URL = "https://docs.test/langgraph/persistence"
@@ -66,16 +67,15 @@ def _research(stores, model=None):
     return model, mcp, result
 
 
-def test_llms_read_the_page_summary_never_the_raw_page(stores):
+def test_llms_read_selected_passages_never_the_whole_page(stores):
     model, _, (todo, _, _) = _research(stores)
 
     assert todo.status == TodoStatus.COMPLETED
-    summarizer = [p for p in model.prompts if p.startswith("You summarize one web page")]
-    others = [p for p in model.prompts if not p.startswith("You summarize one web page")]
-    assert len(summarizer) == 1 and DEEP_FACT in summarizer[0]  # only the summarizer reads it
-    assert others and all(DEEP_FACT not in prompt for prompt in others)
-    researcher_view = next(p for p in others if "Search results for" in p)
-    assert "Summary: # LangGraph persistence" in researcher_view
+    # No LLM call reads the page itself: there is no per-page summarizer, and the passage the
+    # question does not ask about never reaches a prompt.
+    assert model.prompts and all(DEEP_FACT not in prompt for prompt in model.prompts)
+    researcher_view = next(p for p in model.prompts if "Search results for" in p)
+    assert "# LangGraph persistence" in researcher_view  # verbatim page text
     assert "Tavily snippet." not in researcher_view
 
 
@@ -103,7 +103,8 @@ def test_the_full_page_is_stored_in_the_vfs_and_indexed_as_chunks(stores):
     capture = json.loads(vfs.read("run", "research/t1/raw/0.json"))
     assert capture["raw_path"] == "research/t1/raw/0.md"
     assert capture["source"]["source_id"] == source_id_for(URL)
-    assert capture["content"].startswith("Summary: # LangGraph persistence")
+    assert capture["content"].startswith("# LangGraph persistence")
+    assert len(capture["content"]) <= MAX_PASSAGES_PER_PAGE * (CHUNK_CHARS + len(PASSAGE_SEPARATOR))
     assert "raw_content" not in capture["source"]["provenance"]
     assert {ref.kind for ref in refs} >= {"raw_page", "raw_capture", "evidence_bundle"}
 
@@ -114,11 +115,11 @@ def test_the_full_page_is_stored_in_the_vfs_and_indexed_as_chunks(stores):
     ]
     assert all(chunk.text.startswith("Persistence\n\n") for chunk in chunks)
     hit = index.retrieve("SqliteSaver writes every checkpoint SQLite file", limit=1, run_id="run")
-    assert DEEP_FACT in hit[0].text  # detail the summary dropped is still retrievable
+    assert DEEP_FACT in hit[0].text  # a passage selection left out is still retrievable
 
     bundle = json.loads(vfs.read("run", "research/t1/evidence/result.json"))
     source = bundle["sources"][0]
-    assert source["excerpt"] == capture["content"]  # the writer reads the summary
+    assert source["excerpt"] == capture["content"]  # the writer reads the passages
     assert source["raw_path"] == "research/t1/raw/0.md"
     assert all("text" not in chunk for chunk in bundle["indexed_chunks"])
 

@@ -1,7 +1,8 @@
 /* Intelligence Collector UI theme: the classes used by ui/html.py. Colors match
    .streamlit/config.toml: green = done, blue = working, orange = waiting for you,
    red = failed. */
-.block-container{padding-top:1.25rem;max-width:1440px}
+/* Streamlit's header (with the toolbar) is fixed and 3.75rem tall: start the page below it. */
+.block-container{padding-top:calc(3.75rem + 1rem);max-width:1440px}
 .ic-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px}
 .ic-brand{font-weight:700;font-size:1.15rem}
 .ic-ids{font-family:'IBM Plex Mono',monospace;font-size:.8rem;color:#59616B}

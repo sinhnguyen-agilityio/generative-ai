@@ -3,7 +3,7 @@ import json
 import threading
 import time
 
-from intelligence_collector.agents.researcher import ResearchAgent
+from intelligence_collector.agents.researcher import DEFAULT_MAX_SOURCES, ResearchAgent
 from intelligence_collector.agents.supervisor import ResearchSupervisor
 from intelligence_collector.agents.worker import run_worker
 from intelligence_collector.contracts import ResearchTodo, TodoStatus
@@ -111,8 +111,8 @@ def test_search_budget_is_a_hard_per_task_limit_and_gaps_are_recorded(stores):
 
 def test_source_budget_caps_distinct_pages_per_todo_across_all_searches(stores):
     """One todo whose searches each return 5 new pages (the case that previously kept 17 pages
-    over 4 searches) keeps at most 5 in total, asks each search only for the slots left, and
-    stops searching once the budget is full."""
+    over 4 searches) keeps at most the source budget in total, asks each search only for the slots
+    left, and stops searching once the budget is full."""
     vfs, index = stores
     todo = ResearchTodo(research_question="What is the latest version of TypeScript?")
     model = FakeResearchModel(queries={todo.research_question: [f"query {n}" for n in range(4)]})
@@ -137,8 +137,9 @@ def test_source_budget_caps_distinct_pages_per_todo_across_all_searches(stores):
 
     evidence = json.loads(vfs.read("budget", f"research/{todo.todo_id}/evidence/result.json"))
     assert completed.status == TodoStatus.COMPLETED
-    assert len(evidence["sources"]) == 5
-    assert requested_limits == [5]  # first search filled the budget; no further searches ran
+    assert len(evidence["sources"]) == DEFAULT_MAX_SOURCES
+    # The first search filled the budget; no further searches ran.
+    assert requested_limits == [DEFAULT_MAX_SOURCES]
     assert mcp.calls == 1
 
 
@@ -161,7 +162,8 @@ def test_source_budget_requests_only_the_remaining_slots(stores):
 
     mcp.search = recording_search
 
-    run_worker(vfs, index, "remaining", todo, _researcher(model, lambda: mcp))
+    researcher = ResearchAgent(ModelRouter(model), lambda: mcp, max_sources=5)
+    run_worker(vfs, index, "remaining", todo, researcher)
 
     evidence = json.loads(vfs.read("remaining", f"research/{todo.todo_id}/evidence/result.json"))
     assert requested_limits == [5, 2]
@@ -384,7 +386,7 @@ def test_page_already_found_by_another_todo_is_linked_without_using_a_source_slo
         return client
 
     supervisor = ResearchSupervisor(
-        _researcher(model, factory),
+        ResearchAgent(ModelRouter(model), factory, max_sources=5),
         vfs,
         index,
         max_concurrent_researchers=1,  # deterministic: todo 1 claims the shared page first

@@ -10,7 +10,6 @@ DEFAULT_OUTPUT_LIMITS = {
     "planner": 1024,
     "supervisor": 1024,
     "researcher": 512,
-    "page_summarizer": 1024,
     "research_compressor": 1536,
     "synthesizer": 2048,
     "fixer": 768,

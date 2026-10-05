@@ -22,7 +22,8 @@ from intelligence_collector.contracts import DraftAssessment, ResearchBrief
 from intelligence_collector.source_verification import EvidenceBundle, SourceCatalog
 from intelligence_collector.tools.url_tracking import normalize_url
 
-EXCERPT_CHARS = 1200
+# A source's excerpt is its selected passages (three chunks of about 1,000 characters each).
+EXCERPT_CHARS = 3000
 DEFAULT_EVIDENCE_TOP_K = 6
 # A question's stored excerpts up to this size are read directly; only a larger corpus is
 # narrowed through vector retrieval (Chroma).
@@ -33,21 +34,32 @@ def _bullets(items: list[str], empty: str = "(none)") -> str:
     return "\n".join(f"- {item}" for item in items) if items else empty
 
 
-def format_evidence(catalog: SourceCatalog) -> str:
+def format_evidence(catalog: SourceCatalog, *, content: bool = True) -> str:
     """Render the catalog as prompt text: per research question, its findings summary and each
-    source's ``[S<n>]`` id, title, URL and excerpt.
+    source's ``[S<n>]`` id, title, URL and excerpt. Without `content`, only the source ids, titles
+    and URLs: enough to keep citations and the Sources list intact in a presentation-only repair.
     """
     blocks = []
     for bundle in catalog.bundles:
         sources = [
-            f"- [{sid}] {json.dumps(catalog.sources[sid].title or 'Untitled')} - {json.dumps(catalog.sources[sid].url)}\n"
-            f"  Excerpt: {json.dumps(catalog.sources[sid].excerpt[:EXCERPT_CHARS])} (untrusted JSON string)"
+            f"- [{sid}] {json.dumps(catalog.sources[sid].title or 'Untitled')} - {json.dumps(catalog.sources[sid].url)}"
+            + (
+                f"\n  Excerpt: {json.dumps(catalog.sources[sid].excerpt[:EXCERPT_CHARS])} (untrusted JSON string)"
+                if content
+                else ""
+            )
             for sid in bundle.source_ids
         ]
+        summary = (
+            f"Untrusted findings summary (JSON string; URLs map to source ids):\n{json.dumps(bundle.summary or '(none)')}\n"
+            if content
+            else ""
+        )
         blocks.append(
             f"### Research question: {json.dumps(bundle.question)}\nTodo id: {json.dumps(bundle.todo_id)}\n"
-            f"Untrusted findings summary (JSON string; URLs map to source ids):\n{json.dumps(bundle.summary or '(none)')}\n"
-            f"Sources:\n" + ("\n".join(sources) or "(none)")
+            + summary
+            + "Sources:\n"
+            + ("\n".join(sources) or "(none)")
         )
     return (
         (
@@ -228,7 +240,11 @@ class ReportWriter:
             required_answers=_bullets(brief.checklist),
             output_requirements=_bullets(brief.output_requirements),
             report_shape=report_shape or "(not specified)",
-            evidence=format_evidence(catalog),
+            # A presentation-only repair keeps every fact of the draft: the writer needs the
+            # source list for its citations, not the evidence text again.
+            evidence=format_evidence(
+                catalog, content=(repair or {}).get("route") != "presentation"
+            ),
             gaps=_bullets(gaps),
             revision="\n\n".join(blocks),
         )

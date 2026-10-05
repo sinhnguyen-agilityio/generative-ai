@@ -25,8 +25,9 @@ clarify_with_user -> write_research_brief -> planning -> await_plan_approval (in
 4. The research supervisor (an LLM) delegates the tasks with `think_tool`, `ConductResearch`,
    `ResearchComplete` and `ProposeReplan`: one research sub-agent per call, at most three at once
    (`INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS`), plus at most one follow-up per task for a named
-   gap. Each sub-agent searches with `tavily_search`, reflects with `think_tool`, and reads a
-   summary of every fetched page (with verbatim key excerpts) instead of the page itself. Full
+   gap. Each sub-agent searches with `tavily_search`, reflects with `think_tool`, and reads the
+   three passages of every fetched page closest to its question (chosen by embedding similarity,
+   kept verbatim) instead of the page itself. Full
    pages (`raw/<n>.md`), raw captures and provenance are saved in VFS and the pages are indexed
    as chunks; nothing already researched is searched again.
 5. The writer receives the original question, required answers, output requirements, report

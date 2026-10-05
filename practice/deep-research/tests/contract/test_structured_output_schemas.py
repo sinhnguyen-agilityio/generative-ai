@@ -6,7 +6,6 @@ from openai.lib._pydantic import to_strict_json_schema
 from intelligence_collector.contracts import (
     DraftAssessment,
     FeedbackDecision,
-    PageSummary,
     Reflection,
     ReportJudgeVerdict,
     ResearchBrief,
@@ -23,7 +22,6 @@ ROUTER_SCHEMAS = [
     ResearchBrief,
     TodoPlan,
     ResearchFindings,
-    PageSummary,
     ResearchEvidenceVerdict,
     DraftAssessment,
     Reflection,

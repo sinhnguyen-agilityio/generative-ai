@@ -142,11 +142,12 @@ alternatives that would violate the constitution or clarified specification.
    `llm_call`)* → `compress_research` over `tavily_search` and `think_tool`: the first decision is
    a search, the LLM reflects after each result, narrows as needed, and stops with a final note,
    at the per-task five-call hard limit, or once it holds `INTELLIGENCE_MAX_SOURCES_PER_TASK`
-   distinct pages (default 5, max 10, counted across all of its searches — each search asks
+   distinct pages (default 3, max 10, counted across all of its searches — each search asks
    Tavily only for the slots left). Tavily returns each page's full text (`include_raw_content`);
-   the tool step cleans it and has the `page_summarizer` role summarize it into a summary with
-   verbatim key excerpts (FR-048), and only that summary reaches the researcher's context.
-   Compression returns cited `ResearchFindings` from the summaries, never the reflections.
+   the tool step cleans it, splits it into the index chunks and keeps the three chunks closest to
+   the research question and the search query, verbatim and in page order (`PassageSelector`,
+   FR-048; no LLM call per page). Only those passages reach the researcher's context.
+   Compression returns cited `ResearchFindings` from the passages, never the reflections.
    As each sub-agent returns, the Supervisor writes raw pages (`raw/<n>.md`), raw captures, notes
    (with findings), excerpts, evidence bundles, and the pages' chunks to the vector index
    (FR-049). URLs are tracked by normalized identity: a sub-agent hides pages it already retrieved
@@ -184,8 +185,8 @@ alternatives that would violate the constitution or clarified specification.
 | Planner Agent + `write_todos` | `PlannerAgent.define_plan` turns the `ResearchBrief` into research questions; `PlannerAgent.write_todos` converts the questions to `planned` todos and persists them | `TodoPlan` (questions, 1–5, non-blank, unique); invalid output or failed write blocks Research | Model router (`planner` role, reasoning tier), VFS, graph state |
 | Report Judge (`agents/report_judge.py`) | Sole Verify gate: one LLM-as-judge call (no search/scrape tools) re-reads the report against the already-gathered evidence and decides factual accuracy (no inaccuracies/hallucinations/inconsistencies introduced by the Writer — the fact-check pass) plus the operator-configured guideline checklist (`Settings.report_guidelines`, e.g. Markdown format, sourced sub-sections, English) — there is no separate deterministic pre-check | `ReportJudgeVerdict` (met/unmet + justification per criterion); any unmet criterion fails the `VerificationResult` and goes to the reflect-and-rewrite fix | Model router (`verify` role, reasoning tier), evidence catalog, `Settings.report_guidelines` |
 | Research Supervisor (`agents/supervisor.py`) | LLM tool loop over `think_tool`, `ConductResearch`, `ResearchComplete`, `ProposeReplan`; parallel batches (bounded); follow-ups append findings; persist each outcome | Refuses unknown/duplicate tasks, extra rounds and premature ResearchComplete; never skips an approved task; a failing sub-agent becomes a FAILED outcome, never cancels siblings; a failed follow-up keeps earlier evidence | Model router (`supervisor` role), `ResearchAgent`, VFS, vector store |
-| Research Sub-agent (`agents/researcher.py`) | LangGraph loop: LLM decision → `tavily_search` / `think_tool` execution → routing → research compression | First decision is a search; reflections never spend the search budget nor reach compression; fresh MCP client and hard per-task budget (≤5); MCP failures become tool/task outcomes with redacted errors; `ResearchFindings` validated | Model router (`researcher`, `research_compressor` roles, tool calling), Tavily MCP, `PageSummarizer` |
-| Page summarizer (`agents/page_summarizer.py`) | Clean each fetched page and summarize it for the research question into `PageSummary` | Page input capped; excerpts not found verbatim are dropped; short pages and failures keep the snippet | Model router (`page_summarizer` role), `tools/page_content.py` |
+| Research Sub-agent (`agents/researcher.py`) | LangGraph loop: LLM decision → `tavily_search` / `think_tool` execution → routing → research compression | First decision is a search; reflections never spend the search budget nor reach compression; fresh MCP client and hard per-task budget (≤5); MCP failures become tool/task outcomes with redacted errors; `ResearchFindings` validated | Model router (`researcher`, `research_compressor` roles, tool calling), Tavily MCP, `PassageSelector` |
+| Passage selector (`agents/passage_selector.py`) | Clean each fetched page, rank its index chunks against the research question and search query, keep the best three verbatim | No LLM call; one embedding call per search; embedding failure falls back to word overlap; short pages kept whole, unusable pages keep the snippet; vectors reused by the index (`storage/embedding_cache.py`) | Embeddings (`CachingEmbeddings`), `tools/page_content.py`, `storage/evidence_index.py` |
 | Research persistence (`agents/worker.py`) | Turn a `ResearchOutcome` into raw pages, raw captures, notes, excerpts, evidence bundle, and page chunks; idempotent resume guard; capture each URL once per run | COMPLETED with sources + findings (gaps recorded); FAILED writes `outcome.json`; already-captured URLs reference the first capture (`reused_from_task`) | VFS, vector store, `UrlRegistry`, `storage/evidence_index.py` |
 | Evidence index (`storage/evidence_index.py`) | Build stable chunk records from stored pages; mark which index holds a run; rebuild a run for a new index | Chunk ids `<run>:<source_id>:<n>` (upserts, no duplicates); rebuild happens once per index identity | VFS, vector store |
 | VFS Artifact Store | Atomic run-scoped files and immutable versions | Reject path escape/cross-run writes; partial writes are invisible | All nodes, checkpoint metadata |
@@ -232,7 +233,7 @@ src/intelligence_collector/
 │   ├── planner.py          # PlannerAgent + create_todos
 │   ├── supervisor.py       # ResearchSupervisor: LLM tool loop, parallel delegation, follow-ups
 │   ├── researcher.py       # ResearchAgent sub-agent (LLM <-> tavily_search/think_tool + compression)
-│   ├── page_summarizer.py  # PageSummarizer: page -> topic summary + verbatim key excerpts
+│   ├── passage_selector.py # PassageSelector: page -> most relevant verbatim chunks
 │   ├── tools.py            # tool schemas: tavily_search, think_tool, ConductResearch, ...
 │   ├── worker.py           # persist a sub-agent outcome to VFS + vector index
 │   ├── report_writer.py    # BVF Build/Fix drafts, reviewer revisions, reflection

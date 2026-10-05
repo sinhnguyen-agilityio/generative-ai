@@ -6,12 +6,13 @@ Each sub-agent investigates exactly one research question in an isolated context
                      \\--(final answer or budget spent)--> compress_research -> END
 
 * ``llm_call``          LLM decision: search, reflect with ``think_tool``, or give a final note.
-* ``tool_node``         Runs the searches through the MCP boundary and summarizes each fetched page
-                        (``page_summarizer.py``); records reflections.
-* ``compress_research`` Structured LLM call that condenses the page summaries into cited findings.
+* ``tool_node``         Runs the searches through the MCP boundary and keeps each fetched page's
+                        most relevant verbatim passages (``passage_selector.py``); records
+                        reflections.
+* ``compress_research`` Structured LLM call that condenses the passages into cited findings.
 * ``route_after_llm``   Continues only while the LLM asks and budgets remain.
 
-The LLM only ever reads page summaries; each page's full text travels in ``sources`` to
+The LLM only ever reads the selected passages; each page's full text travels in ``sources`` to
 ``worker.py``, which stores it in the VFS and indexes its chunks. Reflections stay in the message
 history and never reach the compressor.
 """
@@ -28,7 +29,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from intelligence_collector.agents.page_summarizer import PageSummarizer
+from intelligence_collector.agents.passage_selector import PassageSelector
 from intelligence_collector.agents.prompts import (
     COMPRESS_TEMPLATE,
     RESEARCHER_TEMPLATE,
@@ -48,11 +49,11 @@ from intelligence_collector.tools.url_tracking import UrlClaims, normalize_url
 HARD_SEARCH_LIMIT = 5
 # Distinct pages one sub-agent may keep for its single research question (todo), across all of
 # its searches — not per search call.
-DEFAULT_MAX_SOURCES = 5
+DEFAULT_MAX_SOURCES = 3
 HARD_SOURCE_LIMIT = 10
-# Page summaries are bounded by the summarizer's output cap; this only guards against snippets
-# or summaries that run long.
-TOOL_RESULT_CHARS = 3000
+# Passages are bounded by the selector (three chunks per page); this only guards against snippets
+# that run long.
+TOOL_RESULT_CHARS = 3200
 COMPRESS_SOURCE_CHARS = 4000
 
 
@@ -149,13 +150,13 @@ class ResearchAgent:
         *,
         max_search_calls: int = HARD_SEARCH_LIMIT,
         max_sources: int = DEFAULT_MAX_SOURCES,
-        page_summarizer: PageSummarizer | None = None,
+        passage_selector: PassageSelector | None = None,
     ):
         self.router = router
         self.mcp_factory = mcp_factory
         self.max_search_calls = min(max(1, max_search_calls), HARD_SEARCH_LIMIT)
         self.max_sources = min(max(1, max_sources), HARD_SOURCE_LIMIT)
-        self.page_summarizer = page_summarizer or PageSummarizer(router)
+        self.passage_selector = passage_selector or PassageSelector()
 
     def research(
         self,
@@ -274,12 +275,13 @@ class ResearchAgent:
                     fresh.append(row)
             return fresh, repeated
 
-        def read_owned_pages(question: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            """Summarize the pages this task owns; linked pages keep their snippet."""
+        def read_owned_pages(
+            question: str, query: str, rows: list[dict[str, Any]]
+        ) -> list[dict[str, Any]]:
+            """Select the relevant passages of the pages this task owns, ranked against the
+            question and the query that found them; linked pages keep their snippet."""
             owned = [row for row in rows if not row.get("_covered_by")]
-            read = iter(
-                self.page_summarizer.read_pages(question, owned, run_id=run_id, thread_id=thread_id)
-            )
+            read = iter(self.passage_selector.read_pages(f"{question}\n{query}", owned))
             return [row if row.get("_covered_by") else next(read) for row in rows]
 
         def search(question: str, query: str) -> tuple[str, list[dict[str, Any]], list[str]]:
@@ -311,7 +313,7 @@ class ResearchAgent:
                 error = redact_mcp_error(exc)
                 return f"Search failed: {error}", [], [error]
             fresh, repeated = keep_new_rows(rows)
-            fresh = read_owned_pages(question, fresh)
+            fresh = read_owned_pages(question, query, fresh)
             content = _format_search_results(query, fresh, repeated)
             if len(owned_urls) >= source_budget:
                 content += (
@@ -359,7 +361,7 @@ class ResearchAgent:
             }
 
         def compress_research(state: ResearcherState) -> ResearcherState:
-            """Compress the gathered page summaries into ``ResearchFindings``; reflections are
+            """Compress the gathered passages into ``ResearchFindings``; reflections are
             not evidence and are left out. No sources means no findings.
             """
             if not state.get("sources"):

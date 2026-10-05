@@ -4,7 +4,6 @@ import re
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 _TASK = re.compile(r"- todo_id: (\S+)\n  question: (.*)")
-_PAGE = re.compile(r"<untrusted_page>\n(.*)\n</untrusted_page>", re.S)
 
 
 def fake_supervisor_turn(messages) -> AIMessage:
@@ -34,21 +33,9 @@ def fake_supervisor_turn(messages) -> AIMessage:
     )
 
 
-def fake_page_summary(messages) -> AIMessage:
-    """Summarize a page as its first line, quoting that line verbatim plus one invented quote
-    (which the summarizer must drop)."""
-    page = _PAGE.search(messages[-1].content).group(1)
-    first = page.strip().splitlines()[0].strip()
-    return AIMessage(
-        content=json.dumps(
-            {"summary": f"Summary: {first}", "key_excerpts": [first, "An invented quote."]}
-        )
-    )
-
-
 class FakeResearchModel:
-    """Tool-calling research sub-agent fake, also playing the research supervisor and the page
-    summarizer that share its router.
+    """Tool-calling research sub-agent fake, also playing the research supervisor that shares its
+    router.
 
     Stateless per call (decisions derive from the messages), so it is safe to share across
     parallel sub-agents. For each research question it issues the scripted ``tavily_search``
@@ -80,8 +67,6 @@ class FakeResearchModel:
         system = str(messages[0].content)
         if system.startswith("You are the research supervisor"):
             return fake_supervisor_turn(messages)
-        if system.startswith("You summarize one web page"):
-            return fake_page_summary(messages)
         question = self._question(messages)
         if question in self.fail_questions:
             raise RuntimeError(f"forced research failure for {question}")

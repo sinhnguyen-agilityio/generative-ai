@@ -1367,3 +1367,19 @@ page summaries (Session 2026-10-05; FR-047, FR-048, FR-049).
   `node_wrapper`); sub-agents are `research_agent · <todo_id>`. The node → agent mapping moved to
   `NODE_AGENT` (`graph/nodes/common.py`) and the UI activity log reads it too. Tests:
   `tests/integration/test_trace_topology.py`, `tests/ui/test_streamlit_trace_boundary.py`.
+- [X] T188 Passage selection instead of per-page summaries (FR-048, FR-049): the page summarizer
+  made one LLM call per fetched page with up to 40,000 characters of input (measured on one todo
+  with five 29k-character pages: 5 calls, about 37k input tokens). Following GPT Researcher's
+  context compressor, `agents/passage_selector.py` splits each page into the index chunks
+  (now 1,000 characters, 200 overlap), ranks them against the research question and the search
+  query in one embedding call per search, and keeps the best three verbatim in page order (pages of
+  at most three chunks whole; embedding failure falls back to word overlap). The passages are the
+  source excerpt every LLM and gate reads, so RAGAS Faithfulness now checks real page text.
+  `storage/embedding_cache.py` (`CachingEmbeddings`) hands the selection vectors to the Chroma
+  upsert, so chunks are embedded once. `INTELLIGENCE_MAX_SOURCES_PER_TASK` defaults to 3 (was 5);
+  writer excerpts hold 3,000 characters (three passages); a presentation-only repair sends the
+  writer the source list (ids, titles, URLs) without excerpts or findings. Removed:
+  `PageSummarizer`, `PageSummary`, `PAGE_SUMMARY_TEMPLATE`, the `page_summarizer` role. The same
+  todo now sends about 2.9k input tokens to LLMs instead of about 38.9k. Tests:
+  `tests/unit/test_passage_selector.py`, `tests/integration/test_raw_content_research.py`,
+  `tests/integration/test_worker_mcp.py`.

@@ -19,6 +19,13 @@ from intelligence_collector.contracts import IndexedChunk
 from intelligence_collector.tools.page_content import chunk_page, source_id_for
 
 
+def chunk_texts(title: str, text: str) -> list[str]:
+    """The text of each chunk of a page as it is embedded: the page title as a header, then the
+    chunk. Passage selection embeds exactly these texts, so the index can reuse their vectors."""
+    header = f"{title}\n\n" if title else ""
+    return [header + chunk for chunk in chunk_page(text)]
+
+
 def source_chunks(
     *,
     run_id: str,
@@ -31,13 +38,12 @@ def source_chunks(
 ) -> list[IndexedChunk]:
     """The index records of one page. Chunk ids are stable per run and page, so indexing the
     same page again replaces its records instead of duplicating them."""
-    header = f"{title}\n\n" if title else ""
     return [
         IndexedChunk(
             chunk_id=f"{run_id}:{source_id}:{position}",
             source_id=source_id,
             artifact_id=artifact_id,
-            text=header + chunk,
+            text=chunk,
             metadata={
                 "run_id": run_id,
                 "todo_id": todo_id,
@@ -45,7 +51,7 @@ def source_chunks(
                 "chunk_index": position,
             },
         )
-        for position, chunk in enumerate(chunk_page(text))
+        for position, chunk in enumerate(chunk_texts(title, text))
     ]
 
 

@@ -95,7 +95,7 @@ class Settings:
     output_dir: str = "exports"
     max_search_calls: int = 5
     # Distinct pages one research sub-agent keeps for its todo, across all of its searches.
-    max_sources_per_task: int = 5
+    max_sources_per_task: int = 3
     max_concurrent_researchers: int = 3
     recovery_attempts: int = 3
     faithfulness_model: str = "gpt-4.1-mini"
@@ -122,7 +122,7 @@ class Settings:
             output_dir=os.getenv("INTELLIGENCE_OUTPUT_DIR", cls.output_dir),
             max_search_calls=_bounded_int("INTELLIGENCE_MAX_SEARCH_CALLS", 5, MAX_SEARCH_CALLS),
             max_sources_per_task=_bounded_int(
-                "INTELLIGENCE_MAX_SOURCES_PER_TASK", 5, MAX_SOURCES_PER_TASK
+                "INTELLIGENCE_MAX_SOURCES_PER_TASK", 3, MAX_SOURCES_PER_TASK
             ),
             max_concurrent_researchers=_bounded_int(
                 "INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS", 3, MAX_CONCURRENT_RESEARCHERS

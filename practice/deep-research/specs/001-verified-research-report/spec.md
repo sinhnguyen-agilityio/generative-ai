@@ -190,8 +190,9 @@ evidence-backed technical report from a user's research request."
   reflect after each search, and its first turn must be a search (FR-009c).
 - Q: Is web page content scraped? → A: Yes, through Tavily itself: `tavily_search` requests each
   result's full cleaned page (`include_raw_content`). Pages are stored in the VFS and indexed as
-  chunks; no LLM ever reads a whole page. Each page is summarized by a cheap model into a summary
-  plus verbatim key excerpts, which is what the researcher, compressor and writer read (FR-048).
+  chunks; no LLM ever reads a whole page. The page chunks closest to the research question are
+  kept verbatim (embedding ranking, no LLM call), and those passages are what the researcher,
+  compressor, writer and verifiers read (FR-048).
 - Q: What happens to the index after switching the embedding model? → A: Chunks are derived data:
   the run's stored pages are re-split and re-embedded from the VFS before the next retrieval
   (FR-049).
@@ -443,9 +444,10 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   `tavily_search` and `think_tool`: an LLM decision either requests searches, records a reflection
   (required after each search; it never spends the search budget), or gives a final note. The
   first decision MUST be a search. A tool step executes the searches through the Tavily MCP
-  connection and summarizes each fetched page (FR-048); routing continues only while the LLM
+  connection and keeps each fetched page's most relevant passages (FR-048); routing continues
+  only while the LLM
   requests a tool and budgets remain (at most two decisions per search, plus two). A compression
-  step makes a structured LLM call that condenses the page summaries — never the reflections —
+  step makes a structured LLM call that condenses the passages — never the reflections —
   into cited findings (`ResearchFindings`: summary, sufficient, unresolved gaps). Search results
   MUST be treated as untrusted data.
 - **FR-009d**: A research task MUST be marked completed when its sub-agent gathered at least one
@@ -782,13 +784,14 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-048**: `tavily_search` MUST request each result's full page (`include_raw_content`) and
   keep it apart from Tavily's snippet. Each page MUST be cleaned (images, control characters,
   repeated boilerplate lines removed) and capped at 60,000 characters with a truncation flag; a
-  page under 500 characters keeps the snippet. Each usable page MUST be summarized for the
-  research question by the `page_summarizer` role (input capped at 40,000 characters) into
-  `PageSummary`: a summary of at most 200 words and up to 5 key excerpts, where any excerpt not
-  found verbatim in the page MUST be dropped. The summary with its excerpts becomes the source's
-  excerpt read by the researcher, the compressor and the report writer; a summarizer failure MUST
-  fall back to the snippet without failing the task.
-- **FR-049**: Each stored page MUST be split into overlapping chunks (about 2,000 characters with
+  page under 500 characters keeps the snippet. Each usable page MUST be split into its index
+  chunks (FR-049), ranked against the research question and the search query by embedding cosine
+  similarity, and only the three best chunks kept, verbatim and in page order; a page of at most
+  three chunks is kept whole. No LLM call reads a page. The passages become the source's excerpt read by
+  the researcher, the compressor, the report writer and the verifiers. An embedding failure MUST
+  fall back to word-overlap ranking without failing the task, and the vectors computed MUST be
+  reused when the same chunks are indexed.
+- **FR-049**: Each stored page MUST be split into overlapping chunks (about 1,000 characters with
   200 overlap, along Markdown headings, paragraphs and sentences) whose index text starts with the
   page title. Chunk ids MUST be stable per run and page (`<run>:<source_id>:<n>`, with
   `source_id` derived from the normalized URL), so re-indexing replaces records. Chunks are not
@@ -822,8 +825,8 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   a run and task, stored as a file through the VFS outside chat history.
 - **Raw Page**: The cleaned full text of one fetched web page (`raw/<n>.md`), the source of truth
   for its vector-index chunks; never placed in an LLM prompt whole.
-- **Page Summary**: A topic-focused summary of one raw page with verbatim key excerpts; the
-  source excerpt that LLMs read.
+- **Page Passages**: The chunks of one raw page closest to the research question, kept verbatim
+  and in page order; the source excerpt that LLMs read.
 - **Stage Artifact**: A run-scoped VFS file proving a completed stage, including the scope brief
   summary, planning todo list, per-task scraped website content, and previous/latest report versions.
 - **Indexed Research Data**: Raw web-retrieved content with source provenance, associated with its
