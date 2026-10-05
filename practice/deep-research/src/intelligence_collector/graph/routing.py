@@ -86,6 +86,11 @@ def route_after_fix(state: GraphState) -> str:
     return Node.SYNTHESIZE
 
 
+def route_after_delegation(state: GraphState) -> str:
+    """A supervisor's replan proposal goes to replacement planning; otherwise assess research."""
+    return Node.REPLAN if state.get("research_replan") else Node.ASSESS_RESEARCH
+
+
 def route_after_research(state: GraphState) -> str:
     """A technical failure with no usable evidence goes to review at once; only a failed
     research assessor (an LLM call) is worth one retry."""

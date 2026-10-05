@@ -1,7 +1,9 @@
 """Research task execution: run one research sub-agent and persist what it gathered.
 
 The sub-agent (``researcher.py``) only searches and compresses. This module turns its
-``ResearchOutcome`` into durable, run-scoped VFS artifacts and vector-index records.
+``ResearchOutcome`` into durable, run-scoped VFS artifacts and vector-index records. Each page's
+full text is stored once as ``raw/<n>.md`` next to its capture record ``raw/<n>.json``; the index
+receives that page's chunks, never the whole page as one record.
 """
 
 from __future__ import annotations
@@ -18,7 +20,12 @@ from intelligence_collector.contracts import (
     SourceRecord,
     TodoStatus,
 )
+from intelligence_collector.storage.evidence_index import mark_indexed, source_chunks
+from intelligence_collector.tools.page_content import source_id_for
 from intelligence_collector.tools.url_tracking import UrlRegistry
+
+# Sub-agent fields that are page content or bookkeeping, not provenance.
+_NOT_PROVENANCE = {"raw_content"}
 
 
 def _evidence_path(todo: ResearchTodo) -> str:
@@ -54,7 +61,11 @@ def restore_research(vfs, run_id: str, todo: ResearchTodo):
         content_hash=hashlib.sha256(text).hexdigest(),
         task_id=todo.todo_id,
     )
-    chunks = [IndexedChunk.model_validate(item) for item in bundle.get("indexed_chunks", [])]
+    # Bundles list chunk records without their text (the pages hold it).
+    chunks = [
+        IndexedChunk.model_validate({"text": "", **item})
+        for item in bundle.get("indexed_chunks", [])
+    ]
     return todo, [ref], chunks
 
 
@@ -92,7 +103,8 @@ def persist_research(
     outcome: ResearchOutcome,
     registry: UrlRegistry | None = None,
 ):
-    """Write raw captures, notes, excerpts, and the evidence bundle; index raw content.
+    """Write raw captures and pages, notes, excerpts, and the evidence bundle; index each page's
+    chunks.
 
     Each URL is captured and indexed once per run: a URL already in the run's ``UrlRegistry``
     (from another task, a re-scoped plan, or an earlier invocation) is referenced by its first
@@ -114,14 +126,21 @@ def persist_research(
     reused = 0
     for i, source in enumerate(sources):
         # Underscore keys (_query, _covered_by) are sub-agent bookkeeping, not page provenance.
-        payload = {key: value for key, value in source.items() if not key.startswith("_")}
+        payload = {
+            key: value
+            for key, value in source.items()
+            if not key.startswith("_") and key not in _NOT_PROVENANCE
+        }
         record = SourceRecord(
+            source_id=source_id_for(source["url"]),
             locator=source["url"],
             mcp_server=outcome.mcp_server,
             mcp_tool=outcome.mcp_tool,
             provenance={"query": source.get("_query", ""), **payload},
         )
-        raw = source.get("content", "")
+        # What the LLMs read: the page summary, or the search snippet without a usable page.
+        excerpt = source.get("content", "")
+        page = source.get("raw_content") or ""
         entry = {
             "source_id": record.source_id,
             "locator": record.locator,
@@ -129,7 +148,7 @@ def persist_research(
             "mcp_server": record.mcp_server,
             "mcp_tool": record.mcp_tool,
             "provenance": record.provenance,
-            "excerpt": raw,
+            "excerpt": excerpt,
         }
         known = urls.get(record.locator)
         if known is not None:
@@ -145,20 +164,27 @@ def persist_research(
                 }
             )
             continue
+        raw_path = None
+        if page:
+            raw_path = f"{research_prefix(todo)}/raw/{i}.md"
+            refs.append(vfs.write(run_id, raw_path, page, "raw_page", task_id=todo.todo_id))
         ref = vfs.write_json(
             run_id,
             f"{research_prefix(todo)}/raw/{i}.json",
-            {"source": record.model_dump(mode="json"), "content": raw},
+            {"source": record.model_dump(mode="json"), "content": excerpt, "raw_path": raw_path},
             "raw_capture",
             task_id=todo.todo_id,
         )
         refs.append(ref)
-        chunks.append(
-            IndexedChunk(
+        chunks.extend(
+            source_chunks(
+                run_id=run_id,
+                todo_id=todo.todo_id,
                 source_id=record.source_id,
                 artifact_id=ref.artifact_id,
-                text=raw,
-                metadata={"run_id": run_id, "todo_id": todo.todo_id, "locator": record.locator},
+                locator=record.locator,
+                title=str(source.get("title", "")),
+                text=page or excerpt,
             )
         )
         evidence_sources.append(
@@ -166,6 +192,7 @@ def persist_research(
                 **entry,
                 "artifact_id": ref.artifact_id,
                 "content_hash": ref.content_hash,
+                "raw_path": raw_path,
             }
         )
         urls.register(
@@ -180,6 +207,7 @@ def persist_research(
         )
     if chunks:
         index.index(chunks)
+        mark_indexed(vfs, run_id, index)
     registry_ref = urls.save(vfs, run_id)
     if registry_ref is not None:
         refs.append(registry_ref)
@@ -221,7 +249,9 @@ def persist_research(
                 "search_budget": outcome.search_budget,
                 "sufficient": findings.sufficient,
                 "unresolved_gaps": findings.unresolved_gaps,
-                "indexed_chunks": [chunk.model_dump(mode="json") for chunk in chunks],
+                "indexed_chunks": [
+                    chunk.model_dump(mode="json", exclude={"text"}) for chunk in chunks
+                ],
             },
             "evidence_bundle",
             task_id=todo.todo_id,

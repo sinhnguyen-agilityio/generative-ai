@@ -1247,3 +1247,67 @@ boundaries. Phase 8 tasks T044–T047 are independent after their prerequisite s
   removed. Docs: `docs/observability.md`. Tests: `tests/integration/test_trace_topology.py`,
   `tests/integration/test_langfuse_tracing.py`, `tests/ui/test_streamlit_trace_boundary.py`,
   `tests/contract/test_observability_contract.py`, `tests/unit/test_async_mcp_bridge.py`.
+
+## Phase 24: LLM Research Supervisor and Raw Page Content
+
+**Purpose**: The supervisor decides delegation with tools, sub-agents reflect with `think_tool`,
+and Tavily's full page content is stored in the VFS and indexed as chunks while LLMs only read
+page summaries (Session 2026-10-05; FR-047, FR-048, FR-049).
+
+- [X] T177 Raw page content (FR-048): `TavilyMCP` sends `include_raw_content` and keeps
+  `raw_content` apart from the `content` snippet (`tools/mcp.py`). `tools/page_content.py`
+  cleans pages (images, control characters, boilerplate lines repeated 3+ times, blank runs),
+  caps them at 60,000 characters with a truncation flag, treats pages under 500 characters as
+  unusable, and derives `source_id` from the normalized URL. Tests:
+  `tests/unit/test_tavily_mcp.py`, `tests/unit/test_page_content.py`.
+- [X] T178 Page summarizer (FR-048): `agents/page_summarizer.py` summarizes each usable page for
+  the research question with the `page_summarizer` role into `PageSummary` (summary + up to 5
+  key excerpts; schema in `contracts.py`, prompt `PAGE_SUMMARY_TEMPLATE`, output cap 1,024
+  tokens), input capped at 40,000 characters, pages summarized in parallel (3) within the caller's
+  context; excerpts not found verbatim are dropped; short pages and summarizer failures keep the
+  snippet. Tests: `tests/unit/test_page_summarizer.py`,
+  `tests/contract/test_structured_output_schemas.py`.
+- [X] T179 Research sub-agent tools (FR-009c): tool schemas moved to `agents/tools.py`
+  (`tavily_search`, `think_tool` with the reflection docstring, and the supervisor tools). The
+  researcher binds `tavily_search` and `think_tool`, forces `tavily_search` on the first turn,
+  allows `2 x search budget + 2` decisions, summarizes the pages it owns (linked pages keep their
+  snippet and carry no raw page), and compresses page summaries only. `RESEARCHER_PROMPT` follows
+  the think-after-each-search pattern with hard limits and stop rules. Tests:
+  `tests/integration/test_raw_content_research.py`, `tests/integration/test_worker_mcp.py`.
+- [X] T180 Raw pages and chunk index (FR-010a, FR-049): `persist_research` writes each page to
+  `raw/<n>.md`, links it from the capture (`raw_path`), keeps raw text out of provenance and
+  bundles (chunk records are listed without text), and indexes the page's chunks.
+  `storage/evidence_index.py` builds chunk records (title header, ids `<run>:<source_id>:<n>`),
+  records `index/<identity>.json`, and `ensure_run_indexed` re-chunks and re-indexes a run from
+  the VFS once for a new index identity (e.g. embedding model); `BVFNodes` calls it before writer
+  and extension retrieval. Vector indexes expose `identity`. Dependency:
+  `langchain-text-splitters`. Tests: `tests/integration/test_raw_content_research.py`,
+  `tests/unit/test_extend_feedback.py`.
+- [X] T181 LLM Research Supervisor (FR-047): `ResearchSupervisor` runs a `supervisor`-role tool
+  loop (`SUPERVISOR_TEMPLATE`) over `think_tool`, `ConductResearch`, `ResearchComplete` and
+  `ProposeReplan`; one response's research calls run in parallel through the existing bounded
+  fan-out; follow-ups become new attempts whose findings are appended, and a failed follow-up is
+  reverted to the earlier attempt. Code refuses unknown or duplicate tasks, extra rounds and a
+  premature `ResearchComplete`, and researches never-delegated tasks after `max_turns`.
+  `delegate()` returns a `Delegation` carrying any `ReplanProposal`; `researching` stores it as
+  `research_replan`, `route_after_delegation` sends it to `replan` (which plans for the proposed
+  tasks and clears it), and the supervisor is offered `ProposeReplan` only with a Planner and an
+  original (non-replacement) plan. Traces: `model.supervisor` generations under `researching`.
+  Tests: `tests/integration/test_research_supervisor.py`,
+  `tests/integration/test_trace_topology.py`, `tests/unit/test_review_hardening.py`; opt-in live:
+  `tests/integration/test_live_mcp_opt_in.py` (`RUN_LIVE_MCP=1`).
+- [X] T182 Dead code and stale tests removed: under `mcp` 2.x, `mcp.server.fastmcp` no longer
+  exists (FastMCP became `MCPServer`), so the unused MCP storage server
+  (`storage/mcp_server.py`) could not even be imported. The runtime indexes through
+  `ChromaVectorIndex` directly, so the whole alternative storage path was dead and is removed:
+  `storage/mcp_server.py`, `storage/mcp_vector_index.py`, `tools/async_bridge.py`, and the
+  `services/` package (`workflow.py` — `ReportVerification`, `DurableOperations`,
+  `RepairDiagnosis` superseded by `repair.py` and the BVF nodes — and `operation_context.py`),
+  plus the unused `MCP_SERVER_CONFIG` setting. Tests written for removed APIs are deleted:
+  `tests/integration/test_verifier_retries.py` (judge supplement/ERROR behavior is covered by
+  `tests/unit/test_report_judge.py` and `tests/unit/test_research_report_loops.py`),
+  `tests/integration/test_durable_workflow.py`, `tests/fixtures/workflow.py`,
+  `tests/unit/test_storage_embedding_errors.py`, `tests/unit/test_mcp_session_transport.py`
+  (Tavily call arguments are covered by `tests/unit/test_tavily_mcp.py`) and
+  `tests/unit/test_async_mcp_bridge.py`. `tests/ui/test_plan_checkpoint_controls.py` now asserts
+  that a pending plan approval is answered in chat (no recovery buttons). Suite: all pass.

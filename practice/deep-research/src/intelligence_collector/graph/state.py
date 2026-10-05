@@ -67,6 +67,8 @@ class GraphState(TypedDict, total=False):
     recovery_decision: dict | None
     recovery_route: str
     research_gaps: list[dict]
+    # The research supervisor's ProposeReplan: {"reason", "todo_ids"}, cleared by replan
+    research_replan: dict | None
     research_gap_attempt: int
     research_gap_budget: int
     verification_issue: str

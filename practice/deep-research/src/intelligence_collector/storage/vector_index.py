@@ -40,6 +40,7 @@ class LocalVectorIndex:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.identity = f"local-{self.path.stem}"
 
     def _all(self) -> list[dict]:
         return json.loads(self.path.read_text()) if self.path.exists() else []

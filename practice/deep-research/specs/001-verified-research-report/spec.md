@@ -179,6 +179,23 @@ evidence-backed technical report from a user's research request."
   presentation) for at most `INTELLIGENCE_RECOVERY_ATTEMPTS` cycles (FR-042). This supersedes the
   2026-09-30 rewrite-only answer.
 
+### Session 2026-10-05
+
+- Q: Who decides how research is delegated? → A: The Research Supervisor is an LLM with four
+  tools: `think_tool`, `ConductResearch(todo_id, research_topic)`, `ResearchComplete` and
+  `ProposeReplan`. It thinks before delegating and after each batch, runs independent tasks in
+  parallel, and may follow up on a task's specific gaps. Code keeps it inside the approved plan
+  (FR-047). This supersedes the fixed one-sub-agent-per-todo delegation of Session 2026-09-24.
+- Q: What tools does a research sub-agent have? → A: `tavily_search` and `think_tool`; it must
+  reflect after each search, and its first turn must be a search (FR-009c).
+- Q: Is web page content scraped? → A: Yes, through Tavily itself: `tavily_search` requests each
+  result's full cleaned page (`include_raw_content`). Pages are stored in the VFS and indexed as
+  chunks; no LLM ever reads a whole page. Each page is summarized by a cheap model into a summary
+  plus verbatim key excerpts, which is what the researcher, compressor and writer read (FR-048).
+- Q: What happens to the index after switching the embedding model? → A: Chunks are derived data:
+  the run's stored pages are re-split and re-embedded from the VFS before the next retrieval
+  (FR-049).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Complete a Verified Research Run (Priority: P1)
@@ -407,10 +424,11 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   status. Each newly written task MUST start in the planned status.
 - **FR-008**: A Research Supervisor MUST assign planned tasks to research workers, track their
   outcomes, and record progress assessments.
-- **FR-008a**: The Supervisor MUST delegate each planned todo to its own isolated research
-  sub-agent and MAY run at most a configurable number of sub-agents concurrently (default 3,
-  maximum 5). A failing sub-agent MUST become that task's recorded outcome without cancelling its
-  siblings. Each sub-agent MUST have its own MCP client, so search budgets apply per task.
+- **FR-008a**: The Supervisor MUST delegate every planned todo to an isolated research
+  sub-agent (one per `ConductResearch` call, see FR-047) and MAY run at most a configurable number
+  of sub-agents concurrently (default 3, maximum 5). A failing sub-agent MUST become that task's
+  recorded outcome without cancelling its siblings. Each sub-agent MUST have its own MCP client,
+  so search budgets apply per task.
 - **FR-008b**: Each research sub-agent MUST keep at most a configurable number of distinct source
   pages for its todo in total, across all of its searches (default 5, maximum 10) — the limit is per
   task, not per search call. Each search MUST request only the number of pages still available in
@@ -421,12 +439,15 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   MUST link to the existing capture instead of capturing or indexing it again, and the linked page
   MUST NOT count toward that sub-agent's source budget. This also applies to gap research and
   resumed runs for pages captured earlier in the same run.
-- **FR-009c**: A research sub-agent MUST follow an LLM tool-calling loop: an LLM decision either
-  requests `tavily_search` calls or gives a final note; a tool step executes the searches through
-  the Tavily MCP connection; routing continues only while the LLM requests searches and budget
-  remains; and a compression step makes a structured LLM call that condenses the raw results into
-  cited findings (`ResearchFindings`: summary, sufficient, unresolved gaps). Search results MUST be
-  treated as untrusted data.
+- **FR-009c**: A research sub-agent MUST follow an LLM tool-calling loop with two tools,
+  `tavily_search` and `think_tool`: an LLM decision either requests searches, records a reflection
+  (required after each search; it never spends the search budget), or gives a final note. The
+  first decision MUST be a search. A tool step executes the searches through the Tavily MCP
+  connection and summarizes each fetched page (FR-048); routing continues only while the LLM
+  requests a tool and budgets remain (at most two decisions per search, plus two). A compression
+  step makes a structured LLM call that condenses the page summaries — never the reflections —
+  into cited findings (`ResearchFindings`: summary, sufficient, unresolved gaps). Search results
+  MUST be treated as untrusted data.
 - **FR-009d**: A research task MUST be marked completed when its sub-agent gathered at least one
   source and compressed findings, even if the findings are insufficient; insufficiency and
   unresolved gaps MUST be recorded in the evidence bundle for Verification. A task MUST be marked
@@ -450,7 +471,9 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   from its website sources; and Synthesis/Verification writes or preserves both the previous draft
   report and the latest report.
 - **FR-010a**: Workers MUST preserve raw data retrieved from web sources with its source provenance
-  and index that research data in the vector store for retrieval during synthesis.
+  and index that research data in the vector store for retrieval during synthesis. A page's full
+  text is stored once as `research/<task>/raw/<n>.md` next to its capture record `raw/<n>.json`,
+  and the index receives the page's chunks (FR-049), never the page as one record.
 - **FR-010c**: The workflow MUST track retrieved URLs by a normalized identity (case-insensitive
   scheme and host, no default port, fragment, trailing slash, or tracking parameters, sorted query)
   so each web page is captured and indexed at most once per run. Within one research sub-agent, a
@@ -744,6 +767,34 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   disclosed limitation when other tasks produced usable evidence. When no task produced usable
   evidence, the run MUST go to review at once: a stored technical failure is not re-assessed,
   and the recovery `research` action reopens exactly the failed tasks.
+- **FR-047**: The Research Supervisor MUST be an LLM tool-calling loop (role `supervisor`) over
+  `think_tool`, `ConductResearch(todo_id, research_topic)`, `ResearchComplete` and — only when a
+  Planner and plan approval exist and the current plan is not already a replacement —
+  `ProposeReplan(reason, todo_ids)`. Several `ConductResearch` calls in one response MUST run in
+  parallel. A second call for the same task is a follow-up: it researches only the missing
+  evidence named in its topic as a new research attempt, and its findings MUST be appended to the
+  earlier ones; a failed follow-up MUST keep the earlier evidence as the task's result. Code MUST
+  refuse unknown todo ids, duplicate calls for one task in a batch, more than
+  `max_attempts_per_task` rounds (default 2) per task, and `ResearchComplete` while a task was
+  never researched; after `max_turns` decisions (default 8) every never-researched task MUST be
+  researched anyway. `ProposeReplan` MUST route to replacement planning and human plan approval;
+  approved tasks with evidence keep it.
+- **FR-048**: `tavily_search` MUST request each result's full page (`include_raw_content`) and
+  keep it apart from Tavily's snippet. Each page MUST be cleaned (images, control characters,
+  repeated boilerplate lines removed) and capped at 60,000 characters with a truncation flag; a
+  page under 500 characters keeps the snippet. Each usable page MUST be summarized for the
+  research question by the `page_summarizer` role (input capped at 40,000 characters) into
+  `PageSummary`: a summary of at most 200 words and up to 5 key excerpts, where any excerpt not
+  found verbatim in the page MUST be dropped. The summary with its excerpts becomes the source's
+  excerpt read by the researcher, the compressor and the report writer; a summarizer failure MUST
+  fall back to the snippet without failing the task.
+- **FR-049**: Each stored page MUST be split into overlapping chunks (about 2,000 characters with
+  200 overlap, along Markdown headings, paragraphs and sentences) whose index text starts with the
+  page title. Chunk ids MUST be stable per run and page (`<run>:<source_id>:<n>`, with
+  `source_id` derived from the normalized URL), so re-indexing replaces records. Chunks are not
+  stored separately: a run records which index holds its chunks, and before retrieval a run whose
+  index identity changed (e.g. a new embedding model) MUST be re-chunked and re-indexed from the
+  VFS once.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -758,6 +809,10 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   synthesis.
 - **Research Artifact**: A persisted note, source excerpt, or other intermediate work product tied to
   a run and task, stored as a file through the VFS outside chat history.
+- **Raw Page**: The cleaned full text of one fetched web page (`raw/<n>.md`), the source of truth
+  for its vector-index chunks; never placed in an LLM prompt whole.
+- **Page Summary**: A topic-focused summary of one raw page with verbatim key excerpts; the
+  source excerpt that LLMs read.
 - **Stage Artifact**: A run-scoped VFS file proving a completed stage, including the scope brief
   summary, planning todo list, per-task scraped website content, and previous/latest report versions.
 - **Indexed Research Data**: Raw web-retrieved content with source provenance, associated with its

@@ -28,13 +28,12 @@ def test_pending_plan_node_offers_continuation_instead_of_approval(tmp_path, mon
     assert "Continue unfinished run" in buttons
 
 
-def test_actual_plan_interrupt_offers_approval(monkeypatch):
+def test_actual_plan_interrupt_is_answered_in_chat_without_recovery_buttons():
     buttons = []
-    st = SimpleNamespace(
-        subheader=lambda *args: None,
-        json=lambda *args: None,
-        button=lambda label: buttons.append(label) or False,
+    st = SimpleNamespace(button=lambda label: buttons.append(label) or False)
+    checkpoint = SimpleNamespace(
+        has_interrupt=True, interrupt_kind="plan_approval", next_nodes=["await_plan_approval"]
     )
-    checkpoint = SimpleNamespace(has_interrupt=True, interrupt_kind="plan_approval")
     app._render_recovery_controls(st, {"stage": "Awaiting Plan Approval"}, checkpoint)
-    assert buttons == ["Approve research plan", "Decline research plan"]
+    # The plan is approved or changed by a chat reply; nothing here may resume the run.
+    assert buttons == []

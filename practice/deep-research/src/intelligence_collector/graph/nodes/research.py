@@ -79,9 +79,10 @@ class ResearchNodes:
         )
 
     def researching(self, state):
-        """Supervisor delegates each planned question to its own research sub-agent.
+        """The supervisor model delegates the planned questions to research sub-agents.
 
-        When the run has a plan record, retrieval requires an approval of exactly that plan.
+        When the run has a plan record, retrieval requires an approval of exactly that plan. The
+        supervisor may propose one replacement plan per approved original plan.
         """
         plan = state.get("plan")
         if plan is not None:
@@ -92,8 +93,13 @@ class ResearchNodes:
         if not todos:
             raise ValueError("Research requires a persisted non-empty todo plan")
         results = self.supervisor.delegate(
-            state["run_id"], todos, thread_id=state.get("thread_id", "")
+            state["run_id"],
+            todos,
+            thread_id=state.get("thread_id", ""),
+            brief=(state.get("scoped_request") or {}).get("research_question", ""),
+            allow_replan=plan is not None and plan.get("kind") != "replacement",
         )
+        replan = getattr(results, "replan", None)
         artifacts = list(state.get("artifacts", []))
         evidence = list(state.get("evidence", []))
         index_refs = list(state.get("index_refs", []))
@@ -115,7 +121,12 @@ class ResearchNodes:
         return {
             **state,
             "stage": Stage.RESEARCHING.value,
-            "current_action": f"Research sub-agents finished {done}/{len(completed)} tasks",
+            "current_action": "Supervisor proposed a replacement plan"
+            if replan
+            else f"Research sub-agents finished {done}/{len(completed)} tasks",
+            "research_replan": {"reason": replan.reason, "todo_ids": replan.todo_ids}
+            if replan
+            else None,
             "activity": _activity(state, "Delegating research to sub-agents"),
             "todos": completed,
             "todo_ids": [todo["todo_id"] for todo in completed],

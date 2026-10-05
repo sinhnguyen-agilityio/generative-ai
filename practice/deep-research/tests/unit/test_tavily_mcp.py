@@ -64,3 +64,71 @@ def test_tavily_adapter_rejects_embedded_or_missing_credentials():
         )
     with pytest.raises(ValueError, match="non-empty"):
         TavilyMCP("https://mcp.tavily.com/mcp/", "")
+
+
+def test_tavily_adapter_keeps_the_snippet_and_the_raw_page_apart(monkeypatch):
+    adapter = TavilyMCP("https://mcp.tavily.com/mcp/", "key")
+
+    async def fake_search(query, max_results):
+        return SimpleNamespace(
+            structured_content={
+                "results": [
+                    {
+                        "url": "https://docs.test/page",
+                        "title": "Page",
+                        "content": "Short snippet.",
+                        "raw_content": "# Page\n\nThe whole page text.",
+                        "score": 0.8,
+                    },
+                    {"url": "https://docs.test/no-raw", "title": "No raw", "content": "Only."},
+                ]
+            },
+            content=[],
+        )
+
+    monkeypatch.setattr(adapter, "_search", fake_search)
+    page, no_raw = adapter.search("q")
+
+    assert page["content"] == "Short snippet."  # the snippet is never replaced by the page
+    assert page["raw_content"] == "# Page\n\nThe whole page text."
+    assert no_raw["raw_content"] == ""
+
+
+def test_tavily_search_asks_for_raw_content(monkeypatch):
+    import contextlib
+
+    from intelligence_collector.tools import mcp as mcp_module
+
+    calls = []
+
+    @contextlib.asynccontextmanager
+    async def fake_client(url):
+        yield ("read", "write")
+
+    class FakeSession:
+        def __init__(self, read, write):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def initialize(self):
+            return None
+
+        async def call_tool(self, name, arguments, read_timeout_seconds=None):
+            calls.append((name, arguments))
+            return SimpleNamespace(structured_content={"results": []}, content=[])
+
+    monkeypatch.setattr(mcp_module, "streamable_http_client", fake_client)
+    monkeypatch.setattr(mcp_module, "ClientSession", FakeSession)
+
+    TavilyMCP("https://mcp.tavily.com/mcp/", "key").search("q", max_results=2)
+    TavilyMCP("https://mcp.tavily.com/mcp/", "key", include_raw_content=False).search("q")
+
+    assert calls == [
+        ("tavily_search", {"query": "q", "max_results": 2, "include_raw_content": True}),
+        ("tavily_search", {"query": "q", "max_results": 5, "include_raw_content": False}),
+    ]

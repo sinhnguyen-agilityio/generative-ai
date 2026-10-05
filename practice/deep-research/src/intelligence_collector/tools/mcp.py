@@ -59,7 +59,11 @@ class ControlledMCP:
 
 
 class TavilyMCP:
-    """Secret-safe synchronous adapter for Tavily's streamable HTTP MCP server."""
+    """Secret-safe synchronous adapter for Tavily's streamable HTTP MCP server.
+
+    With ``include_raw_content`` each result also carries the page's full cleaned text
+    (``raw_content``) next to Tavily's short query-relevant ``content`` snippet.
+    """
 
     server_name = "tavily"
     tool_name = "tavily_search"
@@ -72,6 +76,7 @@ class TavilyMCP:
         max_calls: int = 5,
         max_results: int = 5,
         timeout_seconds: float = 30.0,
+        include_raw_content: bool = True,
     ):
         if not api_key.strip():
             raise ValueError("Tavily MCP requires a non-empty API key")
@@ -86,6 +91,7 @@ class TavilyMCP:
         self.max_calls = min(max(1, max_calls), 5)
         self.max_results = min(max(1, max_results), 10)
         self.timeout_seconds = timeout_seconds
+        self.include_raw_content = include_raw_content
         self.requests: list[dict[str, str]] = []
 
     def __repr__(self) -> str:
@@ -97,7 +103,11 @@ class TavilyMCP:
                 await session.initialize()
                 return await session.call_tool(
                     self.tool_name,
-                    {"query": query, "max_results": max_results},
+                    {
+                        "query": query,
+                        "max_results": max_results,
+                        "include_raw_content": self.include_raw_content,
+                    },
                     read_timeout_seconds=self.timeout_seconds,
                 )
 
@@ -121,11 +131,12 @@ class TavilyMCP:
         for row in rows:
             if not isinstance(row, dict) or not str(row.get("url", "")).strip():
                 continue
-            content = row.get("content") or row.get("raw_content") or row.get("title") or ""
+            snippet = row.get("content") or row.get("title") or ""
             normalized.append(
                 {
                     "url": str(row["url"]),
-                    "content": str(content),
+                    "content": str(snippet),
+                    "raw_content": str(row.get("raw_content") or ""),
                     "title": str(row.get("title", "")),
                     "score": row.get("score"),
                 }

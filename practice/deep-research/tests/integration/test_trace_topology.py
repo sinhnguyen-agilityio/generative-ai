@@ -153,8 +153,13 @@ def test_one_invocation_is_one_trace_with_nodes_workers_tools_and_generations(tm
     for node in ("researching", "research_complete", "synthesizing", "verifying", "approval"):
         assert capture.named(node)[0].parent_id == graph_run.span_id, tree
     assert capture.named("verifying")[0].metadata["draft_version"] == 1
-    # node -> worker task (one per todo, run concurrently) -> tool call and generations
+    # node -> supervisor decisions, and worker tasks (one per todo, run concurrently) -> tool
+    # call and generations
     researching = capture.named("researching")[0]
+    decisions = capture.named("model.supervisor")
+    # think -> ConductResearch x3 (one parallel batch) -> think -> ResearchComplete
+    assert len(decisions) == 4
+    assert {d.parent_id for d in decisions} == {researching.span_id}, tree
     workers = capture.named("research_agent")
     assert sorted(w.metadata["todo_id"] for w in workers) == ["todo-0", "todo-1", "todo-2"]
     assert {w.parent_id for w in workers} == {researching.span_id}

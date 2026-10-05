@@ -102,8 +102,13 @@ def test_index_failure_resume_reuses_durable_retrieved_outcome(tmp_path):
             if self.fail:
                 raise RuntimeError("index unavailable")
 
+    from intelligence_collector.models.router import ModelRouter
+    from tests.fixtures.fake_models import FakeResearchModel
+
     researcher, index = Researcher(), Index()
-    supervisor = ResearchSupervisor(researcher, VFS(tmp_path), index)
+    supervisor = ResearchSupervisor(
+        researcher, VFS(tmp_path), index, router=ModelRouter(FakeResearchModel())
+    )
     todo = ResearchTodo(todo_id="t", research_question="Question?")
     with pytest.raises(RuntimeError, match="persistence failed"):
         supervisor.delegate("r", [todo])

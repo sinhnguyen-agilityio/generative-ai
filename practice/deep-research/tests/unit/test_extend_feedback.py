@@ -16,6 +16,7 @@ from intelligence_collector.contracts import (
 from intelligence_collector.graph.nodes import ApprovalNodes, BVFNodes, Node
 from intelligence_collector.graph.routing import route_after_extension, route_after_feedback
 from intelligence_collector.source_verification import load_catalog
+from intelligence_collector.storage.evidence_index import mark_indexed
 from intelligence_collector.storage.vector_index import LocalVectorIndex
 from intelligence_collector.storage.vfs import VFS
 
@@ -70,6 +71,8 @@ def _nodes(tmp_path, judge, *, with_chunks=True):
         "evidence_bundle",
         task_id="t1",
     )
+    # The index already received this run's chunks (or found none), so nothing is rebuilt.
+    mark_indexed(vfs, "r", index)
     if with_chunks:
         index.index(
             [
@@ -218,6 +221,17 @@ def test_no_stored_passages_researches_without_calling_the_judge(tmp_path):
     assert route_after_extension(result) == Node.RESEARCH
     assert judge.calls == []
     assert result["extension"]["passages"] == []
+
+
+def test_a_new_index_is_rebuilt_from_the_vfs_before_locating_passages(tmp_path):
+    """A different index (e.g. a new embedding model) never received this run's chunks: the
+    stored evidence is re-chunked and indexed from the VFS, so the passages are found again."""
+    judge = Judge(error=RuntimeError("stop after the judge sees the passages"))
+    nodes, state = _nodes(tmp_path, judge, with_chunks=False)
+    nodes.index = LocalVectorIndex(tmp_path / "new-model.json")
+    nodes.locate_extension_evidence(state)
+    assert judge.calls and set(judge.calls[0]) == {"S1", "S2"}
+    assert nodes.index.retrieve("checkpointing", run_id="r")
 
 
 def test_extension_record_is_stored(tmp_path):

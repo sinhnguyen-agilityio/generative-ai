@@ -81,8 +81,10 @@ class ChromaVectorIndex:
         Path(path).mkdir(parents=True, exist_ok=True)
         self._embeddings = embeddings or default_embeddings(model, provider)
         self._embedding_model = f"{provider}/{model}"
+        # The collection is the index identity: a new embedding model is a new collection.
+        self.identity = collection_name or collection_for(provider, model)
         self._collection = chromadb.PersistentClient(path=str(path)).get_or_create_collection(
-            collection_name or collection_for(provider, model)
+            self.identity
         )
 
     def index(self, chunks: list[IndexedChunk]) -> list[str]:

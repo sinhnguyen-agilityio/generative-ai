@@ -44,9 +44,10 @@ answer. This is a terminal state with a downloadable incomplete artifact, not a
 publication. It skips approval and paid optional quality metrics. A new request
 requires a new thread. Full verified answers still require human approval.
 
-Automatic replanning and the `think_tool`/supervisor assessment wrapper have been
-removed. Legacy pending `replan` checkpoints are mapped to bounded gap research
-on explicit restore/continue; consumed attempt counters are never reset by migration.
+The former `think_tool`/supervisor assessment wrapper was removed; since 2026-10-05 the research
+supervisor is an LLM that uses `think_tool` itself and may propose one replacement plan, which
+always waits for human plan approval. Legacy pending `replan` checkpoints are mapped to bounded
+gap research on explicit restore/continue; consumed attempt counters are never reset by migration.
 
 ## Crash boundaries and compatibility
 

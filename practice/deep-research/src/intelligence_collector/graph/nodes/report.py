@@ -44,6 +44,7 @@ from intelligence_collector.observability.evaluation import (
 )
 from intelligence_collector.observability.tracing import traced
 from intelligence_collector.repair import diagnose, item_key, locate_with_index
+from intelligence_collector.storage.evidence_index import ensure_run_indexed
 from intelligence_collector.source_verification import (
     _normalize_url,
     citation_errors,
@@ -129,6 +130,17 @@ class BVFNodes:
             else None,
         )
 
+    def _ensure_indexed(self, state) -> None:
+        """Before retrieval: re-index the run's stored pages once if the index (e.g. a new
+        embedding model) never received them. Retrieval falls back to unfiltered evidence, so
+        an index failure here must not stop the run."""
+        if self.index is None:
+            return
+        try:
+            ensure_run_indexed(self.vfs, self.index, state["run_id"])
+        except Exception:
+            pass
+
     def _writer_catalog(self, state, full, repair):
         """What the writer reads: small corpora directly, a large one narrowed via Chroma; a
         content repair reads the full stored evidence, and the Chroma route adds passages
@@ -136,6 +148,7 @@ class BVFNodes:
         route = (repair or {}).get("route")
         if route in {"vfs", "research"}:
             return full
+        self._ensure_indexed(state)
         narrowed = select_relevant_evidence(
             full,
             self.index,
@@ -577,18 +590,30 @@ class BVFNodes:
         }
 
     def replan(self, state):
-        """Targeted research did not help: propose replacement tasks for the unanswered items,
-        keep the original checklist and completed evidence, and wait for plan approval."""
+        """Propose replacement tasks and wait for plan approval, keeping the original checklist
+        and completed evidence. Reached when targeted research did not help (repair route
+        "replan") or when the research supervisor proposed a replan."""
         if self.planner is None:
             raise ValueError("Replacement planning requires a Planner")
         brief = ResearchBrief.model_validate(state["scoped_request"])
         repair = state.get("repair") or {}
+        todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
+        proposal = state.get("research_replan") or {}
+        questions = {todo.todo_id: todo.research_question for todo in todos}
         unanswered = list(
             dict.fromkeys(
-                issue["item"] for issue in repair.get("issues", []) if issue["route"] == "replan"
+                [
+                    issue["item"]
+                    for issue in repair.get("issues", [])
+                    if issue["route"] == "replan"
+                ]
+                + [
+                    f"{questions[todo_id]} ({proposal.get('reason', '')})"
+                    for todo_id in proposal.get("todo_ids", [])
+                    if todo_id in questions
+                ]
             )
         )
-        todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
         plan = self.planner.define_plan(
             brief,
             unanswered=unanswered,
@@ -611,6 +636,7 @@ class BVFNodes:
             "plan_version": version,
             "plan_approval": None,
             "repair": {**repair, "route": "research"},
+            "research_replan": None,
             "stage": Stage.PLANNING.value,
             "current_action": "Replacement plan awaiting approval",
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
@@ -622,6 +648,7 @@ class BVFNodes:
         source of the active catalog (an old scope, another run) are ignored."""
         if self.index is None:
             return []
+        self._ensure_indexed(state)
         try:
             chunks = self.index.retrieve(topic, limit=EXTENSION_PASSAGES, run_id=state["run_id"])
         except Exception:

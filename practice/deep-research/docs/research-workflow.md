@@ -22,9 +22,13 @@ clarify_with_user -> write_research_brief -> planning -> await_plan_approval (in
 3. `await_plan_approval` pauses before any retrieval. Approve → research; "cancel" → the run
    ends; any other reply → rescoping and a new plan that needs its own approval.
    `researching` refuses to run unless the approval matches the current plan hash.
-4. One sub-agent per task, at most three at once (`INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS`).
-   Evidence, raw captures and provenance are saved in VFS; nothing already researched is
-   searched again.
+4. The research supervisor (an LLM) delegates the tasks with `think_tool`, `ConductResearch`,
+   `ResearchComplete` and `ProposeReplan`: one research sub-agent per call, at most three at once
+   (`INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS`), plus at most one follow-up per task for a named
+   gap. Each sub-agent searches with `tavily_search`, reflects with `think_tool`, and reads a
+   summary of every fetched page (with verbatim key excerpts) instead of the page itself. Full
+   pages (`raw/<n>.md`), raw captures and provenance are saved in VFS and the pages are indexed
+   as chunks; nothing already researched is searched again.
 5. The writer receives the original question, required answers, output requirements, report
    shape, the source catalog with stable `[S<n>]` ids, and known gaps. It starts with `## Answer`
    (a direct conclusion for each required item), cites every claim, words a gap as "could not be
@@ -86,9 +90,10 @@ history) and VFS (`planning/plan.v<n>.json`, `verification/repair.<n>.json`,
 
 ## Limitations
 
-- In this environment Tavily search returns short snippets (~130–1 500 characters);
-  `include_raw_content` is empty and `tavily_extract` returned "404 page not found", so pages are
-  never fetched in full. Answers that need full normative text may stay partial.
+- Tavily search returns short snippets (~130–1 500 characters) and, with `include_raw_content`
+  (verified on 2026-10-05: ~6 600–7 900 characters per page), each page's cleaned text. Pages are
+  capped at 60 000 characters and reach LLMs only as summaries, so a detail the summary drops is
+  found through the vector index rather than the writer's prompt.
 - Faithfulness requires the judge key (`OPENAI_API_KEY` by default); without it the app shows a
   warning and every verification is ERROR. Offline tests inject fake evaluators.
 - Coverage and Faithfulness are LLM judgments and can disagree with a human (see

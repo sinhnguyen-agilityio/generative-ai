@@ -56,14 +56,17 @@ def test_live_tavily_mcp_preserves_provenance_artifacts_and_index(stores):
     }
     assert chunks
     assert all(chunk.metadata["run_id"] == "live-tavily" for chunk in chunks)
-    assert {
-        chunk.chunk_id
-        for chunk in index.retrieve(
-            todo.research_question,
-            limit=20,
-            run_id="live-tavily",
-        )
-    } == {chunk.chunk_id for chunk in chunks}
+    hits = index.retrieve(todo.research_question, limit=10, run_id="live-tavily")
+    assert hits and {hit.chunk_id for hit in hits} <= {chunk.chunk_id for chunk in chunks}
+    # Tavily's full pages are stored in the VFS; the LLMs only read their short summaries.
+    pages = [ref for ref in refs if ref.kind == "raw_page"]
+    assert pages
+    for source in json.loads(
+        vfs.read("live-tavily", f"research/{todo.todo_id}/evidence/result.json")
+    )["sources"]:
+        if source.get("raw_path"):
+            page = vfs.read("live-tavily", source["raw_path"]).decode()
+            assert len(source["excerpt"]) < len(page)
 
     evidence = json.loads(
         vfs.read(
@@ -78,3 +81,36 @@ def test_live_tavily_mcp_preserves_provenance_artifacts_and_index(stores):
     serialized = json.dumps({"requests": mcp.requests, "evidence": evidence})
     assert api_key not in serialized
     assert api_key not in repr(mcp)
+
+
+def test_live_supervisor_delegates_every_task_with_its_tools(stores):
+    endpoint, api_key, model_name = _live_tavily_configuration()
+    vfs, index = stores
+    from intelligence_collector.agents.supervisor import ResearchSupervisor
+
+    model = ModelFactory().create(
+        ModelConfig(
+            model_name,
+            provider=os.getenv("INTELLIGENCE_REASONING_PROVIDER") or None,
+            timeout=45,
+        )
+    )
+    decisions = []
+    router = ModelRouter(
+        model,
+        trace=lambda **event: decisions.append(event) if event["role"] == "supervisor" else None,
+    )
+    researcher = ResearchAgent(router, lambda: TavilyMCP(endpoint, api_key, max_calls=2))
+    todos = [
+        ResearchTodo(research_question="What is the official Python 3.13 release date?"),
+        ResearchTodo(research_question="What is the latest stable LangGraph Python version?"),
+    ]
+
+    results = ResearchSupervisor(researcher, vfs, index).delegate(
+        "live-supervisor", todos, brief="Python 3.13 release date and the latest LangGraph version"
+    )
+
+    assert [todo.status for todo, _, _ in results] == [TodoStatus.COMPLETED] * 2
+    assert decisions  # the supervisor model made the decisions
+    called = {call["name"] for event in decisions for call in event["decision"]["tool_calls"]}
+    assert "ConductResearch" in called

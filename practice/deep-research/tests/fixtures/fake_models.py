@@ -1,10 +1,54 @@
 import json
+import re
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+_TASK = re.compile(r"- todo_id: (\S+)\n  question: (.*)")
+_PAGE = re.compile(r"<untrusted_page>\n(.*)\n</untrusted_page>", re.S)
+
+
+def fake_supervisor_turn(messages) -> AIMessage:
+    """A well-behaved research supervisor: think, delegate every pending task in one parallel
+    batch, think again, then ResearchComplete."""
+    conversation = [message for message in messages if message.type != "system"]
+    decisions = [message for message in conversation if isinstance(message, AIMessage)]
+    tasks = _TASK.findall(conversation[0].content)
+    if not decisions:
+        calls = [("think_tool", {"reflection": f"Plan: research all {len(tasks)} tasks."})]
+    elif len(decisions) == 1:
+        calls = [
+            ("ConductResearch", {"todo_id": todo_id, "research_topic": question})
+            for todo_id, question in tasks
+        ]
+    elif len(decisions) == 2:
+        calls = [("think_tool", {"reflection": "Every task returned findings."})]
+    else:
+        calls = [("ResearchComplete", {})]
+    turn = len(decisions)
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {"name": name, "args": args, "id": f"supervisor-{turn}-{n}"}
+            for n, (name, args) in enumerate(calls)
+        ],
+    )
+
+
+def fake_page_summary(messages) -> AIMessage:
+    """Summarize a page as its first line, quoting that line verbatim plus one invented quote
+    (which the summarizer must drop)."""
+    page = _PAGE.search(messages[-1].content).group(1)
+    first = page.strip().splitlines()[0].strip()
+    return AIMessage(
+        content=json.dumps(
+            {"summary": f"Summary: {first}", "key_excerpts": [first, "An invented quote."]}
+        )
+    )
+
 
 class FakeResearchModel:
-    """Tool-calling research sub-agent fake.
+    """Tool-calling research sub-agent fake, also playing the research supervisor and the page
+    summarizer that share its router.
 
     Stateless per call (decisions derive from the messages), so it is safe to share across
     parallel sub-agents. For each research question it issues the scripted ``tavily_search``
@@ -33,6 +77,11 @@ class FakeResearchModel:
         return ""
 
     def invoke(self, messages, config=None):
+        system = str(messages[0].content)
+        if system.startswith("You are the research supervisor"):
+            return fake_supervisor_turn(messages)
+        if system.startswith("You summarize one web page"):
+            return fake_page_summary(messages)
         question = self._question(messages)
         if question in self.fail_questions:
             raise RuntimeError(f"forced research failure for {question}")
@@ -63,6 +112,41 @@ class FakeResearchModel:
                 ],
             )
         return AIMessage(content="I have enough evidence to answer.")
+
+
+class ScriptedSupervisorModel(FakeResearchModel):
+    """FakeResearchModel whose supervisor turns follow a script.
+
+    Each script step maps the pending tasks (``[(todo_id, question), ...]``) to the tool calls
+    of that turn, as ``[(tool_name, args), ...]``; the last step repeats. Every supervisor prompt
+    is recorded, so tests can read the tool replies the supervisor received.
+    """
+
+    def __init__(self, script, **kwargs):
+        super().__init__(**kwargs)
+        self.script = list(script)
+        self.supervisor_prompts: list[list] = []
+
+    def invoke(self, messages, config=None):
+        if not str(messages[0].content).startswith("You are the research supervisor"):
+            return super().invoke(messages, config)
+        self.supervisor_prompts.append(messages)
+        conversation = [message for message in messages if message.type != "system"]
+        turn = sum(isinstance(message, AIMessage) for message in conversation)
+        step = self.script[min(turn, len(self.script) - 1)]
+        calls = step(_TASK.findall(conversation[0].content))
+        return AIMessage(
+            content="" if calls else "Done.",
+            tool_calls=[
+                {"name": name, "args": args, "id": f"s{turn}-{n}"}
+                for n, (name, args) in enumerate(calls)
+            ],
+        )
+
+    def tool_replies(self) -> list[str]:
+        """Every tool reply the supervisor saw, in order (from its latest prompt)."""
+        latest = self.supervisor_prompts[-1] if self.supervisor_prompts else []
+        return [str(m.content) for m in latest if isinstance(m, ToolMessage)]
 
 
 class FakeReportModel:

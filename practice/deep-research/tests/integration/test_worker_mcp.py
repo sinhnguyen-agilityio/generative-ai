@@ -39,9 +39,12 @@ def test_research_agent_searches_broad_then_narrow_and_persists_provenance(store
 
     assert completed.status == TodoStatus.COMPLETED
     assert [request["query"] for request in mcp.requests] == [todo.research_question, narrow]
-    assert model.bound_tools[0]["function"]["name"] == "tavily_search"
-    # Only the first turn forces a search; later turns may finish without one.
-    assert model.tool_choices == ["any", None, None]
+    assert [tool["function"]["name"] for tool in model.bound_tools] == [
+        "tavily_search",
+        "think_tool",
+    ]
+    # Only the first turn forces a search (not a reflection); later turns may finish without one.
+    assert model.tool_choices == ["tavily_search", None, None]
     assert [event["role"] for event in traces] == [
         "researcher",
         "researcher",
@@ -320,7 +323,10 @@ def test_url_found_by_several_tasks_is_captured_and_indexed_once(stores):
     )
     shared = {"url": "https://primary.test/shared", "content": "Shared evidence"}
     supervisor = ResearchSupervisor(
-        _researcher(FakeResearchModel(), lambda: ControlledMCP([shared])), vfs, index
+        _researcher(FakeResearchModel(), lambda: ControlledMCP([shared])),
+        vfs,
+        index,
+        max_concurrent_researchers=1,  # deterministic: the first task captures the page
     )
 
     results = supervisor.delegate("shared", [first, second])

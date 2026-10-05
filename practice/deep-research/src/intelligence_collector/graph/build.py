@@ -37,6 +37,7 @@ from intelligence_collector.graph.routing import (
     TO_SCOPE,
     route_after_approval,
     route_after_clarify,
+    route_after_delegation,
     route_after_extension,
     route_after_feedback,
     route_after_fix,
@@ -82,7 +83,8 @@ def build_graph(
                                        <--(validated human reply)--/
                                        \\-> write_research_brief -> planning
                   -> await_plan_approval (interrupt; nothing is retrieved before approval)
-                  -> researching -> research_complete -> synthesizing -> verifying
+                  -> researching (supervisor LLM) -> research_complete -> synthesizing -> verifying
+            researching --(supervisor ProposeReplan)--> replan -> await_plan_approval
             await_plan_approval --(change)--> clarify_with_user  --(decline)--> END
             verifying --(PASS: coverage, citations, Faithfulness > 0.90)--> evaluating_quality
                           -> approval (with_approval) | END
@@ -181,7 +183,13 @@ def build_graph(
     else:
         # Stage-only planning stub: todos are injected by the caller, no plan record exists.
         graph.add_edge(Node.PLAN, Node.RESEARCH)
-    graph.add_edge(Node.RESEARCH, Node.ASSESS_RESEARCH)
+    # The supervisor can propose a replacement plan only when a Planner and plan approval exist.
+    research_nodes.supervisor.replan_enabled = scope_agent is not None
+    if scope_agent is not None:
+        graph.add_conditional_edges(Node.RESEARCH, route_after_delegation,
+                                    [Node.REPLAN, Node.ASSESS_RESEARCH])
+    else:
+        graph.add_edge(Node.RESEARCH, Node.ASSESS_RESEARCH)
     graph.add_conditional_edges(Node.ASSESS_RESEARCH, route_after_research, {
         Node.SYNTHESIZE: Node.SYNTHESIZE,
         Node.PREPARE_GAP_RESEARCH: Node.PREPARE_GAP_RESEARCH,
