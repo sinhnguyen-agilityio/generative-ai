@@ -138,6 +138,8 @@ def test_workflow_stage_contract_distinguishes_all_guarded_states():
         Stage.FAILED,
         Stage.NEEDS_REVIEW,
         Stage.INCOMPLETE,
+        Stage.CANCELLED,
+        Stage.EXPORTED_INCOMPLETE,
     } == set(Stage)
 
 

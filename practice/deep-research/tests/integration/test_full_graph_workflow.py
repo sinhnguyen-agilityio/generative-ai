@@ -141,7 +141,7 @@ def test_approved_one_task_plan_completes_with_one_worker_and_stops_on_pass(stor
     config = {"configurable": {"thread_id": "t"}}
     graph.invoke({"run_id": "r", "thread_id": "t", "request": REQUEST}, config)
 
-    result = graph.invoke(Command(resume={"reply": "approve", "actor": "tester"}), config)
+    result = graph.invoke(Command(resume={"approved": True, "actor": "tester"}), config)
 
     assert _interrupt_kind(graph, config) == ["publication_approval"]
     assert result["stage"] == "Awaiting Approval"

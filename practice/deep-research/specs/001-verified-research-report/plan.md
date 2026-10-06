@@ -129,7 +129,8 @@ alternatives that would violate the constitution or clarified specification.
    questions (one for a simple question or comparison), the evidence each needs and the expected
    report shape. The system persists `planned` todos via `write_todos` and the hash-bound
    `planning/plan.v<n>.json`, then `await_plan_approval` interrupts; retrieval starts only after
-   the exact plan is approved (FR-040).
+   the exact plan is approved (FR-040). The Approve / Cancel buttons resume with
+   `{"approved": true|false}`; a typed reply is always a change request.
 5. The Research Supervisor is an LLM (role `supervisor`, FR-047). It receives the pending tasks
    and decides with `think_tool`, `ConductResearch(todo_id, research_topic)`, `ResearchComplete`
    and, for an original approved plan, `ProposeReplan`. The `ConductResearch` calls of one
@@ -182,7 +183,7 @@ alternatives that would violate the constitution or clarified specification.
 | Streamlit UI (`app.py` entry, package `ui/`, `.streamlit/config.toml`) | `ui/main.py` composes the page; `ui/state.py` owns session-state keys, defaults and every change (`on_click` callbacks for New thread and quick replies, which queue a reply answered like a typed one; Request changes is an `st.form`); `ui/resources.py` builds per-session dependencies (tracer, models, graph, VFS, recovery service); `ui/turn.py` runs one chat turn (lifecycle log, `graph.stream(stream_mode="values")`, live supervisor decisions via `decision_listener`); `ui/components/` render header + stepper, chat (plan and report cards, banner, notices, input), the tabbed panel (`LivePanel` placeholders redrawn every step) and recovery | `ui/run_status.py` (`RunView`) and `ui/evidence.py` derive everything from the snapshot without Streamlit; components never write authoritative artifacts; agent cards stay hidden until their agent leaves `pending`; HTML fragments in `ui/html.py` escape all text, styles in `ui/theme.css` | Graph runner, VFS read API (evidence bundles, supervisor log) |
 | Input Normalizer + Guardrail (`guardrails.py`) | Fold homoglyphs/compatibility forms and strip invisible characters (`normalize_text`); validate shape/size and reject prompt injection or disallowed offensive/violent requests via regex | Returns typed `GuardrailDecision`; rejection has no state mutation | Scope entry edge, audit event |
 | Scope Agent | `check_content_safety` runs a pre-model LLM guardrail (`guardrail` role, standard tier) that blocks vulgar/prohibited messages before any Scope call; `clarify_with_user` evaluates actual message history; `write_research_brief` creates a dedicated validated `ResearchBrief` after a clear decision | Blocked content raises `GuardrailViolation` with zero Scope-model calls; otherwise one-question clarification or complete brief; model/validation/persistence failure cannot become clear | Model router (`guardrail` role, standard tier; `scope` role, reasoning tier), LangGraph thread state, checkpoint, brief VFS artifact |
-| Planner Agent + `write_todos` | `PlannerAgent.define_plan` turns the `ResearchBrief` into research questions; `PlannerAgent.write_todos` converts the questions to `planned` todos and persists them | `TodoPlan` (questions, 1–5, non-blank, unique); invalid output or failed write blocks Research | Model router (`planner` role, reasoning tier), VFS, graph state |
+| Planner Agent + `write_todos` | `PlannerAgent.define_plan` has the planner LLM call the `write_todos` tool (`agents/tools.py::WRITE_TODOS_TOOL`) with the research questions; `PlannerAgent.write_todos` converts the call's questions to `planned` todos and persists them | `write_todos` arguments validated as `TodoPlan` (questions, 1–5, non-blank, unique); an invalid call gets its error back as a `ToolMessage` and is retried; repeated invalid output or failed write blocks Research | Model router (`planner` role, reasoning tier), VFS, graph state |
 | Report Judge (`agents/report_judge.py`) | Sole Verify gate: one LLM-as-judge call (no search/scrape tools) re-reads the report against the already-gathered evidence and decides factual accuracy (no inaccuracies/hallucinations/inconsistencies introduced by the Writer — the fact-check pass) plus the operator-configured guideline checklist (`Settings.report_guidelines`, e.g. Markdown format, sourced sub-sections, English) — there is no separate deterministic pre-check | `ReportJudgeVerdict` (met/unmet + justification per criterion); any unmet criterion fails the `VerificationResult` and goes to the reflect-and-rewrite fix | Model router (`verify` role, reasoning tier), evidence catalog, `Settings.report_guidelines` |
 | Research Supervisor (`agents/supervisor.py`) | LLM tool loop over `think_tool`, `ConductResearch`, `ResearchComplete`, `ProposeReplan`; parallel batches (bounded); follow-ups append findings; persist each outcome | Refuses unknown/duplicate tasks, extra rounds and premature ResearchComplete; never skips an approved task; a failing sub-agent becomes a FAILED outcome, never cancels siblings; a failed follow-up keeps earlier evidence | Model router (`supervisor` role), `ResearchAgent`, VFS, vector store |
 | Research Sub-agent (`agents/researcher.py`) | LangGraph loop: LLM decision → `tavily_search` / `think_tool` execution → routing → research compression | First decision is a search; reflections never spend the search budget nor reach compression; fresh MCP client and hard per-task budget (≤5); MCP failures become tool/task outcomes with redacted errors; `ResearchFindings` validated | Model router (`researcher`, `research_compressor` roles, tool calling), Tavily MCP, `PassageSelector` |
@@ -192,7 +193,7 @@ alternatives that would violate the constitution or clarified specification.
 | VFS Artifact Store | Atomic run-scoped files and immutable versions | Reject path escape/cross-run writes; partial writes are invisible | All nodes, checkpoint metadata |
 | Vector Index | Chunk/index raw source captures and retrieve synthesis context | Index failures block ResearchComplete; retrieval records source IDs | Worker, synthesis, verifier |
 | Report Writer (`agents/report_writer.py`) | Build/Fix drafts from top-K retrieved evidence (`select_relevant_evidence`, per question) with `[S<n>]` citations; BVF reflection producing lessons and strategy | `DraftAssessment` / `Reflection` validated; fix attempts must receive failures, lessons, strategy, previous draft; retrieval scoped per question, never global | Model router (`synthesizer`, `fixer` roles), VFS, vector index |
-| Vector Index (`storage/vector_index.py`, `storage/chroma_vector_index.py`) | `LocalVectorIndex` (lexical, offline/tests) and `ChromaVectorIndex` (Gemini embeddings by default, OpenAI selectable via `INTELLIGENCE_EMBEDDING_PROVIDER`, local Chroma persistence, live) behind one `VectorIndex` interface | `retrieve(query, limit, run_id, todo_id)`; Verify never reads through this — it always loads the full evidence catalog from VFS independently | Gemini/OpenAI embeddings API, local Chroma directory |
+| Vector Index (`storage/vector_index.py`, `storage/chroma_vector_index.py`) | `LocalVectorIndex` (lexical, offline/tests) and `ChromaVectorIndex` (Gemini embeddings by default, OpenAI selectable via `INTELLIGENCE_EMBEDDING_PROVIDER`, local Chroma persistence, live) behind one `VectorIndex` interface | `retrieve(query, limit, run_id, todo_id)`; Verify never reads through this — it always loads the run's un-narrowed catalog from VFS independently (every stored evidence bundle with the passages selected from its pages; raw pages stay in the VFS and the index) | Gemini/OpenAI embeddings API, local Chroma directory |
 | Evidence catalog (`source_verification.py`) | Loads a run's evidence bundles into a catalog with stable `[S<n>]` source ids and the sub-agents' unresolved gaps; cited-excerpt lookup for RAGAS; failure fingerprint for BVF stall detection (the deterministic checker was removed) | Catalog built only from stored bundles | Evidence bundles in VFS, `verification/catalog_state.json` |
 | Model Router (`models/router.py`, `models/factory.py`, `models/redaction.py`) | `ModelFactory.create_routers` builds two `ModelRouter` tiers and each agent is constructed with the tier it needs: reasoning (Scope, Planner, Report Judge) or standard (Researcher, Report Writer, Feedback classifier, and the scope guardrail via `ScopeAgent(guardrail_router=...)`) — the "Reasoning Sandwich": a high-effort model plans and verifies around standard-tier implementation work. Live app default: Gemini for both tiers (`INTELLIGENCE_REASONING_MODEL/PROVIDER` = `gemini-3.8-flash`/`google_genai` at `reasoning_effort=high`, the ceiling `ChatGoogleGenerativeAI` accepts — neither Gemini nor OpenAI's SDK has an "xhigh" literal, that word is only this tier's name; `INTELLIGENCE_STANDARD_MODEL/PROVIDER` = `gemini-3.5-flash-lite`/`google_genai` at `reasoning_effort=low`), each with a Groq fallback (`openai/gpt-oss-120b` for reasoning, `openai/gpt-oss-20b` for standard), built once via `app._get_model_routers`; the fallback is LangChain `with_fallbacks` | Structured-output retries bounded per profile; fallback model run is visible in the Langfuse `model.<role>` span; final failure is visible | All model-using nodes, Langfuse |
 | Checkpointer | Persist typed graph state and resume points | Atomic checkpoint; invalid latest checkpoint falls back or NEEDS_REVIEW | LangGraph, VFS metadata |
@@ -221,12 +222,14 @@ src/intelligence_collector/
 ├── publication.py      # approval binding + atomic publish
 ├── source_verification.py  # evidence catalog ([S<n>] ids, gaps), cited excerpts, failure fingerprint
 ├── graph/
-│   ├── state.py            # GraphState
+│   ├── state.py            # GraphState (no reducers: nodes return only the keys they change)
 │   ├── build.py            # wiring only: nodes + edges per topology
 │   ├── nodes/              # node logic by phase: common, interrupts, scope, research, report,
-│   │                       #   review, recovery, stubs (re-exported from __init__)
+│   │                       #   review, recovery (re-exported from __init__); common holds
+│   │                       #   invalidate_draft_authority()
 │   ├── routing.py          # named conditional-edge routers
-│   └── instrumentation.py  # node_wrapper: lifecycle notifications + tracing
+│   └── instrumentation.py  # node_wrapper: lifecycle notifications + tracing; merges state +
+│                           #   update for registry bookkeeping and persists checkpoint migrations
 ├── agents/
 │   ├── prompts.py          # every role's ChatPromptTemplate
 │   ├── scope.py            # ScopeAgent: guardrail, clarify, research brief
@@ -234,13 +237,12 @@ src/intelligence_collector/
 │   ├── supervisor.py       # ResearchSupervisor: LLM tool loop, parallel delegation, follow-ups
 │   ├── researcher.py       # ResearchAgent sub-agent (LLM <-> tavily_search/think_tool + compression)
 │   ├── passage_selector.py # PassageSelector: page -> most relevant verbatim chunks
-│   ├── tools.py            # tool schemas: tavily_search, think_tool, ConductResearch, ...
+│   ├── tools.py            # tool schemas: tavily_search, think_tool, ConductResearch, write_todos, ...
 │   ├── worker.py           # persist a sub-agent outcome to VFS + vector index
 │   ├── report_writer.py    # BVF Build/Fix drafts, reviewer revisions, reflection
 │   ├── report_judge.py     # BVF Verify: LLM-as-judge
-│   ├── feedback_router.py  # classifies the reviewer's chat reply (approve / revise / extend / scope)
-│   ├── extension_judge.py  # judges whether stored passages cover a section the reviewer added
-│   └── synthesis.py        # report version persistence (draft.vN / previous / latest)
+│   ├── feedback_router.py  # classifies the reviewer's chat reply (revise / extend / scope)
+│   └── extension_judge.py  # judges whether stored passages cover a section the reviewer added
 ├── tools/
 │   ├── write_todos.py
 │   ├── mcp.py              # MCPResearchPort, ControlledMCP (offline), TavilyMCP (+ raw content)
@@ -248,13 +250,16 @@ src/intelligence_collector/
 │   └── url_tracking.py     # normalize_url + run-level UrlRegistry (capture each page once)
 ├── storage/
 │   ├── vfs.py
+│   ├── reports.py              # report version persistence (draft.vN / previous / latest)
 │   ├── evidence_index.py       # page chunks from the VFS; rebuild a run for a new index
 │   ├── vector_index.py         # VectorIndex Protocol + LocalVectorIndex (lexical, offline)
 │   └── chroma_vector_index.py  # ChromaVectorIndex: Gemini embeddings (default), local Chroma persistence
+├── ports.py            # Protocols: ModelRouterPort, ArtifactStore, VectorIndex, MCPResearchPort
 ├── models/
 │   ├── router.py       # ModelRouter: primary/fallback, structured-output parsing (traced via callbacks)
 │   ├── factory.py      # ModelFactory: init_chat_model wiring, create_routers (reasoning + standard)
-│   └── redaction.py
+│   └── redaction.py    # redact_text / redact_value / redact_error: model, compression, MCP,
+│                       #   embedding-log and trace errors
 └── observability/
     ├── tracing.py      # Langfuse: one trace per chat thread, node spans, scores
     └── evaluation.py   # RAGAS judges: Faithfulness, Context Precision, Response Relevancy
@@ -277,7 +282,7 @@ tested independently and no UI path can bypass workflow gates.
   name constants, the single source for wiring, `app.py` activity labels and trace observation
   names, plus workflow limits), `interrupts.py` (every human-in-the-loop pause), `scope.py`
   (`ScopeNodes`, `PlannerNodes`), `research.py` (`ResearchNodes`), `report.py` (`BVFNodes`),
-  `review.py` (`ApprovalNodes`), `recovery.py` (`RecoveryNodes`) and `stubs.py`. Its
+  `review.py` (`ApprovalNodes`) and `recovery.py` (`RecoveryNodes`). Its
   `__init__` re-exports every public name, so `from intelligence_collector.graph.nodes import
   ...` is unchanged. `ResearchNodes` owns a `ResearchSupervisor` and a `BVFNodes`.
   `build_graph(planner_agent=...)` defaults to a `PlannerAgent` sharing the scope agent's model
@@ -288,17 +293,19 @@ tested independently and no UI path can bypass workflow gates.
   (`approval` only when `verification.passed`; a `None`/missing result ends the run).
 - `graph/instrumentation.py` provides `node_wrapper`, applied uniformly to every node for lifecycle
   events, checkpoint load/save, and Langfuse spans.
-- `graph/build.py` contains only wiring. `build_graph` supports three topologies selected by
-  injected collaborators:
+- `graph/build.py` contains only the production wiring. `build_graph` requires `scope_agent`
+  and supports two topologies:
   - Full (`scope_agent` + `research_nodes`): `clarify_with_user` → (END | `write_research_brief`) →
     `planning` → `researching` → `research_complete` → `synthesizing` → `verifying`, then the
     BVF loop: `verifying` → `evaluating_quality` → `approval` when every check
     passes; → `fixing` → `synthesizing` (rewrite) while budget remains and progress is made;
     → `needs_review` → END otherwise. BVF nodes live in `BVFNodes` (`research_nodes.bvf`); the
     router is `route_after_verify`.
-  - Scope only (`scope_agent`): … → `planning` → END.
-  - Stage-only stubs (neither): `scope` → `planning` → `researching` → `synthesizing` →
-    `verifying` → [`approval`] → END, used by contract tests.
+  - Scope only (`scope_agent`, no `research_nodes`, e.g. Tavily not configured): … →
+    `planning` → END.
+  Tests that inject a brief and todos enter the production graph at research through
+  `tests/fixtures/graphs.py::research_graph` (the input is recorded as an approved plan);
+  `approval_graph` there is a bare publication interrupt for checkpoint/recovery tests.
 
 ## Constitution Check (Post-Design)
 

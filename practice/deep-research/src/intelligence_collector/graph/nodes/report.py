@@ -7,7 +7,8 @@ import math
 
 from langchain_core.messages import AIMessage
 
-from intelligence_collector.agents.planner import plan_record
+from intelligence_collector.ports import ArtifactStore, VectorIndex
+from intelligence_collector.agents.planner import create_todos, plan_record
 from intelligence_collector.agents.report_judge import (
     ReportJudge,
     build_coverage_criteria,
@@ -21,14 +22,17 @@ from intelligence_collector.agents.report_writer import (
     format_evidence,
     select_relevant_evidence,
 )
-from intelligence_collector.agents.synthesis import persist_report
+from intelligence_collector.storage.reports import persist_report
 from intelligence_collector.agents.worker import _evidence_path
 from intelligence_collector.contracts import (
+    RepairRoute,
     ResearchBrief,
     ResearchTodo,
+    RunStatus,
     Stage,
     TodoStatus,
     VerificationCheck,
+    VerificationIssue,
     VerificationResult,
 )
 from intelligence_collector.graph.nodes.common import (
@@ -36,6 +40,7 @@ from intelligence_collector.graph.nodes.common import (
     FAITHFULNESS_THRESHOLD,
     MAX_STALLED_ATTEMPTS,
     _activity,
+    invalidate_draft_authority,
 )
 from intelligence_collector.observability.evaluation import (
     ContextPrecisionEvaluator,
@@ -77,7 +82,7 @@ class BVFNodes:
     Build (``synthesizing``) writes a complete draft. Verify (``verifying``) runs exactly three
     gates on that exact draft: coverage of the required answers and output constraints (LLM
     judge), citation resolution against sources collected in this run, and RAGAS Faithfulness
-    strictly greater than 0.90. PASS leaves the loop at once. FAIL enters ``fixing``, which
+    strictly greater than ``FAITHFULNESS_THRESHOLD``. PASS leaves the loop at once. FAIL enters ``fixing``, which
     diagnoses the smallest useful correction (see ``repair.py``) and routes to a targeted
     rewrite, Chroma-located evidence, targeted research or a replacement plan. A technical
     evaluator failure is ERROR: it is retried or escalated, never rewritten. At most
@@ -87,8 +92,8 @@ class BVFNodes:
 
     def __init__(
         self,
-        vfs,
-        index,
+        vfs: ArtifactStore,
+        index: VectorIndex | None,
         writer: ReportWriter,
         *,
         report_judge: ReportJudge,
@@ -120,7 +125,10 @@ class BVFNodes:
         self.extension_judge = None
 
     def _catalog(self, state):
-        """Full, unfiltered catalog — used by Verify and quality scoring, never narrowed."""
+        """The run's catalog: every stored evidence bundle of the active tasks, not narrowed by
+        retrieval — used by Verify and quality scoring. Each source holds the passages its
+        sub-agent selected from the page (``excerpt``), not the raw page; raw captures stay in
+        the VFS and the vector index."""
         return load_catalog(
             self.vfs,
             state["run_id"],
@@ -143,10 +151,10 @@ class BVFNodes:
 
     def _writer_catalog(self, state, full, repair):
         """What the writer reads: small corpora directly, a large one narrowed via Chroma; a
-        content repair reads the full stored evidence, and the Chroma route adds passages
-        located for the affected items."""
+        content repair reads the whole un-narrowed catalog (still the selected passages, not raw
+        pages), and the Chroma route adds passages located for the affected items."""
         route = (repair or {}).get("route")
-        if route in {"vfs", "research"}:
+        if route in {RepairRoute.VFS, RepairRoute.RESEARCH}:
             return full
         self._ensure_indexed(state)
         narrowed = select_relevant_evidence(
@@ -156,7 +164,7 @@ class BVFNodes:
             top_k=self.evidence_top_k,
             direct_read_chars=self.direct_read_chars,
         )
-        if route == "chroma" and self.index is not None:
+        if route == RepairRoute.CHROMA and self.index is not None:
             return locate_with_index(
                 self.vfs,
                 self.index,
@@ -212,7 +220,9 @@ class BVFNodes:
             "retrieval",
         )
         return {
-            **state,
+            # A changed artifact never inherits a previous verification, approval, publication
+            # or quality score.
+            **invalidate_draft_authority(),
             "stage": Stage.VERIFYING.value,
             "current_action": (
                 f"Draft v{version} repaired ({repair['route']})"
@@ -227,28 +237,28 @@ class BVFNodes:
             "draft": report,
             "draft_version": version,
             "repair": None,  # consumed
-            "verifier_attempt": 0,
-            "verifier_error": "",
             "writer_evidence": writer_evidence,
             "artifacts": [
                 *state.get("artifacts", []),
                 ref.model_dump(mode="json"),
                 ranking_ref.model_dump(mode="json"),
             ],
-            # A changed artifact never inherits a previous verification, approval or publication.
-            "verification": None,
-            "verification_outcome": "",
-            "coverage_cache": None,
-            "approval": None,
-            "publication": None,
-            "faithfulness_score": None,
+        }
+
+    def prepare_revision(self, state):
+        """Before a reviewer- or recovery-requested rewrite: fold the reviewer requests into
+        the ones still in force and drop the reviewed draft's authority."""
+        from intelligence_collector.agents.reviewer_checks import effective_requests
+
+        return {
+            **invalidate_draft_authority(),
+            "reviewer_requests": effective_requests(list(state.get("reviewer_requests", []))),
         }
 
     def _error(self, state, message: str, partial: dict | None = None):
         """ERROR: the evaluation could not produce a trustworthy verdict. Nothing is rewritten."""
         return {
-            **state,
-            "verification_issue": "verifier_failure",
+            "verification_issue": VerificationIssue.VERIFIER_FAILURE.value,
             "verification": None,
             "verification_outcome": "ERROR",
             "verifier_error": message,
@@ -396,9 +406,8 @@ class BVFNodes:
         )
         failed = [check.name for check in result.check_results if not check.passed]
         return {
-            **state,
             "stage": (Stage.AWAITING_APPROVAL if result.passed else Stage.VERIFYING).value,
-            "status": "paused" if result.passed else "active",
+            "status": (RunStatus.PAUSED if result.passed else RunStatus.ACTIVE).value,
             "current_action": (
                 f"All {len(result.checks)} verification checks passed"
                 if result.passed
@@ -407,7 +416,7 @@ class BVFNodes:
             "activity": _activity(state, "Verifying report"),
             "verification": result.model_dump(mode="json"),
             "verification_outcome": "PASS" if result.passed else "FAIL",
-            "verification_issue": "draft_defect",
+            "verification_issue": VerificationIssue.DRAFT_DEFECT.value,
             "faithfulness_score": score,
             "coverage_cache": None,
             "verifier_attempt": 0,
@@ -448,7 +457,7 @@ class BVFNodes:
             ),
         ]
         if self.context_precision_evaluator is None and self.response_relevancy_evaluator is None:
-            return {**state, **update}
+            return update
 
         catalog = self._catalog(state)
         question = ResearchBrief.model_validate(state["scoped_request"]).research_question
@@ -498,7 +507,6 @@ class BVFNodes:
             "quality",
         )
         return {
-            **state,
             **update,
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }
@@ -514,7 +522,7 @@ class BVFNodes:
         repair = diagnose(
             verification,
             todos=todos,
-            full_catalog=self._catalog(state),
+            catalog=self._catalog(state),
             shown_source_ids=shown,
             researched_items=list(state.get("repair_researched", [])),
             can_replan=self.planner is not None,
@@ -540,7 +548,6 @@ class BVFNodes:
             ),
         ]
         return {
-            **state,
             "stage": Stage.SYNTHESIZING.value,
             "recovery_attempt": attempt,
             "repair": repair,
@@ -559,7 +566,7 @@ class BVFNodes:
         repair = state.get("repair") or {}
         targets: dict[str, list[str]] = {}
         for issue in repair.get("issues", []):
-            if issue["route"] == "research" and issue["todo_id"]:
+            if issue["route"] == RepairRoute.RESEARCH and issue["todo_id"]:
                 targets.setdefault(issue["todo_id"], []).extend(
                     issue["missing_points"] or [issue["item"]]
                 )
@@ -576,11 +583,10 @@ class BVFNodes:
             *(
                 item_key(issue["item"])
                 for issue in repair.get("issues", [])
-                if issue["route"] == "research"
+                if issue["route"] == RepairRoute.RESEARCH
             ),
         ]
         return {
-            **state,
             "todos": [todo.model_dump(mode="json") for todo in todos],
             "repair_researched": list(dict.fromkeys(researched)),
             # Targeted research replaces, not adds to, the pre-draft gap allowance.
@@ -605,7 +611,7 @@ class BVFNodes:
                 [
                     issue["item"]
                     for issue in repair.get("issues", [])
-                    if issue["route"] == "replan"
+                    if issue["route"] == RepairRoute.REPLAN
                 ]
                 + [
                     f"{questions[todo_id]} ({proposal.get('reason', '')})"
@@ -621,8 +627,6 @@ class BVFNodes:
             run_id=state["run_id"],
             thread_id=state.get("thread_id", ""),
         )
-        from intelligence_collector.agents.planner import create_todos
-
         new = create_todos(self.vfs, state["run_id"], plan.questions, plan.evidence_needed)
         record = plan_record(brief, [*todos, *new], plan.report_shape, kind="replacement")
         version = state.get("plan_version", 0) + 1
@@ -630,12 +634,11 @@ class BVFNodes:
             state["run_id"], f"planning/plan.v{version}.json", record, "research_plan"
         )
         return {
-            **state,
             "todos": [todo.model_dump(mode="json") for todo in [*todos, *new]],
             "plan": record,
             "plan_version": version,
             "plan_approval": None,
-            "repair": {**repair, "route": "research"},
+            "repair": {**repair, "route": RepairRoute.RESEARCH.value},
             "research_replan": None,
             "stage": Stage.PLANNING.value,
             "current_action": "Replacement plan awaiting approval",
@@ -792,7 +795,6 @@ class BVFNodes:
             else f"Researching the new section: {topic}"
         )
         return {
-            **state,
             **update,
             "todos": [item.model_dump(mode="json") for item in todos],
             "todo_ids": [item.todo_id for item in todos],
@@ -813,10 +815,9 @@ class BVFNodes:
             state.get("last_error")
             if state.get("verification_issue")
             in {
-                "verifier_failure",
-                "research_verifier_failure",
-                "research_failure",
-                "publication_failure",
+                VerificationIssue.VERIFIER_FAILURE,
+                VerificationIssue.RESEARCH_FAILURE,
+                VerificationIssue.PUBLICATION_FAILURE,
             }
             else (
                 "replacement plan declined"
@@ -850,9 +851,8 @@ class BVFNodes:
         )
         notice += "".join(f"\n- {line}" for line in _unresolved_lines(verification))
         return {
-            **state,
             "stage": Stage.NEEDS_REVIEW.value,
-            "status": "needs_review",
+            "status": RunStatus.NEEDS_REVIEW.value,
             "messages": [*state.get("messages", []), AIMessage(content=notice)],
             "last_error": verification.get("repair_details") or state.get("last_error", ""),
             "current_action": f"Needs review: {reason} after {attempts} improvement cycle(s)",

@@ -27,7 +27,6 @@ from intelligence_collector.graph.nodes import Node, ResearchNodes
 from intelligence_collector.graph.routing import (
     APPROVED,
     REJECTED,
-    TO_PUBLISH,
     TO_REVISE,
     TO_SCOPE,
     route_after_approval,
@@ -47,6 +46,7 @@ from tests.integration.test_langchain_scope import (
     _clear_payload,
     _guardrail_payload,
 )
+from tests.fixtures.graphs import research_graph
 
 URL = "https://controlled.test/cache"
 QUESTION = "How does a local software cache store and reuse data?"
@@ -112,8 +112,8 @@ def _bvf_graph(stores, report_model, *, output_dir, feedback_router=None, judge_
         report_judge=ReportJudge(ModelRouter(judge_model)) if judge_model else _passing_judge(),
         recovery_budget=3,
     )
-    return build_graph(
-        research_nodes=nodes,
+    return research_graph(
+        nodes,
         vfs=vfs,
         checkpointer=MemorySaver(),
         with_approval=True,
@@ -236,8 +236,8 @@ def test_reviewer_request_stays_in_force_through_a_bvf_fix(stores, tmp_path):
 
 
 def test_review_flow_graph_structure(stores, tmp_path):
-    """faithfulness -> approval (HITL); approve -> publishing; reply -> classify_feedback (LLM)
-    -> publishing (approve), synthesizing (revise) or scoping (scope)."""
+    """faithfulness -> approval (HITL); Approve button -> publishing; reply -> classify_feedback
+    (LLM) -> synthesizing (revise), extension or scoping (scope), never publishing."""
     graph = _bvf_graph(stores, FakeReportModel([GOOD]), output_dir=tmp_path / "exports")
     edges = {(e.source, e.target) for e in graph.get_graph().edges}
 
@@ -245,13 +245,10 @@ def test_review_flow_graph_structure(stores, tmp_path):
     assert (Node.APPROVE, Node.PUBLISH) in edges
     assert (Node.PUBLISH, "__end__") in edges
     assert (Node.APPROVE, Node.CLASSIFY_FEEDBACK) in edges
-    assert (Node.CLASSIFY_FEEDBACK, Node.PUBLISH) in edges  # a chat reply read as an approval
+    assert (Node.CLASSIFY_FEEDBACK, Node.PUBLISH) not in edges  # a typed reply never publishes
     assert (Node.CLASSIFY_FEEDBACK, Node.PREPARE_REVISION) in edges
     assert (Node.PREPARE_REVISION, Node.SYNTHESIZE) in edges  # rewrite and re-verify
-    assert (
-        Node.CLASSIFY_FEEDBACK,
-        Node.STUB_SCOPE,
-    ) in edges  # clarify_with_user when a scope agent is wired
+    assert (Node.CLASSIFY_FEEDBACK, Node.CLARIFY) in edges  # a scope change rescopes
     assert "writer" not in {node for edge in edges for node in edge}
 
 
@@ -260,12 +257,8 @@ def test_feedback_routing_outcomes():
     assert route_after_approval({"approval": {"approved": False}}) == REJECTED
     assert route_after_feedback({"feedback_route": "scope"}) == TO_SCOPE
     assert route_after_feedback({"feedback_route": "revise"}) == TO_REVISE
-    assert (
-        route_after_feedback({"feedback_route": "approve", "approval": {"approved": True}})
-        == TO_PUBLISH
-    )
-    # An "approve" route without a recorded approval never publishes.
-    assert route_after_feedback({"feedback_route": "approve", "approval": None}) == TO_REVISE
+    # A typed reply never publishes; anything unrecognised is a revision.
+    assert route_after_feedback({"feedback_route": "approve"}) == TO_REVISE
 
 
 def test_reject_without_a_feedback_router_defaults_to_revise(stores, tmp_path):
@@ -371,31 +364,6 @@ def test_reject_with_scope_route_goes_back_through_scoping_and_replans(stores, t
     assert (tmp_path / "exports" / "planner-run.md").exists()
 
 
-def test_chat_reply_classified_as_approve_publishes(stores, tmp_path):
-    feedback_model = FakeFeedbackRouterModel([{"route": "approve", "reason": "Accepts as-is."}])
-    graph = _bvf_graph(
-        stores,
-        FakeReportModel([GOOD]),
-        feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
-        output_dir=tmp_path / "exports",
-    )
-    config = {"configurable": {"thread_id": "approval-run"}}
-
-    graph.invoke(_initial_state(), config)
-    result = graph.invoke(
-        Command(resume={"reply": "Looks good, publish it", "actor": "tester"}), config
-    )
-
-    assert result["stage"] == "Published"
-    assert result["approval"]["approved"] is True
-    assert result["approval"]["actor"] == "tester"
-    assert (tmp_path / "exports" / "approval-run.md").read_text(encoding="utf-8") == GOOD
-    # The review reads as chat: the reviewer's reply, then the agent's outcome.
-    chat = [(m.type, m.content) for m in result["messages"]]
-    assert chat[-2] == ("human", "Looks good, publish it")
-    assert chat[-1][0] == "ai" and chat[-1][1].startswith("Published to")
-
-
 def test_chat_reply_classified_as_revise_is_rewritten_and_shown_again(stores, tmp_path):
     _, router = _router({"route": "revise", "reason": "Presentation change."})
     graph = _bvf_graph(
@@ -413,27 +381,6 @@ def test_chat_reply_classified_as_revise_is_rewritten_and_shown_again(stores, tm
     assert paused_again["draft"] == BULLETED
     assert paused_again["verification"]["passed"] is True
     assert paused_again["approval"] is None  # a chat reply is not a decision until classified
-
-
-def test_explicit_rejection_is_never_classified_as_approval(stores, tmp_path):
-    feedback_model = FakeFeedbackRouterModel([{"route": "approve", "reason": "Sounds positive."}])
-    graph = _bvf_graph(
-        stores,
-        FakeReportModel([GOOD, BULLETED]),
-        feedback_router=FeedbackRouter(ModelRouter(feedback_model)),
-        output_dir=tmp_path / "exports",
-    )
-    config = {"configurable": {"thread_id": "approval-run"}}
-
-    graph.invoke(_initial_state(), config)
-    paused_again = graph.invoke(
-        Command(resume={"approved": False, "feedback": "Great, but use bullets"}),
-        config,
-    )
-
-    assert paused_again["stage"] == "Awaiting Approval"
-    assert paused_again["feedback_route"] == "revise"
-    assert not (tmp_path / "exports" / "approval-run.md").exists()
 
 
 def test_stale_publication_enters_recovery_interrupt(stores, tmp_path):

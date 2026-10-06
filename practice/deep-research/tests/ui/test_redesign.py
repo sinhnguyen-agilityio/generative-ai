@@ -41,8 +41,8 @@ def chat_turns(monkeypatch):
     calls = []
     monkeypatch.setattr(
         "intelligence_collector.ui.turn.run_chat_turn",
-        lambda text, **kwargs: calls.append(
-            (text, {key: getattr(kwargs["view"], key) for key in ("reviewing", "planning")})
+        lambda reply, **kwargs: calls.append(
+            (reply, {key: getattr(kwargs["view"], key) for key in ("reviewing", "planning")})
         ),
     )
     return calls
@@ -81,21 +81,26 @@ def test_plan_card_lists_tasks_and_approves_with_one_click(plan_interrupt, chat_
     assert "**Research plan** · hash 9e1c04" in card_text
     assert "**1.** How does LangGraph checkpointing work?" in card_text
     assert "Evidence: official persistence documentation" in card_text
-    assert app.chat_input[0].placeholder == "Reply: approve the plan, cancel, or what to change"
+    assert app.chat_input[0].placeholder == "What should change in the plan?"
 
     next(b for b in app.button if b.label == "Approve plan").click().run()
 
     assert not app.exception
-    assert chat_turns == [("approve", {"reviewing": False, "planning": True})]
+    assert chat_turns == [(("approve", True), {"reviewing": False, "planning": True})]
 
 
-def test_plan_card_cancel_and_request_changes_send_chat_replies(plan_interrupt, chat_turns):
+def test_plan_card_cancel_is_explicit_and_request_changes_is_a_chat_reply(
+    plan_interrupt, chat_turns
+):
     app = _plan_app()
     next(b for b in app.button if b.label == "Cancel run").click().run()
     app.text_area(key="plan_change").input("Add a task on Temporal pricing.").run()
     next(b for b in app.button if b.label == "Send").click().run()
 
-    assert [text for text, _ in chat_turns] == ["cancel", "Add a task on Temporal pricing."]
+    assert [reply for reply, _ in chat_turns] == [
+        ("cancel", False),
+        ("Add a task on Temporal pricing.", None),
+    ]
 
 
 def test_report_card_offers_approve_download_and_changes(chat_turns):
@@ -106,7 +111,7 @@ def test_report_card_offers_approve_download_and_changes(chat_turns):
 
     next(b for b in app.button if b.label == "Approve and publish").click().run()
 
-    assert chat_turns == [("approve", {"reviewing": True, "planning": False})]
+    assert chat_turns == [(("approve", True), {"reviewing": True, "planning": False})]
 
 
 def test_run_tab_shows_the_three_verification_gates():

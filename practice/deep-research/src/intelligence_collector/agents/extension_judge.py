@@ -7,6 +7,7 @@ the requested topic. It only judges; it never writes the report or searches.
 
 from __future__ import annotations
 
+from intelligence_collector.ports import ModelRouterPort
 from intelligence_collector.agents.prompts import EXTENSION_JUDGE_TEMPLATE
 from intelligence_collector.contracts import ExtensionEvidenceVerdict
 from intelligence_collector.source_verification import CatalogSource
@@ -26,7 +27,7 @@ def _format_passages(passages: list[CatalogSource]) -> str:
 class ExtensionJudge:
     """Reads stored passages with an LLM and returns an ``ExtensionEvidenceVerdict``."""
 
-    def __init__(self, router):
+    def __init__(self, router: ModelRouterPort):
         self.router = router
 
     def judge(

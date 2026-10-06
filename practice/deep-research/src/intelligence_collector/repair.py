@@ -4,7 +4,8 @@ Deterministic, no model call. Each failed check maps to one route:
 
 * ``presentation`` — language, length, format or citation layout; edit presentation only.
 * ``vfs``          — the stored evidence holds the answer (or a sentence is unsupported); rewrite
-                     the affected answers from the full stored evidence.
+                     the affected answers from the whole un-narrowed catalog. That catalog holds
+                     the passages each sub-agent selected from its pages, not every raw page.
 * ``chroma``       — evidence is missing from what the writer saw but the question's stored
                      corpus is larger; locate passages with the vector index, then read their
                      VFS captures through provenance.
@@ -23,10 +24,12 @@ import json
 import re
 from pathlib import Path
 
-from intelligence_collector.contracts import ResearchTodo, VerificationResult
+from intelligence_collector.ports import ArtifactStore, VectorIndex
+from intelligence_collector.contracts import RepairRoute, ResearchTodo, VerificationResult
 from intelligence_collector.source_verification import EvidenceBundle, SourceCatalog, _normalize_url
 
-ROUTE_ORDER = ("replan", "research", "chroma", "vfs", "presentation")
+# Largest first; RepairRoute is declared in this order.
+ROUTE_ORDER = tuple(RepairRoute)
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -50,17 +53,18 @@ def diagnose(
     verification: VerificationResult,
     *,
     todos: list[ResearchTodo],
-    full_catalog: SourceCatalog,
+    catalog: SourceCatalog,
     shown_source_ids: dict[str, list[str]],
     researched_items: list[str],
     can_replan: bool,
 ) -> dict:
     """Repair plan for the failed checks of `verification`.
 
+    `catalog` is the run's un-narrowed catalog (every stored bundle, with its selected passages);
     `shown_source_ids` maps todo id -> source ids the writer saw for the draft;
     `researched_items` are item keys that already received targeted research.
     """
-    bundles = {bundle.todo_id: bundle for bundle in full_catalog.bundles}
+    bundles = {bundle.todo_id: bundle for bundle in catalog.bundles}
     issues, passing = [], []
     for check in verification.check_results:
         if check.passed:
@@ -73,13 +77,15 @@ def diagnose(
             continue
         todo = None
         if check.gate == "citation":
-            route = "vfs" if check.issue_type == "draft_defect" else "presentation"
+            route = (
+                RepairRoute.VFS if check.issue_type == "draft_defect" else RepairRoute.PRESENTATION
+            )
         elif check.gate == "faithfulness":
-            route = "vfs"
+            route = RepairRoute.VFS
         elif check.issue_type == "presentation":
-            route = "presentation"
+            route = RepairRoute.PRESENTATION
         elif check.issue_type == "draft_defect":
-            route = "vfs"
+            route = RepairRoute.VFS
             todo = affected_todo(check.item, check.missing_points, todos)
         else:  # coverage evidence gap
             todo = affected_todo(check.item, check.missing_points, todos)
@@ -88,13 +94,13 @@ def diagnose(
                 shown_source_ids.get(todo.todo_id, bundle.source_ids)
             )
             if unseen:
-                route = "chroma"
+                route = RepairRoute.CHROMA
             elif item_key(check.item) in researched_items:
-                route = "replan" if can_replan else "vfs"
+                route = RepairRoute.REPLAN if can_replan else RepairRoute.VFS
             elif todo is not None:
-                route = "research"
+                route = RepairRoute.RESEARCH
             else:
-                route = "vfs"
+                route = RepairRoute.VFS
         issues.append(
             {
                 "check": check.name,
@@ -103,17 +109,17 @@ def diagnose(
                 "item": check.item,
                 "missing_points": list(check.missing_points),
                 "detail": "; ".join(check.details),
-                "route": route,
+                "route": route.value,
                 "todo_id": todo.todo_id if todo else "",
             }
         )
-    route = next((r for r in ROUTE_ORDER if any(i["route"] == r for i in issues)), "vfs")
-    return {"route": route, "issues": issues, "passing": passing}
+    route = next((r for r in ROUTE_ORDER if any(i["route"] == r for i in issues)), RepairRoute.VFS)
+    return {"route": route.value, "issues": issues, "passing": passing}
 
 
 def locate_with_index(
-    vfs,
-    index,
+    vfs: ArtifactStore,
+    index: VectorIndex,
     run_id: str,
     catalog: SourceCatalog,
     writer_catalog: SourceCatalog,
@@ -131,7 +137,7 @@ def locate_with_index(
     by_url = {_normalize_url(source.url): sid for sid, source in catalog.sources.items()}
     added: dict[str, list[str]] = {}
     for issue in issues:
-        if issue["route"] != "chroma" or not issue["todo_id"]:
+        if issue["route"] != RepairRoute.CHROMA or not issue["todo_id"]:
             continue
         query = " ".join([issue["item"], *issue["missing_points"]])
         for chunk in index.retrieve(query, limit=limit, run_id=run_id, todo_id=issue["todo_id"]):

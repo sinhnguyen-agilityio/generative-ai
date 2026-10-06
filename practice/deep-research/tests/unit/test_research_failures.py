@@ -9,7 +9,6 @@ from intelligence_collector.storage.vfs import VFS
 def _nodes(tmp_path, *, usable: bool):
     nodes = object.__new__(ResearchNodes)
     nodes.vfs = VFS(tmp_path)
-    nodes.research_assessor = None
     failed = ResearchTodo(
         todo_id="broken", research_question="What changed in v2?", status=TodoStatus.FAILED
     )

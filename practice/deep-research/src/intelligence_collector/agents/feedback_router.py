@@ -1,10 +1,12 @@
 """Classifies a human reviewer's chat reply (the HITL approval gate, see
-``graph/nodes.py::ApprovalNodes``) as an approval, a formatting-only change or a scope change.
+``graph/nodes/review.py::ApprovalNodes``) as a revision, an added section or a scope change.
+Approval is the "Approve and publish" button, never a typed reply.
 See ``FEEDBACK_ROUTER_PROMPT`` for the exact rule the model applies.
 """
 
 from __future__ import annotations
 
+from intelligence_collector.ports import ModelRouterPort
 from intelligence_collector.agents.prompts import FEEDBACK_ROUTER_TEMPLATE
 from intelligence_collector.contracts import FeedbackDecision
 
@@ -18,7 +20,7 @@ class FeedbackRouter:
     ``FeedbackDecision``.
     """
 
-    def __init__(self, router):
+    def __init__(self, router: ModelRouterPort):
         self.router = router
 
     def route(
@@ -29,8 +31,8 @@ class FeedbackRouter:
         run_id: str = "",
         thread_id: str = "",
     ) -> FeedbackDecision:
-        """Return `route="approve"` (publish), `"revise"` (rewrite from the same evidence) or
-        `"scope"` (re-scope)."""
+        """Return `route="revise"` (rewrite from the same evidence), `"extend"` (add a section)
+        or `"scope"` (re-scope)."""
         messages = FEEDBACK_ROUTER_TEMPLATE.format_messages(
             feedback=feedback,
             report=report[:MAX_REPORT_EXCERPT_CHARS],

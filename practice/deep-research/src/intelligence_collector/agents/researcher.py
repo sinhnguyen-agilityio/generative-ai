@@ -29,6 +29,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
+from intelligence_collector.ports import ModelRouterPort
 from intelligence_collector.agents.passage_selector import PassageSelector
 from intelligence_collector.agents.prompts import (
     COMPRESS_TEMPLATE,
@@ -43,7 +44,8 @@ from intelligence_collector.agents.tools import (
 )
 from intelligence_collector.contracts import ResearchFindings
 from intelligence_collector.observability.tracing import traced
-from intelligence_collector.tools.mcp import MCPResearchPort, redact_mcp_error
+from intelligence_collector.models.redaction import redact_error
+from intelligence_collector.tools.mcp import MCPResearchPort
 from intelligence_collector.tools.url_tracking import UrlClaims, normalize_url
 
 HARD_SEARCH_LIMIT = 5
@@ -145,7 +147,7 @@ class ResearchAgent:
 
     def __init__(
         self,
-        router,
+        router: ModelRouterPort,
         mcp_factory: Callable[[], MCPResearchPort],
         *,
         max_search_calls: int = HARD_SEARCH_LIMIT,
@@ -310,7 +312,7 @@ class ResearchAgent:
                         "urls": [str(row.get("url", "")) for row in rows],
                     }
             except Exception as exc:  # retrieval failures are task outcomes, not crashes
-                error = redact_mcp_error(exc)
+                error = redact_error(exc)
                 return f"Search failed: {error}", [], [error]
             fresh, repeated = keep_new_rows(rows)
             fresh = read_owned_pages(question, query, fresh)
@@ -382,7 +384,7 @@ class ResearchAgent:
                     thread_id=thread_id,
                 )
             except Exception as exc:
-                return {"findings": None, "errors": [f"Compression failed: {exc}"]}
+                return {"findings": None, "errors": [f"Compression failed: {redact_error(exc)}"]}
             return {"findings": findings}
 
         def route_after_llm(state: ResearcherState) -> str:

@@ -118,9 +118,9 @@ def test_extend_reply_keeps_the_report_and_goes_to_locate_extension(tmp_path):
 
     assert route_after_feedback(result) == "extend"
     assert result["extension"] == {"topic": TOPIC, "request": REQUEST}
-    # Unlike "scope", the question, the report and earlier requests are kept.
-    assert result["request"] == "What is langgraph"
-    assert result["draft"] == "verified report"
+    # Unlike "scope", the question, the report and earlier requests are kept (not overwritten).
+    assert "request" not in result
+    assert "draft" not in result
     assert result["reviewer_requests"] == ["Use bullets.", REQUEST]
     assert result["human_feedback"] == REQUEST
     assert result["verification"] is None and result["approval"] is None
@@ -165,7 +165,8 @@ def test_sufficient_stored_evidence_skips_research(tmp_path):
     bundle = next(b for b in catalog.bundles if b.todo_id == new.todo_id)
     assert bundle.source_ids == ["S2"]
     assert bundle.summary == "Checkpoints snapshot graph state at every step."
-    assert result["human_feedback"] == REQUEST  # the writer still rewrites the reviewed report
+    # human_feedback is left in place: the writer still rewrites the reviewed report.
+    assert "human_feedback" not in result
 
 
 def test_insufficient_evidence_researches_only_the_missing_points(tmp_path):

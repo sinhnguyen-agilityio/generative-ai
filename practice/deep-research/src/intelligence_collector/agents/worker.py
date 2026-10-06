@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 
+from intelligence_collector.ports import ArtifactStore, VectorIndex
 from intelligence_collector.contracts import ArtifactRef
 
 from intelligence_collector.agents.researcher import ResearchAgent, ResearchOutcome
@@ -37,7 +38,7 @@ def research_prefix(todo: ResearchTodo) -> str:
     return base if todo.research_attempt == 1 else f"{base}/attempts/{todo.research_attempt}"
 
 
-def already_researched(vfs, run_id: str, todo: ResearchTodo) -> bool:
+def already_researched(vfs: ArtifactStore, run_id: str, todo: ResearchTodo) -> bool:
     """Idempotent resume guard: an evidence bundle means the task finished earlier."""
     try:
         vfs.read(run_id, _evidence_path(todo))
@@ -46,7 +47,7 @@ def already_researched(vfs, run_id: str, todo: ResearchTodo) -> bool:
     return True
 
 
-def restore_research(vfs, run_id: str, todo: ResearchTodo):
+def restore_research(vfs: ArtifactStore, run_id: str, todo: ResearchTodo):
     """Recover the evidence reference if a crash preceded the graph checkpoint write."""
     path = _evidence_path(todo)
     text = vfs.read(run_id, path)
@@ -69,7 +70,7 @@ def restore_research(vfs, run_id: str, todo: ResearchTodo):
     return todo, [ref], chunks
 
 
-def _write_failure(vfs, run_id: str, todo: ResearchTodo, message: str, *, technical=True):
+def _write_failure(vfs: ArtifactStore, run_id: str, todo: ResearchTodo, message: str, *, technical=True):
     return vfs.write_json(
         run_id,
         f"{research_prefix(todo)}/outcome.json",
@@ -96,8 +97,8 @@ def failed_outcome(todo: ResearchTodo, error: str) -> ResearchOutcome:
 
 
 def persist_research(
-    vfs,
-    index,
+    vfs: ArtifactStore,
+    index: VectorIndex | None,
     run_id: str,
     todo: ResearchTodo,
     outcome: ResearchOutcome,
@@ -260,7 +261,11 @@ def persist_research(
     return todo, refs, chunks
 
 
-def run_worker(vfs, index, run_id, todo: ResearchTodo, researcher: ResearchAgent, *, thread_id=""):
+def run_worker(
+    vfs: ArtifactStore,
+    index: VectorIndex | None,
+    run_id: str,
+    todo: ResearchTodo, researcher: ResearchAgent, *, thread_id=""):
     """Research one todo with its own sub-agent and persist the outcome."""
     if already_researched(vfs, run_id, todo):
         return restore_research(vfs, run_id, todo)

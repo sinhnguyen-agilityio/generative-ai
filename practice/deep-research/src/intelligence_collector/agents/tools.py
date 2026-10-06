@@ -3,6 +3,7 @@
 * Research sub-agent: ``tavily_search`` and ``think_tool``.
 * Research supervisor: ``ConductResearch``, ``ResearchComplete``, ``ProposeReplan`` and
   ``think_tool``.
+* Planner: ``write_todos``.
 
 The agents execute the calls themselves (``researcher.py``, ``supervisor.py``); these are only the
 contracts the models see.
@@ -27,11 +28,12 @@ THINK_TOOL_NAME = "think_tool"
 CONDUCT_RESEARCH_TOOL_NAME = "ConductResearch"
 RESEARCH_COMPLETE_TOOL_NAME = "ResearchComplete"
 PROPOSE_REPLAN_TOOL_NAME = "ProposeReplan"
+WRITE_TODOS_TOOL_NAME = "write_todos"
 
 SEARCH_TOOL = _function(
     SEARCH_TOOL_NAME,
-    "Search the web through the approved Tavily MCP server. Returns titles, URLs, and a summary "
-    "with verbatim key excerpts for the most relevant pages.",
+    "Search the web through the approved Tavily MCP server. Returns the title, URL and the most "
+    "relevant verbatim passages of each new page.",
     {"query": {"type": "string", "description": "A focused web search query."}},
     ["query"],
 )
@@ -103,6 +105,30 @@ PROPOSE_REPLAN_TOOL = _function(
         },
     },
     ["reason", "todo_ids"],
+)
+
+WRITE_TODOS_TOOL = _function(
+    WRITE_TODOS_TOOL_NAME,
+    "Record the research todo list: the standalone research questions, the evidence each one "
+    "needs, and the expected report shape. Call it exactly once with the whole plan.",
+    {
+        "questions": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "The standalone research questions (1 to 5), one per research task.",
+        },
+        "evidence_needed": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "For each question, in the same order, one short line naming the "
+            "evidence that would answer it.",
+        },
+        "report_shape": {
+            "type": "string",
+            "description": "One sentence describing the report that answers the brief.",
+        },
+    },
+    ["questions", "evidence_needed", "report_shape"],
 )
 
 

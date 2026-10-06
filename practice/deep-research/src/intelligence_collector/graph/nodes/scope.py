@@ -10,13 +10,15 @@ from intelligence_collector.contracts import (
     ScopeAssessment,
     Stage,
 )
+from intelligence_collector.graph.nodes.common import invalidate_draft_authority
 from intelligence_collector.graph.state import GraphState
+from intelligence_collector.ports import ArtifactStore
 
 
 class ScopeNodes:
     """Scope clarification and the research brief."""
 
-    def __init__(self, scope_agent, vfs=None):
+    def __init__(self, scope_agent, vfs: ArtifactStore | None = None):
         self.scope_agent = scope_agent
         self.vfs = vfs
 
@@ -34,7 +36,6 @@ class ScopeNodes:
         )
         reply = assessment.question if assessment.need_clarification else assessment.verification
         return {
-            **state,
             "stage": Stage.SCOPING.value,
             "messages": [*history, HumanMessage(content=request), AIMessage(content=reply)],
             "scope_assessment": assessment.model_dump(mode="json"),
@@ -52,7 +53,6 @@ class ScopeNodes:
             vfs=self.vfs,
         )
         return {
-            **state,
             "stage": Stage.PLANNING.value,
             "scoped_request": brief.model_dump(mode="json"),
         }
@@ -62,7 +62,7 @@ class PlannerNodes:
     """Planning: the Planner Agent turns the brief into research questions and calls
     `write_todos`."""
 
-    def __init__(self, planner_agent, vfs=None):
+    def __init__(self, planner_agent, vfs: ArtifactStore | None = None):
         self.planner_agent = planner_agent
         self.vfs = vfs
 
@@ -79,24 +79,17 @@ class PlannerNodes:
         if self.vfs is None:
             raise RuntimeError("Planning requires an injected VFS")
         brief = ResearchBrief.model_validate(state["scoped_request"])
-        if hasattr(self.planner_agent, "plan"):
-            todos, shape = self.planner_agent.plan(
-                brief, self.vfs, state["run_id"], thread_id=state.get("thread_id", "")
-            )
-        else:
-            todos, shape = (
-                self.planner_agent.write_todos(
-                    brief, self.vfs, state["run_id"], thread_id=state.get("thread_id", "")
-                ),
-                "",
-            )
+        todos, shape = self.planner_agent.plan(
+            brief, self.vfs, state["run_id"], thread_id=state.get("thread_id", "")
+        )
         plan = plan_record(brief, todos, shape)
         version = state.get("plan_version", 0) + 1
         ref = self.vfs.write_json(
             state["run_id"], f"planning/plan.v{version}.json", plan, "research_plan"
         )
         return {
-            **state,
+            # The questions changed, so the old draft and everything vouching for it are stale.
+            **invalidate_draft_authority(),
             "stage": Stage.PLANNING.value,
             "current_action": f"Plan with {len(todos)} research task(s) ready for approval",
             "todos": [todo.model_dump(mode="json") for todo in todos],
@@ -104,7 +97,6 @@ class PlannerNodes:
             "plan_version": version,
             "plan_approval": None,
             "draft": "",
-            "verification": None,
             "research_status": "UNKNOWN",
             "research_limitations": [],
             "result_incomplete": False,

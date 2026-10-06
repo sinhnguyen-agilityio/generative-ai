@@ -17,10 +17,11 @@ clarify_with_user -> write_research_brief -> planning -> await_plan_approval (in
    `research_question`, `required_answers` (the acceptance checklist) and
    `output_requirements` (only explicitly stated language/length/format).
 2. The planner writes the fewest tasks that work (one for a simple question or comparison),
-   each with `evidence_needed`, plus `report_shape`. `write_todos` persists the todos and
+   each with `evidence_needed`, plus `report_shape`, by calling the `write_todos` tool (an
+   invalid call gets its validation error back and is retried). `write_todos` persists the todos and
    `planning/plan.v<n>.json` persists the hash-bound plan.
-3. `await_plan_approval` pauses before any retrieval. Approve → research; "cancel" → the run
-   ends; any other reply → rescoping and a new plan that needs its own approval.
+3. `await_plan_approval` pauses before any retrieval. Approve button → research; Cancel button →
+   the run ends; any typed reply → rescoping and a new plan that needs its own approval.
    `researching` refuses to run unless the approval matches the current plan hash.
 4. The research supervisor (an LLM) delegates the tasks with `think_tool`, `ConductResearch`,
    `ResearchComplete` and `ProposeReplan`: one research sub-agent per call, at most three at once
@@ -60,7 +61,7 @@ clarify_with_user -> write_research_brief -> planning -> await_plan_approval (in
 
 | Failed check | Route | Correction |
 |---|---|---|
-| Answer in stored evidence but not in the report; unknown citation id; unsupported statement | `vfs` | Rewrite only the affected answers from the full stored evidence |
+| Answer in stored evidence but not in the report; unknown citation id; unsupported statement | `vfs` | Rewrite only the affected answers from the un-narrowed catalog (every stored bundle with its selected passages, not the raw pages) |
 | Evidence gap, but the task has stored sources the writer did not see | `chroma` | Locate passages with Chroma, read their VFS captures through provenance |
 | Evidence gap, nothing unseen | `research` | Reopen only the affected task with the missing points (targeted Tavily MCP search) |
 | Evidence gap after targeted research already ran for that item | `replan` | Replacement tasks → `await_plan_approval` again |

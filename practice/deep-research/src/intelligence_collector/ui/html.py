@@ -13,9 +13,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from intelligence_collector.contracts import Stage
-
-FAITHFULNESS_THRESHOLD = 0.90
+from intelligence_collector.contracts import FAITHFULNESS_THRESHOLD, Stage
 
 THEME_CSS_PATH = Path(__file__).with_name("theme.css")
 
@@ -40,8 +38,8 @@ _STAGE_STEP = {
     Stage.AWAITING_APPROVAL.value: 5,
     Stage.PUBLISHED.value: 5,
     Stage.INCOMPLETE.value: 5,
-    "Exported Incomplete": 5,
-    "Cancelled": 1,
+    Stage.EXPORTED_INCOMPLETE.value: 5,
+    Stage.CANCELLED.value: 1,
 }
 
 _STAGE_LABEL = {
@@ -62,8 +60,8 @@ def stage_view(
         Stage.NEEDS_REVIEW.value,
         Stage.FAILED.value,
         Stage.INCOMPLETE.value,
-        "Exported Incomplete",
-        "Cancelled",
+        Stage.EXPORTED_INCOMPLETE.value,
+        Stage.CANCELLED.value,
     }:
         tone = "fail"
     elif waiting_for_you:

@@ -21,6 +21,7 @@ import math
 import re
 from typing import Any
 
+from intelligence_collector.models.redaction import redact_error
 from intelligence_collector.observability.tracing import traced
 from intelligence_collector.storage.evidence_index import chunk_texts
 from intelligence_collector.tools.page_content import clean_page, usable_page
@@ -71,8 +72,9 @@ class PassageSelector:
             with traced("passage.select", as_type="embedding", metadata={"chunks": len(texts)}):
                 vectors = self.embeddings.embed_documents(texts)
                 target = self.embeddings.embed_query(query)
-        except Exception:
-            logger.exception("Passage ranking fell back to word overlap")
+        except Exception as exc:
+            # No traceback: embedding client errors can echo the request URL and its API key.
+            logger.warning("Passage ranking fell back to word overlap: %s", redact_error(exc))
             return _overlap(query, texts)
         remember = getattr(self.embeddings, "remember", None)
         if remember is not None:

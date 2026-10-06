@@ -4,6 +4,7 @@ brief.
 
 from __future__ import annotations
 from datetime import date
+from intelligence_collector.ports import ModelRouterPort
 from intelligence_collector.contracts import (
     ResearchBrief,
     ScopeAssessment,
@@ -23,7 +24,9 @@ class ScopeAgent:
     `guardrail_router` (default: the same router) runs the content-safety check.
     """
 
-    def __init__(self, router, guardrail_router=None):
+    def __init__(
+        self, router: ModelRouterPort, guardrail_router: ModelRouterPort | None = None
+    ):
         self.router = router
         self.guardrail_router = guardrail_router or router
 
@@ -73,6 +76,7 @@ class ScopeAgent:
         if not verdict.allowed:
             raise GuardrailViolation(verdict.reason or "This request cannot be researched.")
         conversation = self._messages(prior_turns) + [HumanMessage(content=request)]
+        # TODO: review the prompt
         messages = SCOPE_TEMPLATE.format_messages(
             conversation=conversation,
             date=date.today().isoformat(),

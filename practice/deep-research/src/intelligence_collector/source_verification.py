@@ -15,6 +15,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
+from intelligence_collector.ports import ArtifactStore
 from intelligence_collector.contracts import VerificationResult
 from pathlib import Path
 from intelligence_collector.tools.url_tracking import normalize_url
@@ -143,7 +144,11 @@ def evidence_task_ids(evidence_refs: list[dict]) -> list[str]:
 
 
 def load_catalog(
-    vfs, run_id: str, evidence_refs: list[dict], *, active_todo_ids=None
+    vfs: ArtifactStore,
+    run_id: str,
+    evidence_refs: list[dict],
+    *,
+    active_todo_ids: list[str] | None = None,
 ) -> SourceCatalog:
     """Read the evidence bundles referenced by graph state (in research order)."""
     bundles = []
@@ -213,7 +218,7 @@ def citation_errors(report: str, catalog: SourceCatalog) -> list[str]:
     return errors
 
 
-def save_catalog_state(vfs, run_id: str, evidence_refs: list[dict]):
+def save_catalog_state(vfs: ArtifactStore, run_id: str, evidence_refs: list[dict]):
     """Record which evidence bundles the latest verification used."""
     return vfs.write_json(
         run_id,

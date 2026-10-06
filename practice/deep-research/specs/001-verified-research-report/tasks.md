@@ -14,7 +14,7 @@ references. Tests are included because the specification and request explicitly 
 
 - [X] T001 Create the package tree from `plan.md` under `src/intelligence_collector/` and `tests/`; completion means every planned module directory exists with package markers where needed (plan Project Structure).
 - [X] T002 Initialize Python 3.11 project dependencies and commands in `pyproject.toml`; completion means Streamlit, direct LangGraph, Pydantic, MCP client, vector-index adapter, Langfuse, Ragas, and pytest dependencies are declared without Deep Agents SDK (plan Technical Context; FR-030).
-- [X] T003 [P] Add repository configuration and safe local environment examples in `config.example.toml`, `.env.example`, and `.gitignore`; completion means secrets, VFS data, checkpoints, vector indexes, and permanent outputs are excluded from source control (constitution; FR-021).
+- [X] T003 [P] Add repository configuration and safe local environment examples in `.env.example` and `.gitignore` (the unused `config.example.toml` was removed in T191); completion means secrets, VFS data, checkpoints, vector indexes, and permanent outputs are excluded from source control (constitution; FR-021).
 - [X] T004 [P] Add test fixtures and deterministic fake ports in `tests/conftest.py`, `tests/fixtures/fake_models.py`, `tests/fixtures/fake_mcp.py`, and `tests/fixtures/fake_vector.py`; completion means tests can run without network or paid model calls (quickstart).
 - [X] T005 [P] Add baseline lint/type/test commands in `pyproject.toml` and `tests/unit/test_imports.py`; completion means the package imports and the baseline test command runs successfully (plan Testing).
 
@@ -1383,3 +1383,75 @@ page summaries (Session 2026-10-05; FR-047, FR-048, FR-049).
   todo now sends about 2.9k input tokens to LLMs instead of about 38.9k. Tests:
   `tests/unit/test_passage_selector.py`, `tests/integration/test_raw_content_research.py`,
   `tests/integration/test_worker_mcp.py`.
+- [X] T189 Approve / Cancel are buttons only (FR-026a, FR-040, FR-050): `PLAN_APPROVAL_WORDS` and
+  the publication phrase list in `classify_feedback` exact-matched typed text, so "sounds good, go
+  ahead" rescoped a plan. Buttons now resume with `{"approved": true|false}`
+  (`ui/state.py::Reply`); any typed reply is a change request. `PlanApprovalDecision.outcome`
+  reads only `approved`/`reply`; `FeedbackDecision.route` lost `approve` (and `TO_PUBLISH`), so
+  only the "Approve and publish" button publishes. Tests: `tests/unit/test_repair_diagnosis.py`,
+  `tests/integration/test_approval_gate.py`, UI tests.
+- [X] T190 Planner calls `write_todos` as a tool (FR-037a): `agents/tools.py` adds
+  `WRITE_TODOS_TOOL` (`questions`, `evidence_needed`, `report_shape`). `PlannerAgent.define_plan`
+  binds it through `ModelRouter.invoke_with_tools` with `tool_choice="write_todos"` and validates
+  the call's arguments as `TodoPlan`; an invalid call is answered with a `ToolMessage` carrying the
+  validation error and retried up to `max_attempts`, then fails with "invalid structured output
+  for planner". A model without tool calling may answer with the same JSON object. The planner
+  prompt asks for the tool call. `invoke_with_tools` takes an `attempt` and wraps the model in a
+  `parse_tool_calls` step, so every tool-calling generation nests under its `model.<role>` span.
+  Tests: `tests/unit/test_planner_write_todos_tool.py`.
+- [X] T191 Cleanup after a code review (FR-030a, FR-037a):
+  - `agents/tools.py`: the `tavily_search` description now says it returns the most relevant
+    verbatim passages of each new page (passage selector, T188), not a summary.
+  - Removed the unused `config.example.toml`; configuration is read only from the environment
+    (`.env.example`).
+  - Planning API: `PlannerAgent` keeps `define_plan` (the `write_todos` tool call) and `plan`
+    (define + persist); the `PlannerAgent.write_todos` wrapper and the `hasattr` fallback in
+    `PlannerNodes.planning` are gone; `create_todos` stays the shared persist helper (also used
+    by replacement planning).
+  - `agents/synthesis.py` (only `persist_report`) moved to `storage/reports.py`.
+  - Removed the never-wired `ResearchEvidenceJudge` (`agents/research_judge.py`), the
+    `research_assessor` branch of `research_complete`, `ResearchEvidenceVerdict`/
+    `ResearchEvidenceCheck`, the `retry_research_assessment` node, `research_verifier_attempt`,
+    the `research_verify` output cap and the `research_verifier_failure` issue. Readiness is the
+    deterministic evidence check; the node is labelled "Research Readiness". Checkpoint migration
+    maps a stored `research_verifier_failure` to `research_failure` (human review).
+  - `build_graph` is production-only: `scope_agent` is required; the stage-only stubs
+    (`graph/nodes/stubs.py`, `Node.STUB_SCOPE`, the stub `approval` interrupt) and the no-scope
+    branches (no plan approval, no replan, no rescope, `can_rescope`) are removed. Tests enter
+    the production graph at research via `tests/fixtures/graphs.py::research_graph` or use
+    `approval_graph` for a bare publication interrupt.
+  Tests: `tests/unit/test_simple_research.py`, `tests/unit/test_research_report_loops.py`,
+  `tests/integration/test_trace_topology.py` and the graph tests moved to the fixtures.
+- [X] T192 Workflow vocabulary, authority invalidation and typed boundaries (FR-017, FR-018,
+  FR-030a, FR-039):
+  - `contracts.py` owns the workflow vocabulary: `VerificationIssue` (`GraphState.verification_issue`),
+    `RepairRoute` (repair plan `route`, `ROUTE_ORDER = tuple(RepairRoute)`), `RunStatus`
+    (`GraphState.status`) and `Stage.CANCELLED` / `Stage.EXPORTED_INCOMPLETE`. Nodes, routers,
+    the recovery service, prompts and the UI use these instead of string literals; state stores
+    the plain `.value`.
+  - `FAITHFULNESS_THRESHOLD` lives in `contracts.py` only; the verification gate, the UI gate
+    card and the panel warning all read it (the panel warning now uses the gate's rule: not
+    strictly above the threshold).
+  - `graph/nodes/common.py::invalidate_draft_authority()` resets verification, verification
+    outcome, coverage cache, verifier attempt/error, approval, publication and every RAGAS score
+    and error. `synthesizing`, `prepare_revision` (now `BVFNodes.prepare_revision`), every
+    `classify_feedback` route, the recovery actions that lead to a new draft,
+    `prepare_gap_research`, `planning` and the legacy-checkpoint bridges merge it.
+  - Nodes return only the keys they change (`GraphState` has no reducers, so this is equivalent
+    to returning the whole state). `node_wrapper` merges state and update for the run registry
+    and trace annotations and writes back fields fixed by `normalize_checkpoint`; the synthesis
+    operation journal records the run identity itself. `retry_verifier` returns `{}`.
+  - `ports.py` declares `ModelRouterPort` and `ArtifactStore` and re-exports `VectorIndex` and
+    `MCPResearchPort`; agents, nodes, worker, supervisor, repair, catalog and index helpers are
+    typed against them.
+  - `models/redaction.py::redact_error` is the one redaction for compression errors, MCP errors
+    (replaces `redact_mcp_error`) and the passage-selector embedding fallback log (no traceback).
+    `redact_text` now masks `Bearer` tokens before `key: value` pairs, so
+    `Authorization: Bearer <token>` no longer leaks the token.
+  - Comments and the `vfs` repair instruction no longer say "full evidence": the catalog Verify
+    and content repairs read is every stored bundle with the passages selected from its pages,
+    not every raw page. `repair.diagnose(full_catalog=)` is renamed `catalog=`.
+  Tests: `tests/unit/test_draft_authority.py`, `tests/unit/test_redaction.py`, updated
+  `tests/unit/test_extend_feedback.py`, `tests/unit/test_simple_research.py`,
+  `tests/unit/test_repair_diagnosis.py`, `tests/integration/test_bvf_loop.py`,
+  `tests/contract/test_graph_transitions.py`.

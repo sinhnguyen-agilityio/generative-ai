@@ -2,31 +2,17 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from intelligence_collector.agents.report_judge import ReportJudge
 from intelligence_collector.agents.report_writer import ReportWriter
-from intelligence_collector.contracts import ResearchEvidenceVerdict, ResearchTodo, TodoStatus
-from intelligence_collector.graph.build import build_graph
+from intelligence_collector.contracts import ResearchTodo, TodoStatus
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
 from tests.fixtures.fake_models import FakeAcceptanceModel, FakeReportModel
+from tests.fixtures.graphs import research_graph
 
 
 def test_exhausted_core_gap_presents_honest_report_for_approval(stores, tmp_path):
     vfs, index = stores
     draft = "# INCOMPLETE\nThe requested version could not be verified from available evidence.\n\n## Sources\nNone available."
     writer = FakeReportModel([draft])
-
-    class Assessor:
-        def assess(self, *args, **kwargs):
-            return ResearchEvidenceVerdict(
-                status="INSUFFICIENT",
-                limitations=["No official release evidence"],
-                questions=[
-                    {
-                        "todo_id": "t",
-                        "sufficient": False,
-                        "missing_evidence": "Find official release announcement",
-                    }
-                ],
-            )
 
     class EmptyResearch:
         calls = 0
@@ -41,7 +27,6 @@ def test_exhausted_core_gap_presents_honest_report_for_approval(stores, tmp_path
         vfs,
         index,
         None,
-        research_assessor=Assessor(),
         report_writer=ReportWriter(ModelRouter(writer)),
         report_judge=ReportJudge(
             ModelRouter(
@@ -55,8 +40,8 @@ def test_exhausted_core_gap_presents_honest_report_for_approval(stores, tmp_path
     nodes.supervisor = empty
     config = {"configurable": {"thread_id": "r"}}
     saver = MemorySaver()
-    graph = build_graph(
-        research_nodes=nodes,
+    graph = research_graph(
+        nodes,
         vfs=vfs,
         checkpointer=saver,
         with_approval=True,
@@ -81,7 +66,7 @@ def test_exhausted_core_gap_presents_honest_report_for_approval(stores, tmp_path
     assert result["approval"] is None and result["publication"] is None
     assert not (tmp_path / "exports" / "r.md").exists()
     # A fresh compiled graph resumes the same paused checkpoint without starting a new run.
-    restored = build_graph(research_nodes=nodes, vfs=vfs, checkpointer=saver, with_approval=True)
+    restored = research_graph(nodes, vfs=vfs, checkpointer=saver, with_approval=True)
     assert restored.get_state(config).next == ("approval",)
     assert restored.get_state(config).values["research_gap_attempt"] == 1
     assert len(writer.prompts("write")) == 1

@@ -10,7 +10,6 @@ from intelligence_collector.agents.extension_judge import ExtensionJudge
 from intelligence_collector.agents.report_judge import ReportJudge
 from intelligence_collector.agents.report_writer import ReportWriter
 from intelligence_collector.agents.researcher import ResearchAgent
-from intelligence_collector.graph.build import build_graph
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.tools.mcp import ControlledMCP
@@ -21,6 +20,7 @@ from tests.fixtures.fake_models import (
     cited_report,
 )
 from tests.integration.test_approval_gate import GOOD, PASS, URL, _initial_state, _router
+from tests.fixtures.graphs import research_graph
 
 URL2 = "https://controlled.test/eviction"
 REQUEST = "Add a section on eviction specifically."
@@ -69,8 +69,8 @@ def _graph(stores, tmp_path, judge_payload, report_model):
     )
     judge_model = ScriptedModel(judge_payload)
     _, router = _router({"route": "extend", "reason": "Adds a section.", "topic": TOPIC})
-    graph = build_graph(
-        research_nodes=nodes,
+    graph = research_graph(
+        nodes,
         vfs=vfs,
         checkpointer=MemorySaver(),
         with_approval=True,

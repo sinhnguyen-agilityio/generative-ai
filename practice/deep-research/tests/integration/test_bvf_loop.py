@@ -10,8 +10,7 @@ from intelligence_collector.agents.report_judge import ReportJudge
 from intelligence_collector.agents.report_writer import ReportWriter
 from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.contracts import ResearchTodo
-from intelligence_collector.graph.build import build_graph
-from intelligence_collector.graph.nodes import ResearchNodes
+from intelligence_collector.graph.nodes import ResearchNodes, invalidate_draft_authority
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.source_verification import load_catalog
 from intelligence_collector.tools.mcp import ControlledMCP
@@ -21,6 +20,7 @@ from tests.fixtures.fake_models import (
     FakeResearchModel,
     cited_report,
 )
+from tests.fixtures.graphs import research_graph
 
 URL = "https://controlled.test/cache"
 QUESTION = "How does a local software cache store and reuse data?"
@@ -123,7 +123,7 @@ def _nodes(
 def _run(stores, report_model, *, run_id="bvf", **kwargs):
     nodes = _nodes(stores, report_model, **kwargs)
     todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
-    return build_graph(research_nodes=nodes).invoke(
+    return research_graph(nodes).invoke(
         {
             "run_id": run_id,
             "thread_id": run_id,
@@ -216,7 +216,7 @@ def test_repair_keeps_answers_that_already_passed(stores):
     )
     nodes = _nodes(stores, model, report_judge=judge)
     todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
-    result = build_graph(research_nodes=nodes).invoke(
+    result = research_graph(nodes).invoke(
         {
             "run_id": "keep",
             "thread_id": "keep",
@@ -411,7 +411,7 @@ def test_required_faithfulness_without_evaluator_is_error(stores):
     nodes = _nodes(stores, FakeReportModel([GOOD]), require_faithfulness=True)
     nodes.bvf.faithfulness_evaluator = None
     todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
-    result = build_graph(research_nodes=nodes).invoke(
+    result = research_graph(nodes).invoke(
         {
             "run_id": "cfg",
             "thread_id": "cfg",
@@ -459,7 +459,7 @@ def test_small_saved_evidence_is_read_directly_without_chroma(stores):
         faithfulness_evaluator=_faithful(),
     )
     todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
-    build_graph(research_nodes=nodes).invoke(
+    research_graph(nodes).invoke(
         {
             "run_id": "small",
             "thread_id": "small",
@@ -493,7 +493,7 @@ def test_large_corpus_is_narrowed_for_the_writer_but_not_for_verification(stores
     )
     nodes.bvf.direct_read_chars = 1000  # this corpus is too large to read directly
     todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
-    result = build_graph(research_nodes=nodes).invoke(
+    result = research_graph(nodes).invoke(
         {
             "run_id": "narrow",
             "thread_id": "narrow",
@@ -510,14 +510,13 @@ def test_new_draft_invalidates_verification_and_approval(stores):
     nodes = _nodes(stores, FakeReportModel([IMPROVED]))
     vfs, _ = stores
     todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
-    state = nodes.researching(
-        {
-            "run_id": "inv",
-            "thread_id": "inv",
-            "scoped_request": BRIEF,
-            "todos": [todo.model_dump(mode="json")],
-        }
-    )
+    state = {
+        "run_id": "inv",
+        "thread_id": "inv",
+        "scoped_request": BRIEF,
+        "todos": [todo.model_dump(mode="json")],
+    }
+    state.update(nodes.researching(state))
     state.update(
         draft=GOOD,
         draft_version=1,
@@ -534,6 +533,8 @@ def test_new_draft_invalidates_verification_and_approval(stores):
     assert result["verification"] is None and result["verification_outcome"] == ""
     assert result["approval"] is None and result["publication"] is None
     assert result["faithfulness_score"] is None
+    for key, cleared in invalidate_draft_authority().items():
+        assert result[key] == cleared, key
 
 
 def test_context_precision_scores_the_ranked_evidence_the_final_draft_was_written_from(stores):
@@ -588,7 +589,7 @@ def test_recovery_revision_replies_in_chat_and_shows_the_new_report(stores):
         budget=0,
         faithfulness_evaluator=lambda q, r, c: {"score": next(scores), "unsupported": ["x"]},
     )
-    graph = build_graph(research_nodes=nodes, checkpointer=MemorySaver(), with_approval=True)
+    graph = research_graph(nodes, checkpointer=MemorySaver(), with_approval=True)
     config = {"configurable": {"thread_id": "rec"}}
     todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
 

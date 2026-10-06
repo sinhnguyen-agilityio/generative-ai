@@ -1,10 +1,10 @@
 """The ``write_todos`` tool: persists the planner's todo list."""
 
 from intelligence_collector.contracts import ResearchTodo, TodoStatus
-from intelligence_collector.storage.vfs import VFS
+from intelligence_collector.ports import ArtifactStore
 
 
-def write_todos(vfs: VFS, run_id: str, todos: list[ResearchTodo]):
+def write_todos(vfs: ArtifactStore, run_id: str, todos: list[ResearchTodo]):
     """Validate and save the planned todos to ``planning/todos.v1.json``. Raises ``ValueError`` for
     an empty list, a blank question, or a todo that is not ``planned``.
     """

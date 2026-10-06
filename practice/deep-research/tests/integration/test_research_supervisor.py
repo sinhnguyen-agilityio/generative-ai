@@ -277,7 +277,7 @@ def test_graph_routes_a_supervisor_replan_to_human_approval_of_a_replacement_pla
     config = {"configurable": {"thread_id": "t"}}
     graph.invoke({"run_id": "r", "thread_id": "t", "request": REQUEST}, config)
 
-    paused = graph.invoke(Command(resume={"reply": "approve", "actor": "tester"}), config)
+    paused = graph.invoke(Command(resume={"approved": True, "actor": "tester"}), config)
 
     interrupts = [i.value for task in graph.get_state(config).tasks for i in task.interrupts]
     assert [i["kind"] for i in interrupts] == ["plan_approval"]
@@ -290,7 +290,7 @@ def test_graph_routes_a_supervisor_replan_to_human_approval_of_a_replacement_pla
 
     # The replacement plan is approved: its task is researched, and the supervisor can no
     # longer propose another replan.
-    done = graph.invoke(Command(resume={"reply": "approve", "actor": "tester"}), config)
+    done = graph.invoke(Command(resume={"approved": True, "actor": "tester"}), config)
 
     assert done["todos"][1]["status"] == "completed"
     assert "ProposeReplan" not in str(research_model.supervisor_prompts[-1][0].content)

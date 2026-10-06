@@ -592,16 +592,15 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-026**: Rejecting publication MUST leave the permanent output location unchanged and record
   the rejection without representing the artifact as published.
 - **FR-026a**: The review MUST happen in the chat conversation: the verified report is posted as
-  an assistant message asking the user to approve it or say what to change, and the user answers
-  with a free-text chat reply. The system MUST classify the reply, in a dedicated LLM step
-  separate from the review interrupt itself (so a failed classification never re-prompts the
-  reviewer), as an approval (`approve`: publish the verified report), a revision (`revise`: a
-  change the existing evidence can support — presentation, wording, emphasis, dropping or
-  narrowing content) or a scope change (`scope`: the change needs evidence the report was not
-  built from), and route the run accordingly. A reply MUST only count as an approval when it asks
-  for no change at all; an explicit rejection MUST never be read as an approval. A reply that is
-  unclear, empty, or unclassified (no classifier configured) MUST be treated as `revise`, never as
-  an approval.
+  an assistant message with an "Approve and publish" button, and the user either clicks it or
+  says what to change in a free-text chat reply. Only the button approves; a typed reply is
+  never an approval. The system MUST classify the reply, in a dedicated LLM step separate from
+  the review interrupt itself (so a failed classification never re-prompts the reviewer), as a
+  revision (`revise`: a change the existing evidence can support — presentation, wording,
+  emphasis, dropping or narrowing content), an added section (`extend`) or a scope change
+  (`scope`: the change needs evidence the report was not built from), and route the run
+  accordingly. A reply that is unclear, empty, or unclassified (no classifier configured) MUST
+  be treated as `revise`.
 - **FR-026b**: A `revise` reply MUST re-enter the Build-Verify-Fix loop at synthesis: the writer
   rewrites the reviewed report from the same evidence applying the request, and the result MUST
   pass verification again before it is shown for review (no unverified report is ever shown or
@@ -685,12 +684,13 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   planned research todo, and successfully persist it through `write_todos` before any edge can enter
   Researching or invoke external retrieval. Brief or todo persistence failure MUST end the current
   invocation visibly without enabling retrieval.
-- **FR-037a**: The Planner Agent MUST decompose the `ResearchBrief` with a structured LLM
-  call whose output is a list of research questions (`TodoPlan.questions`, 1–5 items). Each
-  question MUST be standalone, non-blank, and not duplicate another (case-insensitive). The LLM
-  MUST NOT set todo IDs or statuses; the system converts each question into a `planned` todo and
-  persists the todo list (through `write_todos`). Invalid planner output MUST NOT write a todo
-  list.
+- **FR-037a**: The Planner Agent MUST decompose the `ResearchBrief` with a tool-calling LLM
+  call: the model calls the `write_todos` tool, whose arguments are validated as `TodoPlan`
+  (research questions, 1–5 items; `evidence_needed`; `report_shape`). Each question MUST be
+  standalone, non-blank, and not duplicate another (case-insensitive). The LLM MUST NOT set todo
+  IDs or statuses; the system converts each question into a `planned` todo and persists the todo
+  list (through `write_todos`). An invalid call is answered with its validation error and retried
+  up to the router's attempt limit; invalid planner output MUST NOT write a todo list.
 - **FR-038**: Every live workflow execution MUST emit one complete Langfuse trace before it may be
   treated as successfully observed. Each execution trace MUST be grouped under the LangGraph
   `thread_id`, correlated with `run_id`, and contain a turn observation nested under the thread's
@@ -738,7 +738,8 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-040**: Planning MUST persist `planning/plan.v<n>.json` (original question, required answers,
   output requirements, tasks, report shape, plan hash) and pause at `await_plan_approval` before
   any retrieval. Approval binds to the plan hash; `researching` MUST refuse to run without it.
-  "cancel" ends the run; any other reply rescopes and produces a new plan needing approval.
+  Approve and Cancel are buttons that send an explicit decision (Cancel ends the run); any
+  typed reply is a requested change, which rescopes and produces a new plan needing approval.
 - **FR-041**: Verification MUST run exactly three gates on the exact draft: (1) coverage — each
   required answer is answered, not merely mentioned, plus output requirements, guidelines and
   reviewer requests, judged with id-tagged criteria; failed items record the item and missing
@@ -801,8 +802,8 @@ is created; then approve the unchanged artifact and confirm only that exact vers
 - **FR-050**: The UI MUST show, at all times, the run's stage with who has to act (a status chip:
   done, working, waiting for the user, failed) and a six-step stepper (Scope, Plan, Research,
   Write, Verify, Publish). A plan awaiting approval and a verified report awaiting review MUST be
-  shown as cards whose quick-reply buttons (approve, request changes, cancel for a plan) send
-  exactly the replies the chat input accepts. While research runs, the research supervisor's
+  shown as cards with quick-reply buttons: Approve and Cancel (plan only) send an explicit
+  decision, and Request changes sends a typed change like the chat input. While research runs, the research supervisor's
   decisions (reflections, delegations, task results, refusals, completion or replan) MUST appear
   live and be kept in `research/supervisor_log.json`. A tabbed side panel MUST offer Run (agent
   cards, the three verification gates with the Faithfulness score against 0.90, RAGAS signals

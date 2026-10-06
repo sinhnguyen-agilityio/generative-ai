@@ -114,7 +114,7 @@ def test_a_turn_stopped_halfway_shows_stopped_not_running(monkeypatch):
     }
     monkeypatch.setattr(turn, "st", SimpleNamespace(session_state=session))
 
-    def interrupted(text, **kwargs):
+    def interrupted(reply, **kwargs):
         session[turn.EXECUTION_ID] = "now"
         session[state.ACTIVITY].append(
             {"id": "now:researching", "agent": "Research Supervisor", "status": "running"}
@@ -123,7 +123,7 @@ def test_a_turn_stopped_halfway_shows_stopped_not_running(monkeypatch):
 
     monkeypatch.setattr(turn, "_run_chat_turn", interrupted)
     with pytest.raises(StopException):
-        turn.run_chat_turn("approve", view=None, panel=None)
+        turn.run_chat_turn(state.Reply("approve", True), view=None, panel=None)
 
     statuses = [item["status"] for item in session[state.ACTIVITY]]
     assert statuses == ["success", "stopped"]  # only this turn's unfinished node changes
@@ -141,8 +141,8 @@ def test_inputs_are_disabled_while_a_turn_runs_and_reenabled_after_an_error(monk
     monkeypatch.setattr(resources, "inspect_checkpoint", lambda snapshot: checkpoint)
     seen = []
 
-    def failing_turn(text, *, view, panel):
-        seen.append((text, view.busy))
+    def failing_turn(reply, *, view, panel):
+        seen.append((reply, view.busy))
         raise RuntimeError("model unavailable")
 
     monkeypatch.setattr(turn, "run_chat_turn", failing_turn)
@@ -158,7 +158,7 @@ def test_inputs_are_disabled_while_a_turn_runs_and_reenabled_after_an_error(monk
 
     next(b for b in app.button if b.label == "Approve plan").click().run()
 
-    assert seen == [("approve", True)]  # the turn ran in a rerun that rendered everything busy
+    assert seen == [(("approve", True), True)]  # the turn ran in a rerun that rendered everything busy
     assert next(b for b in app.button if b.label == "Approve plan").disabled
     assert next(b for b in app.button if b.label == "New thread").disabled
     assert app.chat_message[-1].markdown[0].value == "approve"  # the reply being answered

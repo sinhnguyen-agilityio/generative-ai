@@ -1,9 +1,9 @@
 """The conversation column: messages, the plan card, the research banner, the report card, run
 notices and the chat input.
 
-Quick-reply buttons do not run anything themselves: their ``on_click`` callbacks queue the same
-reply the chat input accepts ("approve", "cancel" or the requested change), and the page answers
-it like a typed reply (see ``main.py``).
+Quick-reply buttons do not run anything themselves: their ``on_click`` callbacks queue a reply
+the page answers like a typed one (see ``main.py``). Approve and Cancel carry an explicit
+decision; typed text and Request changes are always a requested change.
 """
 
 from __future__ import annotations
@@ -17,10 +17,13 @@ from intelligence_collector.ui.html import research_banner_html, section_label_h
 from intelligence_collector.ui.run_status import RESEARCH_DONE_STAGES, RunView, current_report
 
 REVIEW_PROMPT = (
-    "Reply **approve** to publish this report, or tell me what to change — I'll rewrite and "
-    "re-verify it, or research again if the change needs new sources."
+    "Click **Approve and publish** to publish this report, or tell me what to change — I'll "
+    "rewrite and re-verify it, or research again if the change needs new sources."
 )
-PLAN_PROMPT = "Reply **approve** to start research, **cancel** to stop, or describe what to change."
+PLAN_PROMPT = (
+    "Click **Approve plan** to start research or **Cancel run** to stop, or describe what to "
+    "change."
+)
 
 
 def render_conversation(view: RunView, vfs) -> None:
@@ -62,7 +65,7 @@ def _quick_replies(
         type="primary",
         key=f"{key}_approve",
         on_click=state.queue_reply,
-        args=("approve",),
+        args=("approve", True),
         disabled=disabled,
     )
     with change_col.popover("Request changes", disabled=disabled):
@@ -76,7 +79,7 @@ def _quick_replies(
             type="tertiary",
             key=f"{key}_cancel",
             on_click=state.queue_reply,
-            args=("cancel",),
+            args=("cancel", False),
             disabled=disabled,
         )
 
@@ -163,7 +166,7 @@ def render_run_notices(view: RunView, vfs) -> None:
         st.success(f"Published to {destination}")
     if view.pending:
         st.info("This checkpoint has unfinished work. Use Continue unfinished run to resume it.")
-    if view.run_stage in {"Exported Incomplete", Stage.INCOMPLETE.value}:
+    if view.run_stage in {Stage.EXPORTED_INCOMPLETE.value, Stage.INCOMPLETE.value}:
         st.warning(
             "Incomplete answer — not a published report. Some requested information could not "
             "be verified."
@@ -179,7 +182,7 @@ def render_run_notices(view: RunView, vfs) -> None:
             st.error("The incomplete report artifact is unavailable.")
 
 
-def chat_input(view: RunView) -> str | None:
+def chat_input(view: RunView) -> state.Reply | None:
     """The reply typed this rerun, or a queued quick reply."""
     typed = st.chat_input(view.input_placeholder, disabled=view.input_disabled)
-    return state.take_pending_reply() or typed
+    return state.take_pending_reply() or (state.Reply(typed) if typed else None)

@@ -1,6 +1,6 @@
 import hashlib
 
-from intelligence_collector.contracts import FeedbackDecision, VerificationResult
+from intelligence_collector.contracts import VerificationResult
 from intelligence_collector.graph.nodes import ApprovalNodes
 from intelligence_collector.source_verification import (
     catalog_from_bundles,
@@ -36,19 +36,6 @@ def test_active_catalog_excludes_old_scope_without_renumbering(tmp_path):
     catalog = load_catalog(vfs, "r", refs, active_todo_ids=["new"])
     assert list(catalog.sources) == ["S2"]
     assert [bundle.todo_id for bundle in catalog.bundles] == ["new"]
-
-
-def test_conditional_approval_cannot_be_overridden_by_classifier(tmp_path):
-    class Router:
-        def route(self, *args, **kwargs):
-            return FeedbackDecision(route="approve")
-
-    nodes = ApprovalNodes(VFS(tmp_path), str(tmp_path / "exports"), Router())
-    result = nodes.classify_feedback(
-        {"human_feedback": "Approve but fix the citations", "draft": "draft"}
-    )
-    assert result["feedback_route"] == "revise"
-    assert result["approval"] is None
 
 
 def test_failed_publication_invalidates_approval_and_verification(tmp_path):

@@ -1,5 +1,7 @@
 """Conservative, additive checkpoint migrations. Never invent approvals or evidence."""
 
+from intelligence_collector.contracts import VerificationIssue
+
 
 def normalize_checkpoint(state: dict) -> dict:
     version = state.get("checkpoint_schema_version", 1)
@@ -11,7 +13,6 @@ def normalize_checkpoint(state: dict) -> dict:
         "research_gap_attempt": 0,
         "research_gap_budget": 1,
         "verifier_attempt": 0,
-        "research_verifier_attempt": 0,
         "reviewer_requests": [],
         "research_gaps": [],
     }.items():
@@ -30,6 +31,10 @@ def normalize_checkpoint(state: dict) -> dict:
     result.setdefault("research_limitations", list(progress.get("blockers") or []))
     result.setdefault("result_incomplete", legacy_status in {"PARTIAL", "INSUFFICIENT"})
     result.pop("plan_repair_instruction", None)
+    # The research evidence judge was removed: a run stopped on its failure goes to review.
+    result.pop("research_verifier_attempt", None)
+    if result.get("verification_issue") == "research_verifier_failure":
+        result["verification_issue"] = VerificationIssue.RESEARCH_FAILURE.value
     if "todos" in result:
         result["todos"] = [
             {"research_attempt": 1, "research_instruction": "", **todo} for todo in result["todos"]

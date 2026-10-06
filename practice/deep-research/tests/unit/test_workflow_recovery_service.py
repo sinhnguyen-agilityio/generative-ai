@@ -3,7 +3,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
-from intelligence_collector.graph.build import build_graph, node_wrapper
+from intelligence_collector.graph.build import node_wrapper
 from intelligence_collector.graph.recovery import (
     CheckpointIdentityMismatch,
     CheckpointNotFound,
@@ -13,14 +13,11 @@ from intelligence_collector.graph.recovery import (
 )
 from intelligence_collector.graph.state import GraphState
 from intelligence_collector.storage.run_registry import RunRegistry
+from tests.fixtures.graphs import approval_graph
 
 
 def _approval_graph(registry):
-    return build_graph(
-        checkpointer=MemorySaver(),
-        with_approval=True,
-        run_registry=registry,
-    )
+    return approval_graph(checkpointer=MemorySaver(), run_registry=registry)
 
 
 def test_service_lists_and_inspects_an_interrupted_run(tmp_path):

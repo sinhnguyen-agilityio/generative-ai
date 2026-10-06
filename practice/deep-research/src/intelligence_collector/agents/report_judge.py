@@ -15,6 +15,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 
+from intelligence_collector.ports import ModelRouterPort
 from intelligence_collector.agents.prompts import REPORT_JUDGE_TEMPLATE
 from intelligence_collector.contracts import (
     ReportJudgeCriterion,
@@ -62,7 +63,7 @@ def build_coverage_criteria(
 class ReportJudge:
     """The coverage gate (role ``verify``)."""
 
-    def __init__(self, router):
+    def __init__(self, router: ModelRouterPort):
         self.router = router
 
     def _ask(self, brief, criteria, report, evidence, reviewer_requests, run_id, thread_id):

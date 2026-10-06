@@ -1,10 +1,10 @@
-"""Node identifiers, workflow limits and the activity-log helper shared by all nodes."""
+"""Node identifiers, workflow limits and the state helpers shared by all nodes."""
 
 from __future__ import annotations
 
+from intelligence_collector.contracts import FAITHFULNESS_THRESHOLD
+
 DEFAULT_RECOVERY_BUDGET = 3
-# RAGAS Faithfulness must be strictly greater than this for the third gate to pass.
-FAITHFULNESS_THRESHOLD = 0.90
 # Identical failures on this many consecutive re-verifications, despite reflection, ends the loop.
 MAX_STALLED_ATTEMPTS = 2
 # Stored passages the extension judge reads for a reviewer's "extend" request.
@@ -37,13 +37,10 @@ class Node:
     APPLY_RECOVERY = "apply_recovery_decision"
     PREPARE_GAP_RESEARCH = "prepare_gap_research"
     RETRY_VERIFIER = "retry_verifier"
-    RETRY_RESEARCH_ASSESSMENT = "retry_research_assessment"
     # Human review and publication
     APPROVE = "approval"
     CLASSIFY_FEEDBACK = "classify_feedback"
     PUBLISH = "publishing"
-    # Placeholder used by the stage-only graph when no Scope Agent is injected
-    STUB_SCOPE = "scope"
 
 
 # Agent (process) that owns each node: shown in the UI activity log and in Langfuse span names.
@@ -51,15 +48,13 @@ NODE_AGENT = {
     Node.CLARIFY: "Scope Agent",
     Node.AWAIT_CLARIFICATION: "Scope Agent",
     Node.WRITE_BRIEF: "Scope Agent",
-    Node.STUB_SCOPE: "Scope Agent",
     Node.PLAN: "Planner",
     Node.AWAIT_PLAN: "Planner",
     Node.REPLAN: "Planner",
     Node.RESEARCH: "Research Supervisor",
     Node.PREPARE_GAP_RESEARCH: "Research Supervisor",
     Node.PREPARE_REPAIR_RESEARCH: "Research Supervisor",
-    Node.ASSESS_RESEARCH: "Research Evidence Judge",
-    Node.RETRY_RESEARCH_ASSESSMENT: "Research Evidence Judge",
+    Node.ASSESS_RESEARCH: "Research Readiness",
     Node.SYNTHESIZE: "Report Writer",
     Node.PREPARE_REVISION: "Report Writer",
     Node.LOCATE_EXTENSION: "Report Writer",
@@ -86,3 +81,28 @@ def _activity(state, label: str, status: str = "success"):
         *state.get("activity", []),
         {"id": f"{len(state.get('activity', [])) + 1}:{label}", "label": label, "status": status},
     ]
+
+
+def invalidate_draft_authority() -> dict:
+    """State update that drops everything vouching for the current draft.
+
+    A verification, a reviewer's approval, a publication and the RAGAS scores each describe one
+    exact draft. Any node that writes a new draft, or sends the run back to write one, merges
+    this update so the next draft never inherits authority earned by an earlier one.
+    """
+    return {
+        "verification": None,
+        "verification_outcome": "",
+        "coverage_cache": None,
+        "verifier_attempt": 0,
+        "verifier_error": "",
+        "approval": None,
+        "publication": None,
+        "faithfulness_score": None,
+        "faithfulness_error": "",
+        "context_precision_score": None,
+        "context_precision_error": "",
+        "context_precision_details": [],
+        "response_relevancy_score": None,
+        "response_relevancy_error": "",
+    }

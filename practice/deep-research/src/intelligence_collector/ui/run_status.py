@@ -23,7 +23,12 @@ AGENTS = (
 
 # A finished thread takes no more input. Clarification, approval and recovery are durable pauses.
 THREAD_DONE_STAGES = frozenset(
-    {Stage.PUBLISHED.value, Stage.INCOMPLETE.value, "Cancelled", "Exported Incomplete"}
+    {
+        Stage.PUBLISHED.value,
+        Stage.INCOMPLETE.value,
+        Stage.CANCELLED.value,
+        Stage.EXPORTED_INCOMPLETE.value,
+    }
 )
 RESEARCH_DONE_STAGES = frozenset(
     {
@@ -175,9 +180,9 @@ class RunView:
         if self.busy:
             return "Working on your reply…"
         if self.reviewing:
-            return "Reply: approve, or what to change"
+            return "What should change in the report?"
         if self.planning:
-            return "Reply: approve the plan, cancel, or what to change"
+            return "What should change in the plan?"
         if self.clarifying:
             return "Answer the clarification question"
         if self.recovering:

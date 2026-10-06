@@ -225,6 +225,7 @@ class ModelRouter:
         run_id: str = "",
         thread_id: str = "",
         tool_choice: str | None = None,
+        attempt: int = 1,
     ) -> AIMessage:
         """Tool-calling decision: the returned AIMessage carries a final answer or tool calls."""
         chain = self._chain(
@@ -235,10 +236,8 @@ class ModelRouter:
                 capped_model(self.fallback, role, self.output_limits), tools, tool_choice
             ),
             role,
-        )
-        raw = chain.invoke(messages, config=self._config(role, run_id, thread_id))
-        if not isinstance(raw, AIMessage):
-            raise TypeError(f"tool-calling model output for {role} must be an AIMessage")
+        ) | RunnableLambda(lambda raw: self._tool_message(role, raw), name="parse_tool_calls")
+        raw = chain.invoke(messages, config=self._config(role, run_id, thread_id, attempt))
         decision = redact_value(
             {
                 "content": raw.content,
@@ -251,7 +250,7 @@ class ModelRouter:
             role,
             run_id,
             thread_id,
-            1,
+            attempt,
             messages,
             output_text=json.dumps(decision, ensure_ascii=False, indent=2, default=str),
             decision=decision,
@@ -284,6 +283,12 @@ class ModelRouter:
         if fallback is not None:
             chain = chain.with_fallbacks([_as_runnable(fallback, role)])
         return chain
+
+    @staticmethod
+    def _tool_message(role: str, raw) -> AIMessage:
+        if not isinstance(raw, AIMessage):
+            raise TypeError(f"tool-calling model output for {role} must be an AIMessage")
+        return raw
 
     @staticmethod
     def _parse(role: str, raw, schema: type[T]) -> T:

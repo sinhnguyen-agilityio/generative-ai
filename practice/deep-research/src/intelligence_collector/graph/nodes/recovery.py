@@ -8,23 +8,23 @@ from intelligence_collector.contracts import (
     RecoveryAction,
     RecoveryDecision,
     ResearchTodo,
+    RunStatus,
     Stage,
     TodoStatus,
 )
+from intelligence_collector.graph.nodes.common import invalidate_draft_authority
+from intelligence_collector.ports import ArtifactStore
 
 
 class RecoveryNodes:
     """Apply human authorization before any recovery work runs."""
 
-    def __init__(self, vfs, *, can_rescope=False):
+    def __init__(self, vfs: ArtifactStore):
         self.vfs = vfs
-        self.can_rescope = can_rescope
 
     def apply(self, state):
         decision = RecoveryDecision.model_validate(state.get("recovery_decision"))
         action = decision.action
-        if action is RecoveryAction.RESCOPE and not self.can_rescope:
-            raise ValueError("Rescoping requires a configured Scope Agent")
         history = [
             *state.get("bvf_history", []),
             {
@@ -36,7 +36,6 @@ class RecoveryNodes:
             f" — {decision.feedback}" if decision.feedback else ""
         )
         update = {
-            **state,
             "recovery_decision": None,
             "recovery_route": action.value,
             "bvf_history": history,
@@ -48,8 +47,8 @@ class RecoveryNodes:
         if action is RecoveryAction.CANCEL:
             return {
                 **update,
-                "stage": "Cancelled",
-                "status": "cancelled",
+                "stage": Stage.CANCELLED.value,
+                "status": RunStatus.CANCELLED.value,
                 "current_action": "Run cancelled by reviewer",
             }
         if action is RecoveryAction.EXPORT_INCOMPLETE:
@@ -65,30 +64,23 @@ class RecoveryNodes:
             )
             return {
                 **update,
-                "stage": "Exported Incomplete",
-                "status": "exported_incomplete",
+                "stage": Stage.EXPORTED_INCOMPLETE.value,
+                "status": RunStatus.EXPORTED_INCOMPLETE.value,
                 "current_action": "Incomplete report saved for review",
                 "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
             }
         # Each human authorization starts a fresh, small recovery allowance. Verification history
         # and artifacts remain available, but no stale verification/approval follows the new draft.
         update.update(
-            verification=None,
-            status="active",
+            invalidate_draft_authority(),
+            status=RunStatus.ACTIVE.value,
             recovery_attempt=0,
             recovery_budget=decision.additional_attempts or 1,
             stall_count=0,
             progress_fingerprint="",
             last_error="",
-            faithfulness_score=None,
-            context_precision_score=None,
-            response_relevancy_score=None,
-        )
-        update.update(
             research_gap_attempt=0,
             research_gap_budget=1,
-            research_verifier_attempt=0,
-            verifier_attempt=0,
         )
         if action in {RecoveryAction.RETRY_REPORT, RecoveryAction.REVISE}:
             feedback = decision.feedback or "Repair the unresolved verification issues: " + (

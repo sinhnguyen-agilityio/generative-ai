@@ -53,7 +53,7 @@ def _diagnose(*checks, shown=None, researched=(), can_replan=True, catalog=None)
     return diagnose(
         _failed(*checks),
         todos=TODOS,
-        full_catalog=catalog or _catalog(),
+        catalog=catalog or _catalog(),
         shown_source_ids=shown or {"a": ["S1"], "b": ["S1", "S2", "S3"]},
         researched_items=list(researched),
         can_replan=can_replan,
@@ -166,12 +166,11 @@ def test_chroma_route_reads_located_evidence_back_through_vfs_provenance(tmp_pat
     "payload,outcome",
     [
         ({"approved": True}, "approve"),
-        ({"reply": "approve"}, "approve"),
-        ({"reply": "Đồng ý"}, "approve"),
         ({"approved": False}, "decline"),
-        ({"reply": "cancel"}, "decline"),
-        ({"reply": "Only use official documentation"}, "change"),
         ({"approved": False, "reply": "Add a task about caching"}, "change"),
+        # Approve / Cancel are buttons; any typed text is a requested change.
+        ({"reply": "approve"}, "change"),
+        ({"reply": "Only use official documentation"}, "change"),
     ],
 )
 def test_plan_decision_outcomes(payload, outcome):

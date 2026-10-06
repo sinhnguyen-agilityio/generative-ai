@@ -56,7 +56,7 @@ def main() -> None:
         render_conversation(view, vfs)
         render_recovery_controls(snapshot, checkpoint, disabled=view.busy)
         if turn_reply is not None:
-            render_turn_reply(turn_reply)
+            render_turn_reply(turn_reply.text)
             _run_turn(turn_reply, view, panel)
             # Still here: the turn failed and its error is shown. Let the user reply again.
             view = replace(view, busy=False)
@@ -65,9 +65,9 @@ def main() -> None:
             _accept(reply, view)
 
 
-def _accept(reply: str, view: RunView) -> None:
+def _accept(reply: state.Reply, view: RunView) -> None:
     """Check the reply with the input guardrails; accepted, its turn runs in the next rerun."""
-    text = normalize_text(reply)
+    text = normalize_text(reply.text)
     try:
         decision = validate_request(text)
     except GuardrailViolation as exc:
@@ -78,14 +78,14 @@ def _accept(reply: str, view: RunView) -> None:
         if not view.reviewing:
             st.session_state[state.PROGRESS] = "Request rejected; no research started"
         return
-    state.start_turn(text)
+    state.start_turn(reply._replace(text=text))
     st.rerun()
 
 
-def _run_turn(text: str, view: RunView, panel: LivePanel) -> None:
+def _run_turn(reply: state.Reply, view: RunView, panel: LivePanel) -> None:
     """Run one graph turn for an accepted reply, then show its result."""
     try:
-        turn.run_chat_turn(text, view=view, panel=panel)
+        turn.run_chat_turn(reply, view=view, panel=panel)
     except GuardrailViolation as exc:
         _mark_last_activity_failed()
         st.error(f"Request blocked: {exc}")

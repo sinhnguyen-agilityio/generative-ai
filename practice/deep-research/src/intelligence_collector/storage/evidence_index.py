@@ -15,6 +15,7 @@ import json
 import re
 from pathlib import Path
 
+from intelligence_collector.ports import ArtifactStore, VectorIndex
 from intelligence_collector.contracts import IndexedChunk
 from intelligence_collector.tools.page_content import chunk_page, source_id_for
 
@@ -55,7 +56,7 @@ def source_chunks(
     ]
 
 
-def index_identity(index) -> str | None:
+def index_identity(index: VectorIndex | None) -> str | None:
     """Which collection an index writes to; None for an index that cannot say."""
     identity = getattr(index, "identity", None)
     return str(identity) if identity else None
@@ -65,14 +66,14 @@ def _marker_path(identity: str) -> str:
     return f"index/{re.sub(r'[^A-Za-z0-9._-]+', '-', identity)[:120]}.json"
 
 
-def mark_indexed(vfs, run_id: str, index) -> None:
+def mark_indexed(vfs: ArtifactStore, run_id: str, index: VectorIndex) -> None:
     """Record that `index` holds this run's chunks (written whenever chunks are indexed)."""
     identity = index_identity(index)
     if identity is not None:
         vfs.write_json(run_id, _marker_path(identity), {"identity": identity}, "index_marker")
 
 
-def stored_source_text(vfs, run_id: str, source: dict) -> str:
+def stored_source_text(vfs: ArtifactStore, run_id: str, source: dict) -> str:
     """A captured page's full text from the VFS, or its excerpt when no page was stored."""
     raw_path = source.get("raw_path")
     if raw_path:
@@ -83,7 +84,7 @@ def stored_source_text(vfs, run_id: str, source: dict) -> str:
     return str(source.get("excerpt") or "")
 
 
-def reindex_run(vfs, index, run_id: str) -> int:
+def reindex_run(vfs: ArtifactStore, index: VectorIndex, run_id: str) -> int:
     """Rebuild every chunk of the run from its stored evidence bundles; returns the count.
 
     Sources a bundle only references (``reused_from_task``) are indexed by the task that
@@ -113,7 +114,7 @@ def reindex_run(vfs, index, run_id: str) -> int:
     return len(chunks)
 
 
-def ensure_run_indexed(vfs, index, run_id: str) -> int:
+def ensure_run_indexed(vfs: ArtifactStore, index: VectorIndex, run_id: str) -> int:
     """Re-index the run once when `index` has never received its chunks (e.g. a new embedding
     model). Returns the number of chunks indexed, 0 when nothing was needed."""
     identity = index_identity(index)

@@ -9,6 +9,7 @@ from intelligence_collector.contracts import (
     PlanApprovalDecision,
     RecoveryAction,
     RecoveryDecision,
+    RunStatus,
     ScopeAssessment,
     Stage,
 )
@@ -34,7 +35,6 @@ def await_clarification(state: GraphState) -> GraphState:
         )
     )
     return {
-        **state,
         "request": decision.reply,
         "reviewer": decision.actor,
         "current_action": "Clarification received — reassessing scope",
@@ -67,12 +67,12 @@ def await_plan_approval(state: GraphState) -> GraphState:
         "actor": decision.actor,
         "kind": plan.get("kind", "initial"),
     }
-    update = {**state, "plan_approval": record, "reviewer": decision.actor}
+    update = {"plan_approval": record, "reviewer": decision.actor}
     if outcome == "approve":
         return {
             **update,
             "stage": Stage.RESEARCHING.value,
-            "status": "active",
+            "status": RunStatus.ACTIVE.value,
             "current_action": "Plan approved — starting research",
         }
     if outcome == "change":
@@ -92,13 +92,13 @@ def await_plan_approval(state: GraphState) -> GraphState:
         }
     return {
         **update,
-        "stage": "Cancelled",
-        "status": "cancelled",
+        "stage": Stage.CANCELLED.value,
+        "status": RunStatus.CANCELLED.value,
         "current_action": "Plan declined; run cancelled",
     }
 
 
-def await_recovery(state: GraphState, *, can_rescope=True) -> GraphState:
+def await_recovery(state: GraphState) -> GraphState:
     """Pause a failed BVF run for an explicit, validated human recovery decision.
 
     The next node applies the stored decision through an explicit conditional graph edge.
@@ -111,25 +111,11 @@ def await_recovery(state: GraphState, *, can_rescope=True) -> GraphState:
                 "kind": "recovery_required",
                 "run_id": state.get("run_id"),
                 "reason": state.get("current_action") or state.get("last_error", ""),
-                "allowed_actions": [
-                    action.value
-                    for action in RecoveryAction
-                    if can_rescope or action is not RecoveryAction.RESCOPE
-                ],
+                "allowed_actions": [action.value for action in RecoveryAction],
             }
         )
     )
     return {
-        **state,
         "recovery_decision": decision.model_dump(mode="json"),
         "current_action": f"Recovery action authorized: {decision.action.value}",
     }
-
-
-def approval(state: GraphState) -> GraphState:
-    """Pause the graph until a human resumes it with a publication decision."""
-    from langgraph.types import interrupt
-
-    decision = interrupt({"kind": "publication_approval", "run_id": state.get("run_id")})
-    stage = Stage.PUBLISHED if decision.get("approved") else Stage.AWAITING_APPROVAL
-    return {**state, "approval": decision, "stage": stage.value}

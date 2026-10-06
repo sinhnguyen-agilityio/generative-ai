@@ -8,7 +8,7 @@ from intelligence_collector.graph.nodes import (
     Node,
 )
 from intelligence_collector.graph.state import GraphState
-from intelligence_collector.contracts import RecoveryAction
+from intelligence_collector.contracts import RecoveryAction, RepairRoute, VerificationIssue
 
 # Outcomes of route_after_verify; build.py maps "passed" to approval or END.
 PASSED, FIX, NEEDS_REVIEW = "passed", "fix", "needs_review"
@@ -19,9 +19,9 @@ PUBLISHED = "published"
 # Outcomes of route_after_approval; build.py maps these to PUBLISH or CLASSIFY_FEEDBACK.
 APPROVED, REJECTED = "approved", "rejected"
 
-# Outcomes of route_after_feedback; build.py maps these to PUBLISH, PREPARE_REVISION,
-# LOCATE_EXTENSION or CLARIFY.
-TO_PUBLISH, TO_REVISE, TO_EXTEND, TO_SCOPE = "approve", "revise", "extend", "scope"
+# Outcomes of route_after_feedback; build.py maps these to PREPARE_REVISION, LOCATE_EXTENSION
+# or CLARIFY.
+TO_REVISE, TO_EXTEND, TO_SCOPE = "revise", "extend", "scope"
 
 # Outcomes of route_after_plan_approval.
 PLAN_APPROVED, PLAN_CHANGE, PLAN_DECLINED, REPLACEMENT_DECLINED = (
@@ -65,8 +65,8 @@ def route_after_verify(state: GraphState) -> str:
     verification = state.get("verification") or {}
     if verification.get("passed"):
         return PASSED
-    issue = state.get("verification_issue", "draft_defect")
-    if issue == "verifier_failure":
+    issue = state.get("verification_issue", VerificationIssue.DRAFT_DEFECT)
+    if issue == VerificationIssue.VERIFIER_FAILURE:
         return Node.RETRY_VERIFIER if state.get("verifier_attempt", 0) < 2 else NEEDS_REVIEW
     budget = state.get("recovery_budget", DEFAULT_RECOVERY_BUDGET)
     if state.get("recovery_attempt", 0) >= budget:
@@ -79,9 +79,9 @@ def route_after_verify(state: GraphState) -> str:
 def route_after_fix(state: GraphState) -> str:
     """Follow the diagnosed repair route."""
     route = (state.get("repair") or {}).get("route")
-    if route == "research":
+    if route == RepairRoute.RESEARCH:
         return Node.PREPARE_REPAIR_RESEARCH
-    if route == "replan":
+    if route == RepairRoute.REPLAN:
         return Node.REPLAN
     return Node.SYNTHESIZE
 
@@ -92,16 +92,10 @@ def route_after_delegation(state: GraphState) -> str:
 
 
 def route_after_research(state: GraphState) -> str:
-    """A technical failure with no usable evidence goes to review at once; only a failed
-    research assessor (an LLM call) is worth one retry."""
-    if state.get("verification_issue") == "research_failure":
+    """A technical failure with no usable evidence goes to review; ready evidence (or a spent
+    gap budget) goes to synthesis; otherwise research the gaps once."""
+    if state.get("verification_issue") == VerificationIssue.RESEARCH_FAILURE:
         return Node.NEEDS_REVIEW
-    if state.get("verification_issue") == "research_verifier_failure":
-        return (
-            Node.RETRY_RESEARCH_ASSESSMENT
-            if state.get("research_verifier_attempt", 0) < 2
-            else Node.NEEDS_REVIEW
-        )
     if (state.get("progress_assessment") or {}).get("ready_for_synthesis"):
         return Node.SYNTHESIZE
     if state.get("research_gap_attempt", 0) >= min(state.get("research_gap_budget", 1), 1):
@@ -121,11 +115,9 @@ def route_after_approval(state: GraphState) -> str:
 
 
 def route_after_feedback(state: GraphState) -> str:
-    """Send the classified reply to publishing (approve), a rewrite (revise) or back to scoping
-    for new research (scope). Anything unrecognised is a revision, never a publication."""
+    """Send the classified reply to a rewrite (revise), an added section (extend) or back to
+    scoping for new research (scope). Anything unrecognised is a revision."""
     route = state.get("feedback_route")
-    if route == "approve" and (state.get("approval") or {}).get("approved"):
-        return TO_PUBLISH
     if route in {TO_EXTEND, TO_SCOPE}:
         return route
     return TO_REVISE

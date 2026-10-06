@@ -16,6 +16,7 @@ from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.config import LangfuseSettings
 from intelligence_collector.contracts import ResearchTodo
 from intelligence_collector.graph.build import build_graph
+from tests.fixtures.graphs import research_graph
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.graph.recovery import WorkflowRecoveryService
 from intelligence_collector.models.router import ModelRouter
@@ -48,7 +49,7 @@ class Stack:
         self,
         *,
         drafts=(GOOD,),
-        feedback=({"route": "approve", "reason": "ok"},),
+        feedback=({"route": "revise", "reason": "layout"},),
         failing_query: str = "",
     ):
         self.researcher = FakeChatModel(model_name="fake-researcher", delegate=FakeResearchModel())
@@ -94,8 +95,8 @@ class Stack:
             recovery_budget=3,
             max_concurrent_researchers=3,
         )
-        return build_graph(
-            research_nodes=nodes,
+        return research_graph(
+            nodes,
             vfs=vfs,
             checkpointer=MemorySaver(),
             with_approval=True,
@@ -149,10 +150,10 @@ def test_one_invocation_is_one_trace_with_nodes_workers_tools_and_generations(tm
     }
     # The execution is named after the turn, the agents that ran and where it paused.
     assert execution.name == (
-        "start: Scope Agent → Planner → Research Supervisor → Research Evidence Judge → Report Writer"
-        " → Verifier → Publisher ⏸ publication_approval"
+        "start: Research Supervisor → Research Readiness → Report Writer → Verifier → Publisher"
+        " ⏸ publication_approval"
     ), tree
-    assert execution.metadata["agents"][0] == "Scope Agent"
+    assert execution.metadata["agents"][0] == "Research Supervisor"
     # execution -> research_graph -> "<agent> · <node>"
     graph_run = capture.named("research_graph")[0]
     assert graph_run.parent_id == execution.span_id
@@ -249,7 +250,7 @@ def test_resumes_after_pauses_join_the_run_trace_even_in_a_new_process(tmp_path)
     first = LangfuseCapture()
     stack = Stack(
         drafts=(GOOD, BULLETED),
-        feedback=({"route": "revise", "reason": "layout"}, {"route": "approve", "reason": "ok"}),
+        feedback=({"route": "revise", "reason": "layout"},),
     )
     registry = RunRegistry(tmp_path / "registry.sqlite")
     graph = stack.graph(tmp_path, first.tracer, run_registry=registry)
@@ -342,7 +343,7 @@ def test_plan_approval_resume_runs_research_in_a_new_execution_of_the_same_trace
         )
         execution.finish(paused)
     WorkflowRecoveryService(graph, registry, capture.tracer).resume_interrupt(
-        THREAD, {"reply": "approve", "actor": "reviewer"}
+        THREAD, {"approved": True, "actor": "reviewer"}
     )
 
     first, second = capture.executions()

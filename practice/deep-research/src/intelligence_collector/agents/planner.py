@@ -3,14 +3,34 @@
 import hashlib
 import json
 
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from pydantic import ValidationError
+
+from intelligence_collector.ports import ModelRouterPort
 from intelligence_collector.agents.prompts import PLANNER_TEMPLATE, REPLACEMENT_PLAN_BLOCK
+from intelligence_collector.agents.tools import WRITE_TODOS_TOOL, WRITE_TODOS_TOOL_NAME
 from intelligence_collector.contracts import ResearchBrief, ResearchTodo, TodoPlan
+from intelligence_collector.models.redaction import redact_text
+from intelligence_collector.models.router import _is_transient
 from intelligence_collector.storage.vfs import VFS
 from intelligence_collector.tools.write_todos import write_todos
 
 
 def _bullets(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items) if items else "(none)"
+
+
+def _plan_from(response: AIMessage) -> TodoPlan:
+    """Read the plan from the model's ``write_todos`` call. A model that cannot call tools may
+    answer with the same arguments as a JSON object instead."""
+    calls = [call for call in response.tool_calls if call["name"] == WRITE_TODOS_TOOL_NAME]
+    if len(calls) > 1:
+        raise ValueError(f"call {WRITE_TODOS_TOOL_NAME} exactly once")
+    if calls:
+        return TodoPlan.model_validate(calls[0]["args"])
+    if response.tool_calls:
+        raise ValueError(f"unknown tool {response.tool_calls[0]['name']!r}")
+    return TodoPlan.model_validate_json(str(response.content))
 
 
 def create_todos(
@@ -57,7 +77,7 @@ def plan_record(
 class PlannerAgent:
     """Receives the validated research brief and defines the research todo list."""
 
-    def __init__(self, router):
+    def __init__(self, router: ModelRouterPort):
         self.router = router
 
     def define_plan(
@@ -69,8 +89,10 @@ class PlannerAgent:
         run_id: str = "",
         thread_id: str = "",
     ) -> TodoPlan:
-        """Structured LLM decision: the standalone research questions for the brief. With
-        `unanswered`, plan a replacement strategy for those required answers only."""
+        """Tool-calling LLM decision: the planner calls ``write_todos`` with the standalone
+        research questions for the brief. With `unanswered`, plan a replacement strategy for
+        those required answers only. An invalid call is answered with its validation error and
+        retried, up to the router's ``max_attempts``."""
         replacement = (
             REPLACEMENT_PLAN_BLOCK.format(
                 unanswered=_bullets(list(unanswered)),
@@ -85,26 +107,50 @@ class PlannerAgent:
             output_requirements=_bullets(brief.output_requirements),
             replacement=replacement,
         )
-        return self.router.invoke_messages(
-            "planner",
-            messages,
-            TodoPlan,
-            run_id=run_id,
-            thread_id=thread_id,
+        errors = []
+        for attempt in range(1, self.router.max_attempts + 1):
+            try:
+                response = self.router.invoke_with_tools(
+                    "planner",
+                    messages,
+                    [WRITE_TODOS_TOOL],
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    tool_choice=WRITE_TODOS_TOOL_NAME,
+                    attempt=attempt,
+                )
+            except Exception as exc:
+                if _is_transient(exc):
+                    raise RuntimeError(
+                        f"model call for planner failed: {redact_text(exc)}"
+                    ) from exc
+                errors.append(redact_text(exc))
+                continue
+            try:
+                return _plan_from(response)
+            except (ValidationError, ValueError) as exc:
+                errors.append(redact_text(exc))
+                feedback = f"Invalid {WRITE_TODOS_TOOL_NAME} call: {exc}. Call it again, fixed."
+                messages = [
+                    *messages,
+                    response,
+                    *(
+                        [
+                            ToolMessage(content=feedback, tool_call_id=call["id"])
+                            for call in response.tool_calls
+                        ]
+                        or [HumanMessage(content=feedback)]
+                    ),
+                ]
+        raise ValueError(
+            f"invalid structured output for planner after {self.router.max_attempts} attempts: "
+            + "; ".join(errors)
         )
 
-    def write_todos(
-        self,
-        brief: ResearchBrief,
-        vfs: VFS,
-        run_id: str,
-        *,
-        thread_id: str = "",
-    ) -> list[ResearchTodo]:
-        """Define the plan, then durably record the todos."""
-        return self.plan(brief, vfs, run_id, thread_id=thread_id)[0]
-
-    def plan(self, brief: ResearchBrief, vfs: VFS, run_id: str, *, thread_id: str = ""):
-        """Define and persist the plan; returns ``(todos, report_shape)``."""
+    def plan(
+        self, brief: ResearchBrief, vfs: VFS, run_id: str, *, thread_id: str = ""
+    ) -> tuple[list[ResearchTodo], str]:
+        """Define the plan, then durably record its todos through ``write_todos``; returns
+        ``(todos, report_shape)``."""
         plan = self.define_plan(brief, run_id=run_id, thread_id=thread_id)
         return create_todos(vfs, run_id, plan.questions, plan.evidence_needed), plan.report_shape

@@ -1,4 +1,5 @@
-"""Secret redaction for anything the model layer sends to traces or error messages."""
+"""Secret redaction shared by every error message, log line and trace that may echo a
+credential: model and compression errors, MCP (Tavily) errors, embedding failures and traces."""
 
 import re
 
@@ -21,8 +22,10 @@ def redact_text(value: object) -> str:
     """Stringify `value` and mask `key=value` secrets, secret URL query parameters and
     `Bearer <token>` credentials."""
     text = _QUERY_SECRET.sub(r"\1[REDACTED]", str(value))
-    text = _KEY_VALUE.sub(r"\1=[REDACTED]", text)
-    return _BEARER.sub("Bearer [REDACTED]", text)
+    # Bearer first: in "Authorization: Bearer <token>" the key/value rule would mask only the
+    # word "Bearer" and leave the token.
+    text = _BEARER.sub("Bearer [REDACTED]", text)
+    return _KEY_VALUE.sub(r"\1=[REDACTED]", text)
 
 
 def redact_value(value):
@@ -38,3 +41,8 @@ def redact_value(value):
     if isinstance(value, (list, tuple)):
         return [redact_value(item) for item in value]
     return redact_text(value) if isinstance(value, str) else value
+
+
+def redact_error(exc: BaseException) -> str:
+    """``"<ExceptionType>: <message>"`` with secrets masked, for error fields and log lines."""
+    return f"{type(exc).__name__}: {redact_text(exc)}"

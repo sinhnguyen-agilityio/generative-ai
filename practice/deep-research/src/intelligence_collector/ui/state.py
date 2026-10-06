@@ -7,6 +7,7 @@ state.
 
 from __future__ import annotations
 
+from typing import NamedTuple
 from uuid import uuid4
 
 import streamlit as st
@@ -23,6 +24,14 @@ PENDING_REPLY = "pending_reply"  # a quick-reply button's reply, consumed by the
 TURN_REPLY = "turn_reply"  # an accepted reply whose graph turn runs in the next rerun
 
 NO_RESEARCH = "No research started"
+
+
+class Reply(NamedTuple):
+    """One chat turn's input: the text shown in the conversation and, for an Approve / Cancel
+    button, its explicit decision (``None`` for typed text, which the graph classifies)."""
+
+    text: str
+    approved: bool | None = None
 
 
 def init_session() -> None:
@@ -67,29 +76,29 @@ def adopt_run(result: dict, *, default_progress: str) -> None:
     st.session_state[PROGRESS] = PROGRESS_BY_STAGE.get(st.session_state[STAGE], default_progress)
 
 
-def queue_reply(reply: str) -> None:
-    """``on_click`` of a quick-reply button: answer as if `reply` had been typed."""
-    st.session_state[PENDING_REPLY] = reply
+def queue_reply(reply: str, approved: bool) -> None:
+    """``on_click`` of an Approve / Cancel button: answer with an explicit decision."""
+    st.session_state[PENDING_REPLY] = Reply(reply, approved)
 
 
 def queue_reply_from(widget_key: str) -> None:
     """``on_click`` of a form's submit button: queue the text typed in `widget_key`."""
     text = str(st.session_state.get(widget_key) or "").strip()
     if text:
-        st.session_state[PENDING_REPLY] = text
+        st.session_state[PENDING_REPLY] = Reply(text)
 
 
-def take_pending_reply() -> str | None:
+def take_pending_reply() -> Reply | None:
     """The queued quick reply, removed so it is answered exactly once."""
     return st.session_state.pop(PENDING_REPLY, None)
 
 
-def start_turn(reply: str) -> None:
+def start_turn(reply: Reply) -> None:
     """Accept `reply`: its graph turn runs in the next rerun, which renders every input disabled,
     so no click can interrupt the turn halfway (a rerun request stops a running script)."""
     st.session_state[TURN_REPLY] = reply
 
 
-def take_turn_reply() -> str | None:
+def take_turn_reply() -> Reply | None:
     """The accepted reply whose turn runs in this rerun, removed so it runs exactly once."""
     return st.session_state.pop(TURN_REPLY, None)

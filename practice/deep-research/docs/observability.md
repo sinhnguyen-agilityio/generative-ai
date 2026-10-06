@@ -55,12 +55,12 @@ trace bb977cf7…  session thread-7f3a
 │     ├─ Scope Agent · write_research_brief → model.scope → [generation]
 │     ├─ Planner · planning → model.planner → [generation]
 │     └─ Planner · await_plan_approval [chain]  (level DEFAULT: an interrupt is a pause)
-├─ resume · plan_approval: Planner → Research Supervisor → Research Evidence Judge
+├─ resume · plan_approval: Planner → Research Supervisor → Research Readiness
 │     → Report Writer → Verifier → Publisher ⏸ publication_approval [agent]
 │  └─ research_graph
 │     ├─ Planner · await_plan_approval
 │     ├─ Research Supervisor · researching
-│     │  ├─ model.supervisor [generation]
+│     │  ├─ model.supervisor → [generation]
 │     │  ├─ research_agent · 79aa… [agent]              ┐ sub-agents run concurrently
 │     │  │  ├─ llm_call → model.researcher [generation]  │ (asyncio.to_thread); each one
 │     │  │  ├─ tool_node → mcp.search [tool]             │ nests under researching, never
@@ -68,7 +68,7 @@ trace bb977cf7…  session thread-7f3a
 │     │  ├─ research_agent · 3eba… [agent]              ┘ as a separate root
 │     │  ├─ research.persist [span] todo_id=3eba…   (VFS writes + vector_index.upsert)
 │     │  └─ research.persist [span] todo_id=79aa…
-│     ├─ Research Evidence Judge · research_complete
+│     ├─ Research Readiness · research_complete
 │     ├─ Report Writer · synthesizing → model.synthesizer → [generation]
 │     ├─ Verifier · verifying
 │     │  ├─ model.verify → [generation]

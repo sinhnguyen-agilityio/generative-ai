@@ -6,6 +6,7 @@ from intelligence_collector.graph.nodes import Node, ResearchNodes
 from intelligence_collector.graph.routing import route_after_research, route_after_verify
 from intelligence_collector.storage.vfs import VFS
 from intelligence_collector.source_verification import load_catalog
+from tests.fixtures.graphs import research_graph
 
 
 def test_gap_preparation_reopens_only_affected_todo_and_preserves_old_attempt(tmp_path):
@@ -98,7 +99,6 @@ def test_research_and_verifier_budgets_are_independent():
 def test_optional_gaps_allow_partial_synthesis(tmp_path):
     nodes = object.__new__(ResearchNodes)
     nodes.vfs = VFS(tmp_path)
-    nodes.research_assessor = None
     todo = ResearchTodo(todo_id="a", research_question="Question A", status=TodoStatus.COMPLETED)
     nodes.vfs.write_json(
         "run",
@@ -117,68 +117,31 @@ def test_optional_gaps_allow_partial_synthesis(tmp_path):
     assert route_after_research(result) == Node.SYNTHESIZE
 
 
-def test_semantic_research_judge_rejects_omitted_questions():
-    from intelligence_collector.agents.research_judge import ResearchEvidenceJudge
-    from intelligence_collector.contracts import ResearchEvidenceVerdict
-
-    class Router:
-        def invoke_messages(self, *args, **kwargs):
-            return ResearchEvidenceVerdict(
-                questions=[{"todo_id": "a", "sufficient": True}], status="READY"
-            )
-
-    todos = [
-        ResearchTodo(todo_id=ident, research_question="Question " + ident) for ident in ["a", "b"]
-    ]
-    with pytest.raises(ValueError, match="every todo exactly once"):
-        ResearchEvidenceJudge(Router()).assess("Brief", todos, "Evidence")
-
-
 def test_graph_repairs_evidence_gap_before_first_synthesis(stores):
     from intelligence_collector.agents.report_judge import ReportJudge
     from intelligence_collector.agents.report_writer import ReportWriter
     from intelligence_collector.agents.researcher import ResearchAgent
-    from intelligence_collector.contracts import ResearchEvidenceVerdict
-    from intelligence_collector.graph.build import build_graph
     from intelligence_collector.models.router import ModelRouter
     from intelligence_collector.tools.mcp import ControlledMCP
     from tests.fixtures.fake_models import FakeResearchModel, FakeReportModel, FakeAcceptanceModel
 
-    class Assessor:
-        calls = 0
-
-        def assess(self, brief, todos, evidence, **kwargs):
-            self.calls += 1
-            return ResearchEvidenceVerdict(
-                questions=[
-                    {
-                        "todo_id": "a",
-                        "sufficient": self.calls > 1,
-                        "missing_evidence": "Find the missing measurement"
-                        if self.calls == 1
-                        else "",
-                    }
-                ],
-                status="READY" if self.calls > 1 else "INSUFFICIENT",
-                limitations=[] if self.calls > 1 else ["Missing measurement"],
-            )
-
     vfs, index = stores
-    researcher = ResearchAgent(
-        ModelRouter(FakeResearchModel()),
-        lambda: ControlledMCP(
-            [{"url": "https://example.test/data", "content": "Measured research evidence"}]
-        ),
-    )
+    searches = []
+
+    def mcp():
+        # The first research finds nothing, so readiness asks for one gap-research round.
+        searches.append(1)
+        rows = [{"url": "https://example.test/data", "content": "Measured research evidence"}]
+        return ControlledMCP(rows if len(searches) > 1 else [])
+
+    researcher = ResearchAgent(ModelRouter(FakeResearchModel()), mcp)
     writer = FakeReportModel(
         ["# Report\nEvidence [S1]\n\n## Sources\n- [S1] https://example.test/data"]
     )
-    assessor = Assessor()
     nodes = ResearchNodes(
         vfs,
         index,
         researcher,
-        research_assessor=assessor,
         report_writer=ReportWriter(ModelRouter(writer)),
         report_judge=ReportJudge(
             ModelRouter(
@@ -188,7 +151,7 @@ def test_graph_repairs_evidence_gap_before_first_synthesis(stores):
             )
         ),
     )
-    result = build_graph(research_nodes=nodes).invoke(
+    result = research_graph(nodes).invoke(
         {
             "run_id": "run",
             "thread_id": "thread",
@@ -198,7 +161,7 @@ def test_graph_repairs_evidence_gap_before_first_synthesis(stores):
             "todos": [ResearchTodo(todo_id="a", research_question="Measurements?").model_dump()],
         }
     )
-    assert assessor.calls == 2
+    assert len(searches) == 2
     assert len(writer.prompts("write")) == 1
     assert result["todos"][0]["research_attempt"] == 2
     assert result["research_gap_attempt"] == 1

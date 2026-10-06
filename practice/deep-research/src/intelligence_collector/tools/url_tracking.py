@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from intelligence_collector.ports import ArtifactStore
+
 import json
 import threading
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -54,7 +56,7 @@ class UrlRegistry:
         self._dirty = False
 
     @classmethod
-    def load(cls, vfs, run_id: str) -> "UrlRegistry":
+    def load(cls, vfs: ArtifactStore, run_id: str) -> "UrlRegistry":
         """Read the run's registry from the VFS (empty when none exists yet)."""
         try:
             return cls(json.loads(vfs.read(run_id, REGISTRY_PATH)))
@@ -79,7 +81,7 @@ class UrlRegistry:
         """Normalized URL -> id of the task that first captured it."""
         return {key: str(entry.get("task_id", "")) for key, entry in self._entries.items()}
 
-    def save(self, vfs, run_id: str):
+    def save(self, vfs: ArtifactStore, run_id: str):
         """Persist only when something new was registered; returns the artifact ref or None."""
         if not self._dirty:
             return None

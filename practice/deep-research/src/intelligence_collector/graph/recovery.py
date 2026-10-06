@@ -19,8 +19,11 @@ from intelligence_collector.contracts import (
     RecoveryDecision,
     RecoverySnapshot,
     RunRecord,
+    Stage,
+    VerificationIssue,
     WorkflowStatus,
 )
+from intelligence_collector.graph.nodes.common import Node, invalidate_draft_authority
 
 
 class RecoveryServiceError(RuntimeError):
@@ -98,13 +101,11 @@ class WorkflowRecoveryService:
                 or "Find evidence for the core research goal"
             )
             state.update(
-                verification=None,
-                approval=None,
-                publication=None,
+                invalidate_draft_authority(),
                 research_status="INSUFFICIENT",
                 result_incomplete=True,
                 research_limitations=[instruction],
-                verification_issue="evidence_gap",
+                verification_issue=VerificationIssue.EVIDENCE_GAP.value,
                 research_gaps=[{"todo_id": todos[0]["todo_id"], "instruction": instruction}],
                 progress_assessment={"ready_for_synthesis": False},
             )
@@ -114,22 +115,21 @@ class WorkflowRecoveryService:
         # existing graph edges rather than restarting scoping or bypassing approval.
         if not checkpoint.next and not self._interrupts(checkpoint):
             stage = state.get("stage")
-            if stage == "Awaiting Approval":
+            if stage == Stage.AWAITING_APPROVAL:
                 # Legacy ended approval checkpoints have no resumable human interrupt.
                 # Invalidate stale authority and enter the controlled recovery path.
                 state.update(
-                    stage="NEEDS_REVIEW",
-                    approval=None,
-                    verification=None,
-                    verification_issue="publication_failure",
+                    invalidate_draft_authority(),
+                    stage=Stage.NEEDS_REVIEW.value,
+                    verification_issue=VerificationIssue.PUBLICATION_FAILURE.value,
                     last_error="Legacy approval checkpoint requires re-verification",
                 )
-                stage = "NEEDS_REVIEW"
+                stage = Stage.NEEDS_REVIEW.value
             node = (
-                "needs_review"
-                if stage == "NEEDS_REVIEW"
-                else "clarify_with_user"
-                if stage == "Scoping"
+                Node.NEEDS_REVIEW
+                if stage == Stage.NEEDS_REVIEW
+                else Node.CLARIFY
+                if stage == Stage.SCOPING
                 and (state.get("scope_assessment") or {}).get("need_clarification")
                 else None
             )
@@ -227,14 +227,14 @@ class WorkflowRecoveryService:
         interrupts = self._interrupts(checkpoint)
         stage = str(values.get("stage") or record.current_stage)
         terminal_status = {
-            "Published": WorkflowStatus.PUBLISHED,
-            "Incomplete": WorkflowStatus.INCOMPLETE,
-            "Cancelled": WorkflowStatus.CANCELLED,
-            "Exported Incomplete": WorkflowStatus.EXPORTED_INCOMPLETE,
+            Stage.PUBLISHED.value: WorkflowStatus.PUBLISHED,
+            Stage.INCOMPLETE.value: WorkflowStatus.INCOMPLETE,
+            Stage.CANCELLED.value: WorkflowStatus.CANCELLED,
+            Stage.EXPORTED_INCOMPLETE.value: WorkflowStatus.EXPORTED_INCOMPLETE,
         }.get(stage)
         waiting_status = {
-            "NEEDS_REVIEW": WorkflowStatus.WAITING_FOR_RECOVERY,
-            "Awaiting Approval": WorkflowStatus.WAITING_FOR_APPROVAL,
+            Stage.NEEDS_REVIEW.value: WorkflowStatus.WAITING_FOR_RECOVERY,
+            Stage.AWAITING_APPROVAL.value: WorkflowStatus.WAITING_FOR_APPROVAL,
         }.get(stage)
         if self._interrupt_kind(interrupts) == "plan_approval":
             waiting_status = WorkflowStatus.WAITING_FOR_PLAN_APPROVAL

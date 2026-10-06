@@ -11,6 +11,7 @@ import json
 import re
 from datetime import date
 
+from intelligence_collector.ports import ModelRouterPort
 from intelligence_collector.agents.prompts import (
     REPAIR_BLOCK,
     REPAIR_ROUTE_INSTRUCTIONS,
@@ -18,7 +19,7 @@ from intelligence_collector.agents.prompts import (
     REVIEWER_BLOCK,
     REVIEWER_CURRENT_REPORT,
 )
-from intelligence_collector.contracts import DraftAssessment, ResearchBrief
+from intelligence_collector.contracts import DraftAssessment, RepairRoute, ResearchBrief
 from intelligence_collector.source_verification import EvidenceBundle, SourceCatalog
 from intelligence_collector.tools.url_tracking import normalize_url
 
@@ -123,8 +124,9 @@ def select_relevant_evidence(
     read directly without calling the index. Scoped *per research question* (bundle), never
     globally, so every question keeps representation in the writer's prompt.
 
-    Verification always reads the full, unfiltered catalog independently; this narrowing affects
-    only what the writer's prompt sees. Retrieval failures leave the bundle unfiltered.
+    Verification always reads the un-narrowed catalog (every stored bundle with the passages
+    selected from its pages, not the raw pages) independently; this narrowing affects only what
+    the writer's prompt sees. Retrieval failures leave the bundle unfiltered.
     """
     if index is None:
         return catalog
@@ -182,7 +184,7 @@ def _issue_line(issue: dict) -> str:
 class ReportWriter:
     """LLM report writer (role ``synthesizer``)."""
 
-    def __init__(self, router):
+    def __init__(self, router: ModelRouterPort):
         self.router = router
 
     def write(
@@ -243,7 +245,7 @@ class ReportWriter:
             # A presentation-only repair keeps every fact of the draft: the writer needs the
             # source list for its citations, not the evidence text again.
             evidence=format_evidence(
-                catalog, content=(repair or {}).get("route") != "presentation"
+                catalog, content=(repair or {}).get("route") != RepairRoute.PRESENTATION
             ),
             gaps=_bullets(gaps),
             revision="\n\n".join(blocks),

@@ -51,13 +51,11 @@ def test_incomplete_export_is_labeled_and_never_published(tmp_path):
 
 
 def test_cancel_and_rescope(tmp_path):
-    nodes = RecoveryNodes(VFS(tmp_path), can_rescope=True)
+    nodes = RecoveryNodes(VFS(tmp_path))
     assert nodes.apply(state("cancel"))["status"] == "cancelled"
     result = nodes.apply(state("rescope", feedback="Compare only SQLite"))
     assert result["request"] == "Compare only SQLite"
     assert result["draft"] == ""
-    with pytest.raises(ValueError, match="Scope Agent"):
-        RecoveryNodes(VFS(tmp_path)).apply(state("rescope", feedback="Change scope"))
 
 
 def test_recovery_checkpoint_survives_restart_and_cancel_is_terminal(tmp_path):

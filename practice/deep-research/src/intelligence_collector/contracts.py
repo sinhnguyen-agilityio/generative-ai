@@ -30,6 +30,51 @@ class Stage(str, Enum):
     FAILED = "Failed"
     NEEDS_REVIEW = "NEEDS_REVIEW"
     INCOMPLETE = "Incomplete"
+    CANCELLED = "Cancelled"
+    EXPORTED_INCOMPLETE = "Exported Incomplete"
+
+
+# RAGAS Faithfulness must be strictly greater than this for the third verification gate to pass.
+# The workflow gate and the UI both read it from here.
+FAITHFULNESS_THRESHOLD = 0.90
+
+
+class RunStatus(str, Enum):
+    """Coarse status of a run in the graph state (``GraphState.status``).
+
+    The terminal values are also ``WorkflowStatus`` values, which the run registry records.
+    """
+
+    ACTIVE = "active"
+    PAUSED = "paused"
+    NEEDS_REVIEW = "needs_review"
+    CANCELLED = "cancelled"
+    EXPORTED_INCOMPLETE = "exported_incomplete"
+
+
+class VerificationIssue(str, Enum):
+    """Why the run left (or may leave) the happy path; ``GraphState.verification_issue``.
+
+    ``NONE`` means no open issue. ``VERIFIER_FAILURE`` is an ERROR verdict (retried, never
+    rewritten); research and publication failures go straight to human review.
+    """
+
+    NONE = ""
+    DRAFT_DEFECT = "draft_defect"
+    EVIDENCE_GAP = "evidence_gap"
+    VERIFIER_FAILURE = "verifier_failure"
+    RESEARCH_FAILURE = "research_failure"
+    PUBLICATION_FAILURE = "publication_failure"
+
+
+class RepairRoute(str, Enum):
+    """The correction a failed verification needs (see ``repair.py``), largest first."""
+
+    REPLAN = "replan"
+    RESEARCH = "research"
+    CHROMA = "chroma"
+    VFS = "vfs"
+    PRESENTATION = "presentation"
 
 
 class WorkflowStatus(str, Enum):
@@ -141,32 +186,11 @@ class ApprovalResumeDecision(Model):
         return self
 
 
-PLAN_APPROVAL_WORDS = frozenset(
-    {
-        "approve",
-        "approved",
-        "i approve",
-        "yes",
-        "ok",
-        "okay",
-        "go",
-        "go ahead",
-        "start",
-        "looks good",
-        "lgtm",
-        "đồng ý",
-        "duyệt",
-        "phê duyệt",
-        "ok, bắt đầu",
-    }
-)
-
-
 class PlanApprovalDecision(Model):
     """Validated response to the plan-approval interrupt (initial or replacement plan).
 
-    ``approved`` decides explicitly; otherwise ``reply`` is read: an approval phrase approves,
-    "cancel"/"decline" declines, and any other text is a requested plan change.
+    Approve / Cancel are the plan card's buttons (``approved``); typed text (``reply``) is
+    always a requested plan change.
     """
 
     approved: bool | None = None
@@ -185,18 +209,9 @@ class PlanApprovalDecision(Model):
 
     @property
     def outcome(self) -> Literal["approve", "decline", "change"]:
-        if self.approved is not None:
-            return (
-                "approve"
-                if self.approved and not self.reply
-                else ("change" if self.reply else "decline")
-            )
-        text = self.reply.casefold().rstrip(".! ")
-        if text in PLAN_APPROVAL_WORDS:
-            return "approve"
-        if text in {"cancel", "decline", "no", "stop", "hủy", "từ chối"}:
-            return "decline"
-        return "change"
+        if self.reply:
+            return "change"
+        return "approve" if self.approved else "decline"
 
 
 class ClarificationResumeDecision(Model):
@@ -369,36 +384,10 @@ class ResearchFindings(Model):
         return self
 
 
-class ResearchEvidenceCheck(Model):
-    todo_id: str
-    sufficient: bool
-    missing_evidence: str = ""
-
-
 class ResearchReadiness(str, Enum):
     READY = "READY"
     PARTIAL = "PARTIAL"
     INSUFFICIENT = "INSUFFICIENT"
-
-
-class ResearchEvidenceVerdict(Model):
-    """Enough evidence for the user's goal, not perfection of every planned question."""
-
-    status: ResearchReadiness
-    questions: list[ResearchEvidenceCheck] = Field(min_length=1)
-    limitations: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_readiness(self):
-        if self.status != ResearchReadiness.READY and not any(
-            text.strip() for text in self.limitations
-        ):
-            raise ValueError("Partial or insufficient research requires explicit limitations")
-        if self.status == ResearchReadiness.INSUFFICIENT and not any(
-            not check.sufficient and check.missing_evidence.strip() for check in self.questions
-        ):
-            raise ValueError("Insufficient research requires a targeted gap instruction")
-        return self
 
 
 class DraftAssessment(Model):
@@ -535,13 +524,14 @@ class PublicationRecord(Model):
 
 class FeedbackDecision(Model):
     """Structured output of the reviewer-reply classifier (see agents/feedback_router.py).
-    Decides whether the reviewer's chat reply approves the report ("approve": publish it), asks
-    for a change the existing evidence can support ("revise": rewrite and verify again), adds a
+    Approval is the "Approve and publish" button, never a typed reply. Decides whether the
+    reviewer's chat reply asks for a change the existing evidence can support ("revise": rewrite
+    and verify again), adds a
     section within the same question ("extend": stored evidence first, research only what is
     missing), or needs different evidence ("scope": back to scope clarification, the brief,
     planning and research). ``topic`` is the focused question of an "extend" request."""
 
-    route: Literal["approve", "revise", "extend", "scope"]
+    route: Literal["revise", "extend", "scope"]
     reason: str = ""
     topic: str = ""
 

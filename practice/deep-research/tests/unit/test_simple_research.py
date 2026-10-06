@@ -1,39 +1,22 @@
 import pytest
 
-from intelligence_collector.contracts import ResearchEvidenceVerdict, ResearchTodo, TodoStatus
+from intelligence_collector.contracts import ResearchTodo, TodoStatus
 from intelligence_collector.graph.migration import normalize_checkpoint
 from intelligence_collector.graph.nodes import ResearchNodes
 from intelligence_collector.graph.routing import route_after_research
 from intelligence_collector.storage.vfs import VFS
 
 
-def make_nodes(tmp_path, status="READY", with_evidence=True):
+def make_nodes(tmp_path, status="READY"):
+    """Readiness comes from the stored evidence: complete (READY), with gaps (PARTIAL) or none
+    (INSUFFICIENT)."""
     todo = ResearchTodo(
         todo_id="t", research_question="Which version is stable?", status=TodoStatus.COMPLETED
     )
     nodes = object.__new__(ResearchNodes)
     nodes.vfs = VFS(tmp_path)
-    limitations = [] if status == "READY" else ["Main version not verified"]
-
-    class Assessor:
-        def assess(self, *args, **kwargs):
-            return ResearchEvidenceVerdict(
-                status=status,
-                limitations=limitations,
-                questions=[
-                    {
-                        "todo_id": "t",
-                        "sufficient": status == "READY",
-                        "missing_evidence": "Find current stable version in official release notes"
-                        if status != "READY"
-                        else "",
-                    }
-                ],
-            )
-
-    nodes.research_assessor = Assessor()
     state = {"run_id": "r", "todos": [todo.model_dump(mode="json")], "evidence": []}
-    if with_evidence:
+    if status != "INSUFFICIENT":
         ref = nodes.vfs.write_json(
             "r",
             "research/t/evidence/result.json",
@@ -42,8 +25,8 @@ def make_nodes(tmp_path, status="READY", with_evidence=True):
                 "question": todo.research_question,
                 "summary": "Official release details",
                 "sources": [{"url": "https://source.test/releases", "excerpt": "Release details"}],
-                "sufficient": False,
-                "unresolved_gaps": ["No release history"],
+                "sufficient": status == "READY",
+                "unresolved_gaps": [] if status == "READY" else ["Main version not verified"],
             },
             "evidence",
             task_id="t",
@@ -52,7 +35,7 @@ def make_nodes(tmp_path, status="READY", with_evidence=True):
     return nodes, state
 
 
-def test_optional_gap_does_not_override_ready_judge(tmp_path):
+def test_complete_evidence_is_ready(tmp_path):
     nodes, state = make_nodes(tmp_path)
     result = nodes.research_complete(state)
     assert result["research_status"] == "READY"
@@ -65,16 +48,16 @@ def test_partial_skips_extra_research(tmp_path):
     result = nodes.research_complete(state)
     # Gaps reach the writer as limitations; they never mark the result incomplete by themselves.
     assert result["research_status"] == "PARTIAL" and not result["result_incomplete"]
-    assert result["research_limitations"] == ["Main version not verified"]
+    assert result["research_limitations"][0] == "Main version not verified"
     assert route_after_research(result) == "synthesizing"
 
 
 def test_insufficient_gets_one_attempt_then_incomplete_synthesis(tmp_path):
-    nodes, state = make_nodes(tmp_path, "INSUFFICIENT", with_evidence=False)
-    assessed = nodes.research_complete(state)
+    nodes, state = make_nodes(tmp_path, "INSUFFICIENT")
+    assessed = {**state, **nodes.research_complete(state)}
     assert route_after_research(assessed) == "prepare_gap_research"
-    reopened = nodes.prepare_gap_research(assessed)
-    exhausted = nodes.research_complete(reopened)
+    reopened = {**assessed, **nodes.prepare_gap_research(assessed)}
+    exhausted = {**reopened, **nodes.research_complete(reopened)}
     assert exhausted["research_gap_attempt"] == 1
     assert exhausted["research_status"] == "INSUFFICIENT"
     assert route_after_research(exhausted) == "synthesizing"
@@ -82,17 +65,13 @@ def test_insufficient_gets_one_attempt_then_incomplete_synthesis(tmp_path):
         nodes.prepare_gap_research(exhausted)
 
 
-def test_judge_error_is_not_an_incomplete_content_result(tmp_path):
-    nodes, state = make_nodes(tmp_path)
-
-    class Broken:
-        def assess(self, *args, **kwargs):
-            raise ValueError("truncated output")
-
-    nodes.research_assessor = Broken()
-    first = nodes.research_complete(state)
-    assert route_after_research(first) == "retry_research_assessment"
-    assert route_after_research(nodes.research_complete(first)) == "needs_review"
+def test_legacy_research_judge_failure_goes_to_review():
+    state = normalize_checkpoint(
+        {"verification_issue": "research_verifier_failure", "research_verifier_attempt": 1}
+    )
+    assert state["verification_issue"] == "research_failure"
+    assert "research_verifier_attempt" not in state
+    assert route_after_research(state) == "needs_review"
 
 
 def test_legacy_budget_is_preserved_not_reset():

@@ -110,16 +110,24 @@ def mark_unfinished_stopped() -> None:
         st.session_state[state.PROGRESS] = STOPPED_PROGRESS
 
 
-def run_chat_turn(text: str, *, view: RunView, panel: LivePanel) -> None:
-    """Answer `text`: resume a paused review or plan, or start/continue the research. However
+def resume_payload(reply: state.Reply) -> dict:
+    """A button's explicit decision, or the typed text for the graph to classify."""
+    if reply.approved is not None:
+        return {"approved": reply.approved, "actor": "local-user"}
+    return {"reply": reply.text, "actor": "local-user"}
+
+
+def run_chat_turn(reply: state.Reply, *, view: RunView, panel: LivePanel) -> None:
+    """Answer `reply`: resume a paused review or plan, or start/continue the research. However
     the turn ends, none of its nodes is left marked as running."""
     try:
-        _run_chat_turn(text, view=view, panel=panel)
+        _run_chat_turn(reply, view=view, panel=panel)
     finally:
         mark_unfinished_stopped()
 
 
-def _run_chat_turn(text: str, *, view: RunView, panel: LivePanel) -> None:
+def _run_chat_turn(reply: state.Reply, *, view: RunView, panel: LivePanel) -> None:
+    text = reply.text
     tracer = resources.get_tracer()
     snapshot = state.run_snapshot()
     thread_id = st.session_state[state.THREAD_ID]
@@ -144,7 +152,7 @@ def _run_chat_turn(text: str, *, view: RunView, panel: LivePanel) -> None:
         st.session_state[resources.LIFECYCLE_CALLBACK] = on_lifecycle
         graph = resources.get_graph()
         graph_input = (
-            Command(resume={"reply": text, "actor": "local-user"})
+            Command(resume=resume_payload(reply))
             if resuming
             else {**snapshot, "request": text, "thread_id": thread_id}
         )

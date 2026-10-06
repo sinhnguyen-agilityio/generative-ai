@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 
+from intelligence_collector.ports import ArtifactStore, VectorIndex
 from intelligence_collector.agents.report_judge import ReportJudge
 from intelligence_collector.agents.report_writer import (
     DEFAULT_EVIDENCE_TOP_K,
     ReportWriter,
-    format_evidence,
 )
+from intelligence_collector.agents.researcher import ResearchAgent
 from intelligence_collector.agents.supervisor import (
     DEFAULT_MAX_CONCURRENT_RESEARCHERS,
     ResearchSupervisor,
@@ -20,10 +21,12 @@ from intelligence_collector.contracts import (
     ResearchTodo,
     Stage,
     TodoStatus,
+    VerificationIssue,
 )
 from intelligence_collector.graph.nodes.common import (
     DEFAULT_RECOVERY_BUDGET,
     _activity,
+    invalidate_draft_authority,
 )
 from intelligence_collector.graph.nodes.report import BVFNodes
 from intelligence_collector.observability.evaluation import (
@@ -31,7 +34,6 @@ from intelligence_collector.observability.evaluation import (
     FaithfulnessEvaluator,
     ResponseRelevancyEvaluator,
 )
-from intelligence_collector.source_verification import load_catalog
 
 
 class ResearchNodes:
@@ -39,13 +41,12 @@ class ResearchNodes:
 
     def __init__(
         self,
-        vfs,
-        index,
-        researcher,
+        vfs: ArtifactStore,
+        index: VectorIndex | None,
+        researcher: ResearchAgent,
         *,
         report_writer: ReportWriter | None = None,
         report_judge: ReportJudge,
-        research_assessor=None,
         report_guidelines: list[str] = (),
         max_concurrent_researchers: int = DEFAULT_MAX_CONCURRENT_RESEARCHERS,
         recovery_budget: int = DEFAULT_RECOVERY_BUDGET,
@@ -63,7 +64,6 @@ class ResearchNodes:
             index,
             max_concurrent_researchers=max_concurrent_researchers,
         )
-        self.research_assessor = research_assessor
         self.bvf = BVFNodes(
             vfs,
             index,
@@ -117,9 +117,8 @@ class ResearchNodes:
             index_refs.extend(
                 chunk.chunk_id for chunk in chunks if chunk.chunk_id not in index_refs
             )
-        done = sum(todo["status"] == "completed" for todo in completed)
+        done = sum(todo["status"] == TodoStatus.COMPLETED for todo in completed)
         return {
-            **state,
             "stage": Stage.RESEARCHING.value,
             "current_action": "Supervisor proposed a replacement plan"
             if replan
@@ -146,8 +145,7 @@ class ResearchNodes:
         todos = [ResearchTodo.model_validate(todo) for todo in state.get("todos", [])]
         if not todos:
             return {
-                **state,
-                "verification_issue": "research_failure",
+                "verification_issue": VerificationIssue.RESEARCH_FAILURE.value,
                 "progress_assessment": None,
                 "last_error": "No research todos; repair the scope or plan",
             }
@@ -197,8 +195,7 @@ class ResearchNodes:
         if technical and not usable:
             # research_gaps names the failed tasks so the recovery "research" action reopens them.
             return {
-                **state,
-                "verification_issue": "research_failure",
+                "verification_issue": VerificationIssue.RESEARCH_FAILURE.value,
                 "progress_assessment": None,
                 "research_gaps": gaps,
                 "last_error": "Research failed technically; retry or check provider configuration",
@@ -208,51 +205,6 @@ class ResearchNodes:
             if usable
             else ResearchReadiness.INSUFFICIENT
         )
-        if self.research_assessor is not None:
-            try:
-                verdict = self.research_assessor.assess(
-                    (state.get("scoped_request") or {}).get("research_question", ""),
-                    todos,
-                    format_evidence(
-                        load_catalog(
-                            self.vfs,
-                            state["run_id"],
-                            state.get("evidence", []),
-                            active_todo_ids=[todo.todo_id for todo in todos],
-                        )
-                    ),
-                    run_id=state["run_id"],
-                    thread_id=state.get("thread_id", ""),
-                )
-                ids = [check.todo_id for check in verdict.questions]
-                if len(ids) != len(todos) or set(ids) != {todo.todo_id for todo in todos}:
-                    raise ValueError("Invalid assessment todo ids")
-            except Exception:
-                return {
-                    **state,
-                    "verification_issue": "research_verifier_failure",
-                    "progress_assessment": None,
-                    "research_verifier_attempt": state.get("research_verifier_attempt", 0) + 1,
-                    "last_error": "Research evidence judge unavailable or returned invalid output",
-                }
-            status = verdict.status
-            limitations = verdict.limitations
-            gaps = [
-                {"todo_id": check.todo_id, "instruction": check.missing_evidence}
-                for check in verdict.questions
-                if not check.sufficient and check.missing_evidence.strip()
-            ]
-            # A judge cannot grant readiness without any persisted evidence.
-            if not usable:
-                status = ResearchReadiness.INSUFFICIENT
-                limitations = limitations or ["No usable evidence was retrieved"]
-                gaps = gaps or [
-                    {
-                        "todo_id": todo.todo_id,
-                        "instruction": "Find direct evidence answering: " + todo.research_question,
-                    }
-                    for todo in todos
-                ]
         exhausted = state.get("research_gap_attempt", 0) >= min(
             state.get("research_gap_budget", 1), 1
         )
@@ -267,7 +219,6 @@ class ResearchNodes:
             state["run_id"], "supervisor/progress/latest.json", assessment, "progress_assessment"
         )
         return {
-            **state,
             "stage": Stage.SYNTHESIZING.value if ready else Stage.RESEARCHING.value,
             "current_action": f"Research {status.value}: synthesize best supported answer"
             if ready
@@ -280,8 +231,9 @@ class ResearchNodes:
             # was asked is decided by the coverage gate, so a gap never skips report approval.
             "result_incomplete": False,
             "research_gaps": gaps,
-            "verification_issue": "evidence_gap" if not ready else "",
-            "research_verifier_attempt": 0,
+            "verification_issue": (
+                VerificationIssue.NONE if ready else VerificationIssue.EVIDENCE_GAP
+            ).value,
             "research_gap_budget": min(state.get("research_gap_budget", 1), 1),
             "last_error": "\n".join(limitations) if not ready else "",
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
@@ -306,12 +258,9 @@ class ResearchNodes:
             "todos",
         )
         return {
-            **state,
+            # New evidence leads to a new draft; nothing earned by the current one carries over.
+            **invalidate_draft_authority(),
             "todos": [todo.model_dump(mode="json") for todo in todos],
             "research_gap_attempt": state.get("research_gap_attempt", 0) + 1,
-            "verification": None,
-            "approval": None,
-            "publication": None,
-            "verifier_attempt": 0,
             "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
         }

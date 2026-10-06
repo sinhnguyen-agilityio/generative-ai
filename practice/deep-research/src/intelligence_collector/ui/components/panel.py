@@ -14,6 +14,7 @@ import streamlit as st
 
 from intelligence_collector.agents.supervisor import read_supervisor_log
 from intelligence_collector.config import Settings
+from intelligence_collector.contracts import FAITHFULNESS_THRESHOLD
 from intelligence_collector.source_verification import load_catalog
 from intelligence_collector.ui.evidence import SourceView, bundle_sources, todo_bundle
 from intelligence_collector.ui.html import (
@@ -216,8 +217,9 @@ def _run_checks(snapshot: dict) -> None:
             else:
                 st.caption(f"{label} unavailable: {snapshot.get(key + '_error')}")
     faithfulness = snapshot.get("faithfulness_score")
-    if faithfulness is not None and faithfulness < 0.9:
-        st.warning("Below the 90% faithfulness target.")
+    # Same rule as the verification gate: the score must be strictly above the threshold.
+    if faithfulness is not None and not faithfulness > FAITHFULNESS_THRESHOLD:
+        st.warning(f"Not above the {FAITHFULNESS_THRESHOLD:.0%} faithfulness threshold.")
 
 
 def _research_limits() -> None:

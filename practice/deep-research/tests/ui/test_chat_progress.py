@@ -134,8 +134,8 @@ def test_review_happens_in_the_chat_while_awaiting_approval():
     report_bubble = app.chat_message[-1]
     assert report_bubble.name == "assistant"
     assert report_bubble.markdown[0].value == "# Report"
-    assert "Reply **approve** to publish" in report_bubble.caption[0].value
-    assert app.chat_input[0].placeholder == "Reply: approve, or what to change"
+    assert "Click **Approve and publish**" in report_bubble.caption[0].value
+    assert app.chat_input[0].placeholder == "What should change in the report?"
     assert not app.radio
     assert not any(b.label in {"Approve & publish", "Send feedback"} for b in app.button)
 
@@ -161,7 +161,7 @@ def test_review_and_publish_section_hidden_once_published():
     )
 
     text = _visible_text(app)
-    assert "Reply **approve** to publish" not in text
+    assert "Click **Approve and publish**" not in text
     assert app.chat_input[0].placeholder == "What should we research?"
     assert "Published to exports/run-ui.md" in text
 
@@ -186,7 +186,7 @@ def test_unverified_snapshot_never_renders_verified_or_publication_controls():
     assert "verification: failed" in text
     assert "a comparison claim has no source." in text
     assert "verified report" not in text
-    assert "reply **approve** to publish" not in text
+    assert "click **approve and publish**" not in text
     assert app.chat_input[0].placeholder == "What should we research?"
 
 
@@ -298,7 +298,7 @@ def test_chat_reply_while_awaiting_review_resumes_the_review(monkeypatch):
     calls = []
     monkeypatch.setattr(
         "intelligence_collector.ui.turn.run_chat_turn",
-        lambda text, **kwargs: calls.append((text, kwargs["view"].reviewing)),
+        lambda reply, **kwargs: calls.append((reply, kwargs["view"].reviewing)),
     )
     app = _app_with_snapshot(
         {
@@ -310,7 +310,7 @@ def test_chat_reply_while_awaiting_review_resumes_the_review(monkeypatch):
         }
     )
 
-    app.chat_input[0].set_value("Looks good, publish it").run()
+    app.chat_input[0].set_value("Use bullet points").run()
 
     assert not app.exception
-    assert calls == [("Looks good, publish it", True)]
+    assert calls == [(("Use bullet points", None), True)]

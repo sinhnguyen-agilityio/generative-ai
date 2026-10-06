@@ -31,6 +31,7 @@ from datetime import date, datetime, timezone
 
 from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
 
+from intelligence_collector.ports import ArtifactStore, ModelRouterPort, VectorIndex
 from intelligence_collector.agents.prompts import SUPERVISOR_REPLAN_TOOL, SUPERVISOR_TEMPLATE
 from intelligence_collector.agents.researcher import ResearchAgent, ResearchOutcome
 from intelligence_collector.agents.tools import (
@@ -54,7 +55,7 @@ from intelligence_collector.agents.worker import (
 )
 from intelligence_collector.contracts import ResearchFindings, ResearchTodo, TodoStatus
 from intelligence_collector.observability.tracing import traced
-from intelligence_collector.tools.mcp import redact_mcp_error
+from intelligence_collector.models.redaction import redact_error
 from intelligence_collector.tools.url_tracking import UrlClaims, UrlRegistry
 
 DEFAULT_MAX_CONCURRENT_RESEARCHERS = 3
@@ -76,7 +77,7 @@ class DecisionLog:
     """What the supervisor decided, for people watching the run: appended to
     ``research/supervisor_log.json`` in the VFS and passed to the ``decision_listener``."""
 
-    def __init__(self, vfs, run_id: str):
+    def __init__(self, vfs: ArtifactStore, run_id: str):
         self.vfs, self.run_id = vfs, run_id
         try:
             self.entries: list[dict] = json.loads(vfs.read(run_id, SUPERVISOR_LOG_PATH))
@@ -96,7 +97,7 @@ class DecisionLog:
                 pass
 
 
-def read_supervisor_log(vfs, run_id: str) -> list[dict]:
+def read_supervisor_log(vfs: ArtifactStore, run_id: str) -> list[dict]:
     """The run's supervisor decisions, oldest first; empty before any research."""
     try:
         return json.loads(vfs.read(run_id, SUPERVISOR_LOG_PATH))
@@ -135,10 +136,10 @@ class ResearchSupervisor:
     def __init__(
         self,
         researcher: ResearchAgent,
-        vfs,
-        index,
+        vfs: ArtifactStore,
+        index: VectorIndex | None,
         *,
-        router=None,
+        router: ModelRouterPort | None = None,
         max_concurrent_researchers: int = DEFAULT_MAX_CONCURRENT_RESEARCHERS,
         max_turns: int = DEFAULT_MAX_SUPERVISOR_TURNS,
         max_attempts_per_task: int = DEFAULT_MAX_ATTEMPTS_PER_TASK,
@@ -534,7 +535,7 @@ class ResearchSupervisor:
                 outcome.findings = self._with_earlier_findings(run_id, todo, outcome.findings)
             return outcome
         except Exception as exc:
-            return failed_outcome(todo, f"Research sub-agent failed: {redact_mcp_error(exc)}")
+            return failed_outcome(todo, f"Research sub-agent failed: {redact_error(exc)}")
 
     @staticmethod
     def _sub_agent_question(job: ResearchJob) -> str:

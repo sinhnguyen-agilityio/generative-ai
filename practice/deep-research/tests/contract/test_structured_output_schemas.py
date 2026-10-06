@@ -10,7 +10,6 @@ from intelligence_collector.contracts import (
     ReportJudgeVerdict,
     ResearchBrief,
     ResearchFindings,
-    ResearchEvidenceVerdict,
     ScopeAssessment,
     TodoPlan,
 )
@@ -22,7 +21,6 @@ ROUTER_SCHEMAS = [
     ResearchBrief,
     TodoPlan,
     ResearchFindings,
-    ResearchEvidenceVerdict,
     DraftAssessment,
     Reflection,
     ReportJudgeVerdict,

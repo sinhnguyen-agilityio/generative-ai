@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from langgraph.errors import GraphInterrupt
 
-from intelligence_collector.contracts import Stage, WorkflowStatus
+from intelligence_collector.contracts import RunStatus, Stage, WorkflowStatus
 from intelligence_collector.graph.nodes.common import node_agent
 from intelligence_collector.graph.state import GraphState
 from intelligence_collector.graph.migration import normalize_checkpoint
@@ -28,6 +28,9 @@ SCORE_FIELDS = {
 }
 
 NodeFn = Callable[[GraphState], GraphState]
+_MISSING = object()
+# Run statuses that end the run; each is also a WorkflowStatus the registry records.
+TERMINAL_RUN_STATUSES = {RunStatus.CANCELLED, RunStatus.EXPORTED_INCOMPLETE}
 Lifecycle = Callable[[str, str], None]
 
 
@@ -84,9 +87,11 @@ def node_wrapper(
         )
 
     def result_status(result: GraphState) -> WorkflowStatus:
-        if result.get("status") in {"cancelled", "exported_incomplete", "incomplete"}:
-            return WorkflowStatus(result["status"])
         stage = result.get("stage")
+        if result.get("status") in TERMINAL_RUN_STATUSES:
+            return WorkflowStatus(result["status"])
+        if stage == Stage.INCOMPLETE.value:
+            return WorkflowStatus.INCOMPLETE
         if stage == Stage.PUBLISHED.value:
             return WorkflowStatus.PUBLISHED
         if stage == Stage.NEEDS_REVIEW.value:
@@ -111,7 +116,7 @@ def node_wrapper(
         """Run the node; with a `tracer`, annotate its observation and export score fields."""
         result = fn(state)
         if tracer is not None and isinstance(result, dict):
-            _annotate(name, result)
+            _annotate(name, {**state, **result})
             for key, (score_name, producer) in SCORE_FIELDS.items():
                 if name == producer and result.get(key) is not None:
                     tracer.score(score_name, float(result[key]))
@@ -119,7 +124,10 @@ def node_wrapper(
 
     def wrapped(state: GraphState) -> GraphState:
         """Report lifecycle status around the node and check that it returns a mapping."""
-        state = normalize_checkpoint(state)
+        raw = state
+        state = normalize_checkpoint(raw)
+        # Nodes return only the keys they change; persist what the migration filled in or fixed.
+        migrated = {key: value for key, value in state.items() if raw.get(key, _MISSING) != value}
         if tracer is not None:
             enter_node(name, node_agent(name))
         register(state)
@@ -150,7 +158,10 @@ def node_wrapper(
 
         if not isinstance(result, dict):
             raise TypeError(f"{name} must return a mapping state update")
-        update(result, result_status(result))
+        result = {**migrated, **result}
+        # Registry bookkeeping reads the state as it is after this update.
+        merged = {**state, **result}
+        update(merged, result_status(merged))
         return result
 
     wrapped.__name__ = name

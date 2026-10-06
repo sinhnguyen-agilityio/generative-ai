@@ -14,9 +14,9 @@ LLM-only verification and no-research-in-BVF decisions. The current contract is:
   before synthesis. If still insufficient, or PARTIAL, synthesize an honest incomplete
   answer, verify it, then end without approval/publication. Report repair
   has a separate configured allowance (default three); stalled repairs can stop early.
-- A conditional approval is a revision. Only a typed explicit approval or an exact
-  unconditional approval phrase may authorize publication. Publication remains
-  bound to the verified artifact hash and verification ID.
+- Only the "Approve and publish" button (`{"approved": true}`) authorizes publication; a typed
+  reply is always a change request. Publication remains bound to the verified artifact hash
+  and verification ID.
 - Failed publication invalidates approval/verification and enters the recovery
   interrupt. Legacy ended approval checkpoints enter this same safe recovery path.
   Retry/revise must verify and obtain new approval; export is explicitly incomplete.
