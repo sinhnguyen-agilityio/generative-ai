@@ -95,19 +95,21 @@ def clean(text: str) -> str:
 
 def prepare_pages(results: list[dict]) -> list[dict]:
     """Search results as pages ``{url, title, text, snippet, full_text, score}``. A page whose
-    cleaned text is too short falls back to Tavily's snippet; a result with too little text is dropped."""
-    pages = []
+    cleaned text is too short falls back to Tavily's snippet; a result with too little text is dropped,
+    and so is a result whose normalized URL an earlier result already has."""
+    pages = {}
     for row in results:
+        url = normalize_url(row["url"])
         text, snippet = clean(row["raw_content"]), row["content"].strip()
         full_text = len(text) >= MIN_FULL_TEXT
         if not full_text:
             text = snippet
-        if len(text) >= MIN_TEXT:
-            pages.append({
-                "url": normalize_url(row["url"]), "title": row["title"], "text": text,
+        if url not in pages and len(text) >= MIN_TEXT:
+            pages[url] = {
+                "url": url, "title": row["title"], "text": text,
                 "snippet": snippet, "full_text": full_text, "score": row["score"],
-            })
-    return pages
+            }
+    return list(pages.values())
 
 
 def format_passages(passages: list[dict], sources: dict[str, dict]) -> str:

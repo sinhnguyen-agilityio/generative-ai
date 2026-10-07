@@ -5,7 +5,7 @@ from langchain_core.runnables import RunnableLambda
 
 from deep_research.agents.researcher import ResearcherAgent
 from deep_research.config import ModelSpec, Settings
-from deep_research.search import clean, normalize_url
+from deep_research.search import clean, normalize_url, prepare_pages
 from deep_research.state import Answered, MissingPart, TopicReport
 from tests.fakes import SNIPPET, TOPIC_REPORT, FakeSearch, FakeStore, FakeTier, call, researcher, result
 
@@ -100,6 +100,11 @@ def test_a_failed_report_call_gives_a_failed_report():
 
 def test_normalize_url():
     assert normalize_url("HTTPS://Example.com/a/?utm_source=x&id=1#top") == "https://example.com/a?id=1"
+
+
+def test_results_for_the_same_page_become_one_page():
+    pages = prepare_pages([result("https://example.com/a"), result("https://example.com/a/?utm_source=x")])
+    assert [p["url"] for p in pages] == ["https://example.com/a"]
 
 
 def test_clean_drops_page_noise_and_keeps_content():
