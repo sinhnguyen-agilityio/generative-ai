@@ -23,6 +23,18 @@ class ModelConfig:
     kwargs: dict[str, Any] | None = None
 
 
+_UNSET = object()
+
+
+def _needs_responses_api(model) -> bool:
+    """An OpenAI chat model with a reasoning effort and no explicit API choice. Only OpenAI
+    models have ``use_responses_api`` (None until chosen); other providers are left alone."""
+    return (
+        getattr(model, "use_responses_api", _UNSET) is None
+        and getattr(model, "reasoning_effort", None) is not None
+    )
+
+
 class ModelRouters(NamedTuple):
     """The two tiers; each agent is constructed with the one it needs.
 
@@ -46,7 +58,12 @@ class ModelFactory:
         kwargs = {"timeout": config.timeout, "max_retries": 0, **(config.kwargs or {})}
         if config.provider:
             kwargs["model_provider"] = config.provider
-        return init_chat_model(config.model, **kwargs)
+        model = init_chat_model(config.model, **kwargs)
+        if _needs_responses_api(model):
+            # OpenAI rejects function tools combined with reasoning_effort on
+            # /v1/chat/completions (e.g. gpt-5.4-nano); the Responses API accepts both.
+            model = init_chat_model(config.model, **kwargs, use_responses_api=True)
+        return model
 
     def create_routers(self, settings, *, trace=None, callbacks=None) -> ModelRouters:
         """Build the reasoning and standard tiers from `RoleModelSettings`, each with its own

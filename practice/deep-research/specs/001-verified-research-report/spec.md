@@ -684,13 +684,15 @@ is created; then approve the unchanged artifact and confirm only that exact vers
   planned research todo, and successfully persist it through `write_todos` before any edge can enter
   Researching or invoke external retrieval. Brief or todo persistence failure MUST end the current
   invocation visibly without enabling retrieval.
-- **FR-037a**: The Planner Agent MUST decompose the `ResearchBrief` with a tool-calling LLM
-  call: the model calls the `write_todos` tool, whose arguments are validated as `TodoPlan`
-  (research questions, 1–5 items; `evidence_needed`; `report_shape`). Each question MUST be
-  standalone, non-blank, and not duplicate another (case-insensitive). The LLM MUST NOT set todo
-  IDs or statuses; the system converts each question into a `planned` todo and persists the todo
-  list (through `write_todos`). An invalid call is answered with its validation error and retried
-  up to the router's attempt limit; invalid planner output MUST NOT write a todo list.
+- **FR-037a**: The Planner Agent MUST decompose the `ResearchBrief` with one structured-output LLM
+  call whose input is only the brief (research question, required answers, output requirements),
+  optional human feedback, and the maximum number of tasks (1–5). The output is validated as
+  `TodoPlan` (research questions, at most the given maximum; `evidence_needed`; `evidence_points`;
+  `report_shape`). Each question MUST be standalone, non-blank, and not duplicate another
+  (case-insensitive). The LLM MUST NOT set todo IDs or statuses; the system converts each question
+  into a `planned` todo and persists the todo list through `write_todos` in the VFS. Output that
+  fails schema validation is retried up to the router's attempt limit; invalid planner output MUST
+  NOT write a todo list.
 - **FR-038**: Every live workflow execution MUST emit one complete Langfuse trace before it may be
   treated as successfully observed. Each execution trace MUST be grouped under the LangGraph
   `thread_id`, correlated with `run_id`, and contain a turn observation nested under the thread's

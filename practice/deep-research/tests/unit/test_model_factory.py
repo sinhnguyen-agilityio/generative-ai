@@ -52,3 +52,31 @@ def test_timeouts_are_read_from_env_and_bounded(monkeypatch):
     monkeypatch.setenv("INTELLIGENCE_REASONING_TIMEOUT", "1")
     with pytest.raises(ValueError, match="INTELLIGENCE_REASONING_TIMEOUT"):
         RoleModelSettings.from_env()
+
+
+def test_openai_reasoning_effort_with_tools_uses_the_responses_api(monkeypatch):
+    """gpt-5.x rejects function tools + reasoning_effort on /v1/chat/completions."""
+    from langchain_core.messages import HumanMessage
+
+    from intelligence_collector.models.factory import ModelConfig
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    tool = {"type": "function", "function": {"name": "write_todos", "description": "d",
+                                             "parameters": {"type": "object", "properties": {}}}}
+    factory = ModelFactory()
+
+    model = factory.create(
+        ModelConfig("gpt-5.4-nano", provider="openai", kwargs={"reasoning_effort": "low"})
+    )
+    bound = model.bind_tools([tool])
+    payload = bound.bound._get_request_payload([HumanMessage("hi")], **bound.kwargs)
+    assert model.use_responses_api is True
+    assert payload["reasoning"] == {"effort": "low"} and "reasoning_effort" not in payload
+
+    # An explicit choice is kept; without reasoning_effort nothing changes.
+    explicit = factory.create(ModelConfig(
+        "gpt-5.4-nano", provider="openai",
+        kwargs={"reasoning_effort": "low", "use_responses_api": False},
+    ))
+    plain = factory.create(ModelConfig("gpt-4.1-mini", provider="openai"))
+    assert explicit.use_responses_api is False and plain.use_responses_api is None

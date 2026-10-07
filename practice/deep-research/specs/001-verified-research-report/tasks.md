@@ -1455,3 +1455,14 @@ page summaries (Session 2026-10-05; FR-047, FR-048, FR-049).
   `tests/unit/test_extend_feedback.py`, `tests/unit/test_simple_research.py`,
   `tests/unit/test_repair_diagnosis.py`, `tests/integration/test_bvf_loop.py`,
   `tests/contract/test_graph_transitions.py`.
+
+- [X] T193 Simplify the Planner Agent (FR-037a): `PlannerAgent.plan(brief, vfs, run_id, *,
+  feedback="", max_todos=MAX_PLANNED_QUESTIONS, thread_id="")` is the only entry point. It renders
+  `PLANNER_TEMPLATE` (the task limit in the system prompt, `FEEDBACK_BLOCK` when feedback is
+  given), calls `ModelRouter.invoke_messages(..., TodoPlan)` (schema retries live in the router),
+  rejects more than `max_todos` tasks, out-of-range evidence point links and, without feedback,
+  an unlinked required answer, then saves the todos with `write_todos`. Removed:
+  `define_plan`, `create_todos`, `check_links`, `_plan_from`, the hand-rolled `ToolMessage` retry
+  loop, `WRITE_TODOS_TOOL` / `WRITE_TODOS_TOOL_NAME` and `REPLACEMENT_PLAN_BLOCK`.
+  `BVFNodes.replan` now passes the unanswered items and earlier questions as `feedback`.
+  Tests: `tests/unit/test_planner.py` (renamed from `test_planner_write_todos_tool.py`).

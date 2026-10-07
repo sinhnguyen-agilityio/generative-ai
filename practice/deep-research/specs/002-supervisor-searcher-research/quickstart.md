@@ -18,7 +18,7 @@ Each scenario is an automated test added with the feature; names are indicative.
 
 | # | Scenario | Command | Expected |
 | --- | --- | --- | --- |
-| 1 | Planner links every required answer | `uv run pytest tests/unit/test_planner_write_todos_tool.py -q` | A plan leaving a required answer unlinked is retried; approved plan hash covers evidence points |
+| 1 | Planner links every required answer | `uv run pytest tests/unit/test_planner.py -q` | A plan leaving a required answer unlinked is rejected without writing todos; approved plan hash covers evidence points |
 | 2 | Searcher rejects off-topic, duplicate and empty results | `uv run pytest tests/unit/test_result_evaluation.py -q` | Only accepted rows are captured and indexed; each rejection has one reason |
 | 3 | Stop reasons | `uv run pytest tests/unit/test_researcher_stop.py -q` | `all_points_covered`, `search_budget_spent`, `page_budget_full`, `no_progress` (2 searches with no accepted result), `search_failures` (2 failed searches; a failed result evaluation counts), `model_finished`; a repeated query is refused |
 | 4 | Gap self-lookup finds a deep passage | `uv run pytest tests/unit/test_searcher_report.py -q` | Point answered with a verified quote from a chunk the searcher never read; no web search spent |

@@ -3,7 +3,6 @@
 * Research sub-agent: ``tavily_search`` and ``think_tool``.
 * Research supervisor: ``ConductResearch``, ``ResearchComplete``, ``ProposeReplan`` and
   ``think_tool``.
-* Planner: ``write_todos``.
 
 The agents execute the calls themselves (``researcher.py``, ``supervisor.py``); these are only the
 contracts the models see.
@@ -28,7 +27,6 @@ THINK_TOOL_NAME = "think_tool"
 CONDUCT_RESEARCH_TOOL_NAME = "ConductResearch"
 RESEARCH_COMPLETE_TOOL_NAME = "ResearchComplete"
 PROPOSE_REPLAN_TOOL_NAME = "ProposeReplan"
-WRITE_TODOS_TOOL_NAME = "write_todos"
 CREATE_FOLLOW_UP_TOOL_NAME = "CreateFollowUp"
 
 SEARCH_TOOL = _function(
@@ -107,49 +105,6 @@ PROPOSE_REPLAN_TOOL = _function(
     },
     ["reason", "todo_ids"],
 )
-
-WRITE_TODOS_TOOL = _function(
-    WRITE_TODOS_TOOL_NAME,
-    "Record the research todo list: the standalone research questions, the evidence each one "
-    "needs, and the expected report shape. Call it exactly once with the whole plan.",
-    {
-        "questions": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "The standalone research questions (1 to 5), one per research task.",
-        },
-        "evidence_needed": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "For each question, in the same order, one short line naming the "
-            "evidence that would answer it.",
-        },
-        "evidence_points": {
-            "type": "array",
-            "description": "For each question, in the same order, 1 to 4 evidence points: the "
-            "specific things its research must find. Each lists the 1-based numbers of the "
-            "required answers it serves (an empty list for a point no required answer needs). "
-            "Every required answer must be served by at least one point.",
-            "items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string"},
-                        "required_answers": {"type": "array", "items": {"type": "integer"}},
-                    },
-                    "required": ["text", "required_answers"],
-                },
-            },
-        },
-        "report_shape": {
-            "type": "string",
-            "description": "One sentence describing the report that answers the brief.",
-        },
-    },
-    ["questions", "evidence_needed", "evidence_points", "report_shape"],
-)
-
 
 CREATE_FOLLOW_UP_TOOL = _function(
     CREATE_FOLLOW_UP_TOOL_NAME,

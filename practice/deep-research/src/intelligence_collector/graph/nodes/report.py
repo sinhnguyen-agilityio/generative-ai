@@ -10,7 +10,7 @@ import re
 from langchain_core.messages import AIMessage
 
 from intelligence_collector.ports import ArtifactStore, VectorIndex
-from intelligence_collector.agents.planner import create_todos, plan_record
+from intelligence_collector.agents.planner import plan_record
 from intelligence_collector.agents.report_judge import (
     ReportJudge,
     build_coverage_criteria,
@@ -689,22 +689,23 @@ class BVFNodes:
                 ]
             )
         )
-        plan = self.planner.define_plan(
-            brief,
-            unanswered=unanswered,
-            previous_questions=[todo.research_question for todo in todos],
-            run_id=state["run_id"],
-            thread_id=state.get("thread_id", ""),
+        feedback = (
+            "This is a REPLACEMENT plan. Earlier research did not produce evidence for these "
+            "required answers, even after a targeted retry:\n"
+            + "\n".join(f"- {item}" for item in unanswered)
+            + "\n\nEarlier research questions (do not repeat them; choose a different angle, "
+            "source category or decomposition):\n"
+            + "\n".join(f"- {todo.research_question}" for todo in todos)
+            + "\n\nPlan only the questions needed for the unanswered items."
         )
-        new = create_todos(
+        new, report_shape = self.planner.plan(
+            brief,
             self.vfs,
             state["run_id"],
-            plan.questions,
-            plan.evidence_needed,
-            plan.evidence_points,
-            brief.checklist,
+            feedback=feedback,
+            thread_id=state.get("thread_id", ""),
         )
-        record = plan_record(brief, [*todos, *new], plan.report_shape, kind="replacement")
+        record = plan_record(brief, [*todos, *new], report_shape, kind="replacement")
         version = state.get("plan_version", 0) + 1
         ref = self.vfs.write_json(
             state["run_id"], f"planning/plan.v{version}.json", record, "research_plan"
