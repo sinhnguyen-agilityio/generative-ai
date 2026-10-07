@@ -67,8 +67,8 @@ PID=$(netstat -ano | grep ':8599 ' | grep LISTENING | awk '{print $5}' | head -1
 ## Test
 
 ```bash
-uv run --no-sync --with pytest --with ruff python -m pytest tests/test_deep_research.py -q -p no:cacheprovider --noconftest
-uv run --no-sync --with ruff ruff check src/deep_research tests/test_deep_research.py app.py
+uv run --no-sync --with pytest --with ruff python -m pytest tests -q -p no:cacheprovider
+uv run --no-sync --with ruff ruff check src tests app.py
 ```
 
 Expected: `11 passed`, `All checks passed!`.
@@ -82,8 +82,6 @@ Expected: `11 passed`, `All checks passed!`.
   (the driver starts it). Running Streamlit from the overlay would miss project deps.
 - **`pytest`/`ruff` are not in `.venv`** (it was synced without the `test` extra) → always run
   them through `uv run --with pytest --with ruff`.
-- **`--noconftest` is required** while the old `src/intelligence_collector` code exists:
-  `tests/conftest.py` imports it.
 - **`warning: VIRTUAL_ENV=...deep_research_from_scratch\.venv does not match`** — the shell has
   another project's venv activated. uv ignores it and uses `./.venv`; harmless.
 - **A stale server on the port would be driven silently** (the health check passes). The driver

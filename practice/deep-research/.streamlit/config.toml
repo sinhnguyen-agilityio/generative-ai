@@ -1,6 +1,5 @@
-# Intelligence Collector theme: a neutral work surface, one blue for actions, and status colors
-# that also differ in lightness (green = done, blue = working, orange = waiting for you, red =
-# failed). The HTML fragments in src/intelligence_collector/ui_view.py use the same palette.
+# Deep Research theme: a neutral work surface, one blue for actions, and status colors that also
+# differ in lightness (green = done, blue = working, orange = waiting for you, red = failed).
 [theme]
 base = "light"
 primaryColor = "#1F4FB8"
