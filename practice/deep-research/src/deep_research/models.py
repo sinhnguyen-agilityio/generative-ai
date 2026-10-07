@@ -1,0 +1,44 @@
+"""Chat models. Reasoning tier: clarify, brief, planner, supervisor, evaluator.
+Standard tier: researcher, compression, report writer."""
+
+from __future__ import annotations
+
+from langchain.chat_models import init_chat_model
+
+from deep_research.config import ModelSpec
+
+
+def _create(model: str, provider: str | None, timeout: float, kwargs: dict):
+    args = {"timeout": timeout, **kwargs}
+    if provider:
+        args["model_provider"] = provider
+    llm = init_chat_model(model, **args)
+    # OpenAI rejects tools + reasoning_effort on chat completions; the Responses API accepts both.
+    if getattr(llm, "use_responses_api", False) is None and getattr(llm, "reasoning_effort", None):
+        llm = init_chat_model(model, **args, use_responses_api=True)
+    return llm
+
+
+class Tier:
+    """A primary chat model plus an optional fallback, tried in that order."""
+
+    def __init__(self, spec: ModelSpec):
+        self.primary = _create(spec.model, spec.provider, spec.timeout, spec.kwargs)
+        self.fallback = (
+            _create(spec.fallback_model, spec.fallback_provider, spec.timeout, {})
+            if spec.fallback_model
+            else None
+        )
+
+    def _wrap(self, build):
+        runnable = build(self.primary)
+        return runnable.with_fallbacks([build(self.fallback)]) if self.fallback else runnable
+
+    def structured(self, schema):
+        return self._wrap(lambda llm: llm.with_structured_output(schema))
+
+    def tools(self, tools):
+        return self._wrap(lambda llm: llm.bind_tools(tools))
+
+    def plain(self):
+        return self._wrap(lambda llm: llm)
