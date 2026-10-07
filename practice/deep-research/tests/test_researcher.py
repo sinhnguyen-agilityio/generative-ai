@@ -86,6 +86,16 @@ def test_an_essential_missing_part_caps_coverage_and_status():
     assert "- Free tier? (essential: not found)" in notes
 
 
+def test_a_missing_part_listed_twice_is_kept_once():
+    parts = [
+        MissingPart(question="LangSmith pricing?", essential=False, reason="not found"),
+        MissingPart(question="  langsmith   PRICING? ", essential=True, reason="not found"),
+    ]
+    notes, _, _ = run(report=TOPIC_REPORT.model_copy(update={"missing_parts": parts}))
+    assert notes.count("PRICING?") + notes.count("pricing?") == 1
+    assert "(essential: not found)" in notes
+
+
 def test_a_store_failure_shows_the_search_snippets():
     notes, seen, _ = run(store=FakeStore(fail=True))
     assert seen == [f"[1] Page a — https://example.com/a (full text)\n{SNIPPET.strip()}"]

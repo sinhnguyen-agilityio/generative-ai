@@ -134,18 +134,24 @@ def finalize(report: TopicReport, sources: dict[str, dict]) -> str:
     """Check the model's report against the sources and render it for the supervisor.
 
     A sentence that cites only unknown source numbers is dropped, and unknown numbers are removed
-    from the others; an answer left without a valid citation
-    becomes an essential missing part; coverage cannot be full while an essential part is missing;
-    the status is derived here, never taken from the model."""
+    from the others; an answer left without a valid citation becomes an essential missing part;
+    a missing part listed twice is kept once (essential if either copy is); coverage cannot be full
+    while an essential part is missing; the status is derived here, never taken from the model."""
     by_id = {s["id"]: (url, s) for url, s in sources.items()}
     findings = _keep_cited(report.findings, by_id.keys())
-    answered, missing = [], list(report.missing_parts)
+    answered, parts = [], list(report.missing_parts)
     for item in report.answered:
         ids = [n for n in dict.fromkeys(item.citations) if n in by_id]
         if ids:
             answered.append((item.question, ids))
         else:
-            missing.append(MissingPart(question=item.question, essential=True, reason="no valid source"))
+            parts.append(MissingPart(question=item.question, essential=True, reason="no valid source"))
+    unique: dict[str, MissingPart] = {}
+    for part in parts:
+        key = " ".join(part.question.lower().split())
+        if key not in unique or (part.essential and not unique[key].essential):
+            unique[key] = part
+    missing = list(unique.values())
     essential_missing = any(part.essential for part in missing)
     coverage = report.coverage
     if not answered:

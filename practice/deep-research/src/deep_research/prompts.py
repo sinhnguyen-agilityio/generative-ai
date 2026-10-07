@@ -100,7 +100,9 @@ research supervisor from the search results above.
 1. Break the topic into the sub-questions it asks.
 2. answered: each sub-question the results answer, with the source numbers that support it.
 3. missing_parts: each sub-question the results do not answer, with the reason. Mark it essential
-   only when the topic cannot be answered as asked without it.
+   only when the topic explicitly asks for it and the results give no answer to it at all. More
+   detail than the topic asks for (exact field lists, exact rates, every edge case) is not
+   essential, and neither is a sub-question the results answer in part.
 4. coverage: full when every sub-question is answered, partial when some are, minimal when almost none are.
 5. findings: Markdown with every relevant fact, number and quote, each cited with the source numbers
    shown in the results, as [1] or [1][3]. Do not write a source list. Add no facts that are not in
