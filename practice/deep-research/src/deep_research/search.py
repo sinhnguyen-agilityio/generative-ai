@@ -106,7 +106,8 @@ def prepare_pages(results: list[dict]) -> list[dict]:
             text = snippet
         if url not in pages and len(text) >= MIN_TEXT:
             pages[url] = {
-                "url": url, "title": row["title"], "text": text,
+                # One line: a title is rendered into source lines, so it must not break them.
+                "url": url, "title": " ".join(row["title"].split()) or url, "text": text,
                 "snippet": snippet, "full_text": full_text, "score": row["score"],
             }
     return list(pages.values())

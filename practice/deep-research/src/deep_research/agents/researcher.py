@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
-from deep_research.agents.utils import CITATION, thread_id, today
+from deep_research.agents.utils import CITATION, CITATIONS_HEADING, SOURCE_LINE, thread_id, today
 from deep_research.config import Settings
 from deep_research.prompts import RESEARCHER_PROMPT, TOPIC_REPORT_PROMPT
 from deep_research.search import format_passages, prepare_pages
@@ -166,7 +166,7 @@ def finalize(report: TopicReport, sources: dict[str, dict]) -> str:
     lines += [
         f"- {p.question} ({'essential' if p.essential else 'not essential'}: {p.reason})" for p in missing
     ] or ["- None"]
-    lines += ["## Findings", findings or "None.", "## Citations"]
+    lines += ["## Findings", findings or "None.", CITATIONS_HEADING]
     domains = {urlsplit(by_id[n][0]).netloc for n in cited}
     snippets = sum(not by_id[n][1]["full_text"] for n in cited)
     lines.append(f"{len(cited)} sources, {len(domains)} domains, {snippets} snippet only")
@@ -177,6 +177,9 @@ def finalize(report: TopicReport, sources: dict[str, dict]) -> str:
 def _keep_cited(findings: str, valid) -> str:
     lines = []
     for line in findings.splitlines():
+        # Headings and source lines are written by code only; in findings they echo web content.
+        if line.lstrip().startswith("## ") or SOURCE_LINE.match(line.strip()):
+            continue
         kept = []
         for sentence in _SENTENCE_END.split(line):
             ids = [int(n) for n in CITATION.findall(sentence)]
