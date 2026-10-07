@@ -8,7 +8,7 @@ import logging
 from langchain_core.runnables import RunnableConfig
 
 from deep_research import tracing
-from deep_research.agents.utils import thread_id
+from deep_research.agents.utils import merge_notes, thread_id
 from deep_research.config import Settings
 from deep_research.prompts import EVALUATION_PROMPT
 from deep_research.state import Evaluation, ResearchState
@@ -23,7 +23,7 @@ class EvaluatorAgent:
 
     def evaluate(self, state: ResearchState, config: RunnableConfig):
         prompt = EVALUATION_PROMPT.format(
-            brief=state["brief"], notes="\n\n---\n\n".join(state["notes"]), report=state["report"]
+            brief=state["brief"], notes=merge_notes(state["notes"])[0], report=state["report"]
         )
         try:
             result = self.llm.invoke(prompt)

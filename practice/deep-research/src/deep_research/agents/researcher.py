@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
-from deep_research.agents.utils import thread_id, today
+from deep_research.agents.utils import CITATION, thread_id, today
 from deep_research.config import Settings
 from deep_research.prompts import RESEARCHER_PROMPT, TOPIC_REPORT_PROMPT
 from deep_research.search import format_passages, prepare_pages
@@ -27,7 +27,7 @@ from deep_research.state import MissingPart, ResearcherState, Think, TopicReport
 logger = logging.getLogger(__name__)
 
 SMALL_RESULTS_CHARS = 8000  # results this short are shown whole, without retrieval
-_CITATION = re.compile(r"\[(\d+)\]")
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
 class ResearcherAgent:
@@ -133,11 +133,12 @@ class ResearcherAgent:
 def finalize(report: TopicReport, sources: dict[str, dict]) -> str:
     """Check the model's report against the sources and render it for the supervisor.
 
-    Citations to unknown source numbers are dropped; an answer left without a valid citation
+    A sentence that cites only unknown source numbers is dropped, and unknown numbers are removed
+    from the others; an answer left without a valid citation
     becomes an essential missing part; coverage cannot be full while an essential part is missing;
     the status is derived here, never taken from the model."""
     by_id = {s["id"]: (url, s) for url, s in sources.items()}
-    findings = _CITATION.sub(lambda m: m.group(0) if int(m.group(1)) in by_id else "", report.findings).strip()
+    findings = _keep_cited(report.findings, by_id.keys())
     answered, missing = [], list(report.missing_parts)
     for item in report.answered:
         ids = [n for n in dict.fromkeys(item.citations) if n in by_id]
@@ -151,7 +152,7 @@ def finalize(report: TopicReport, sources: dict[str, dict]) -> str:
         coverage = "minimal"
     elif coverage == "full" and essential_missing:
         coverage = "partial"
-    cited = sorted({int(n) for n in _CITATION.findall(findings)} | {n for _, ids in answered for n in ids})
+    cited = sorted({int(n) for n in CITATION.findall(findings)} | {n for _, ids in answered for n in ids})
     if not cited:
         status = "failed"
     elif coverage == "full" and not essential_missing:
@@ -171,6 +172,20 @@ def finalize(report: TopicReport, sources: dict[str, dict]) -> str:
     lines.append(f"{len(cited)} sources, {len(domains)} domains, {snippets} snippet only")
     lines += [f"[{n}] {by_id[n][1]['title']}: {by_id[n][0]}" for n in cited]
     return "\n".join(lines)
+
+
+def _keep_cited(findings: str, valid) -> str:
+    lines = []
+    for line in findings.splitlines():
+        kept = []
+        for sentence in _SENTENCE_END.split(line):
+            ids = [int(n) for n in CITATION.findall(sentence)]
+            if ids and not any(n in valid for n in ids):
+                continue
+            kept.append(CITATION.sub(lambda m: m.group(0) if int(m.group(1)) in valid else "", sentence))
+        if kept or not line.strip():
+            lines.append(" ".join(kept))
+    return "\n".join(lines).strip()
 
 
 def failed_report(reason: str) -> str:

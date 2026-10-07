@@ -67,8 +67,14 @@ def test_unknown_citations_are_dropped_and_leave_the_report_failed():
     )
     notes, _, _ = run(report=report)
     assert notes.startswith("## Status: failed\n## Coverage: minimal")
-    assert "[9]" not in notes
+    assert "[9]" not in notes and "A claim" not in notes
     assert "- Price? (essential: no valid source)" in notes
+
+
+def test_sentences_citing_only_unknown_sources_are_dropped():
+    report = TOPIC_REPORT.model_copy(update={"findings": "- Valid [1]. Made up [9].\n- Mixed [1][9]. Plain sentence."})
+    notes, _, _ = run(report=report)
+    assert "## Findings\n- Valid [1].\n- Mixed [1]. Plain sentence.\n## Citations" in notes
 
 
 def test_an_essential_missing_part_caps_coverage_and_status():

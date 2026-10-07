@@ -122,8 +122,8 @@ REPORT_PROMPT = """Write the final research report. Today's date is {date}.
 {revision}
 Requirements:
 - Markdown, with a "# Title" and "## " sections that fit the brief.
-- Use only facts from the findings, and cite them inline as [1], [2].
-- Renumber citations across the report and end with "## Sources": [n] Title: URL.
+- Use only facts from the findings, and cite them with the source numbers used there, as [1] or [1][3].
+- Do not write a sources section; it is added after the report.
 - State clearly what the findings could not establish.
 - Write in the language of the brief."""
 
