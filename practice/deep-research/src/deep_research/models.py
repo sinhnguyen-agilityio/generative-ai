@@ -1,5 +1,5 @@
 """Chat models. Reasoning tier: clarify, brief, planner, supervisor, evaluator.
-Standard tier: researcher, compression, report writer."""
+Standard tier: guardrail, researcher, topic report, report writer."""
 
 from __future__ import annotations
 

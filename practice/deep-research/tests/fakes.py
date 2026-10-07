@@ -14,11 +14,14 @@ from langgraph.checkpoint.memory import MemorySaver
 from deep_research.config import ModelSpec, Settings
 from deep_research.orchestrator import build_graph
 from deep_research.runner import DeepResearch
-from deep_research.state import ClarifyWithUser, Evaluation, ResearchBrief, ResearchPlan, SafetyVerdict
+from deep_research.state import (
+    Answered, ClarifyWithUser, Evaluation, ResearchBrief, ResearchPlan, SafetyVerdict, TopicReport,
+)
 
 
 class FakeTier:
-    """``structured`` answers by schema name; ``tools`` and ``plain`` answer from the messages."""
+    """``structured`` answers by schema name (a callable answers from the prompt); ``tools`` and
+    ``plain`` answer from the messages."""
 
     def __init__(self, structured: dict, tools=None, plain=None):
         self._structured = structured
@@ -26,11 +29,11 @@ class FakeTier:
         self._plain = plain
 
     def structured(self, schema):
-        def answer(_):
+        def answer(prompt):
             value = self._structured[schema.__name__]
             if isinstance(value, Exception):
                 raise value
-            return value
+            return value(prompt) if callable(value) else value
 
         return RunnableLambda(answer)
 
@@ -61,17 +64,49 @@ def researcher(messages):
     return AIMessage("", tool_calls=[call("WebSearch", {"query": "q"}, "s1")])
 
 
+# A page long enough to go through retrieval, and a snippet long enough to be kept.
+PAGE = "\n".join(f"Fact {i}: Gemini Flash input costs ${i}.{i:02d} per million tokens in region {i}." for i in range(150))
+SNIPPET = "Gemini Flash input costs $0.30 per million tokens and output costs $2.50 per million tokens. " * 3
+
+
+def result(url="https://example.com/a", raw_content=PAGE, content=SNIPPET):
+    return {"url": url, "title": f"Page {url[-1]}", "content": content, "raw_content": raw_content, "score": 0.9}
+
+
 class FakeSearch:
+    def __init__(self, results=None, error=None):
+        self.results = [result()] if results is None else results
+        self.error = error
+
     def search(self, query):
-        return [{"url": "https://example.com", "title": "Example", "content": "fact", "raw_content": "fact"}]
+        if self.error:
+            raise self.error
+        return self.results
 
 
 class FakeStore:
-    def __init__(self):
-        self.added = []
+    """Keeps added page texts; ``query`` returns the first characters of each requested page."""
 
-    def add(self, results, *, run_id, topic):
+    def __init__(self, fail=False):
+        self.added, self.queries, self.pages, self.fail = [], [], {}, fail
+
+    def add(self, pages, *, run_id, topic):
+        if self.fail:
+            raise RuntimeError("chroma down")
         self.added.append((run_id, topic))
+        self.pages.update({(run_id, p["url"]): p["text"] for p in pages})
+
+    def query(self, text, *, run_id, urls, k):
+        self.queries.append(text)
+        return [{"url": url, "text": self.pages[(run_id, url)][:1000]} for url in urls][:k]
+
+
+TOPIC_REPORT = TopicReport(
+    findings="Gemini Flash input costs $0.30 per million tokens [1].",
+    answered=[Answered(question="What is the input price?", citations=[1])],
+    missing_parts=[],
+    coverage="full",
+)
 
 
 def make_app(output_dir: Path, clarify=False, evaluation=None, safe=True):
@@ -89,11 +124,10 @@ def make_app(output_dir: Path, clarify=False, evaluation=None, safe=True):
     )
     reports = count(1)
     verdict = SafetyVerdict(allowed=safe, reason="" if safe else "Asks for weapon instructions.")
-    # The writer gets a prompt string; compression gets the researcher's messages.
     standard = FakeTier(
-        {"SafetyVerdict": verdict},
+        {"SafetyVerdict": verdict, "TopicReport": TOPIC_REPORT},
         tools=researcher,
-        plain=lambda p: f"# Report v{next(reports)}" if isinstance(p, str) else "findings [1]",
+        plain=lambda _: f"# Report v{next(reports)}",
     )
     store = FakeStore()
     graph = build_graph(settings, reasoning, standard, FakeSearch(), store, checkpointer=MemorySaver())

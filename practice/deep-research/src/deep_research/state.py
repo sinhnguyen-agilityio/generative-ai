@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import operator
-from typing import Annotated, TypedDict
+from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph import MessagesState
@@ -33,6 +33,7 @@ class ResearcherState(TypedDict):
     topic: str
     researcher_messages: Annotated[list[AnyMessage], add_messages]
     searches: int
+    sources: dict[str, dict]  # url -> {id, title, full_text}: the source numbers cited in the report
     notes: str
 
 
@@ -64,6 +65,24 @@ class Evaluation(BaseModel):
     comment: str = Field(description="One or two sentences explaining the scores.")
 
 
+class Answered(BaseModel):
+    question: str = Field(description="A sub-question of the topic that the results answer.")
+    citations: list[int] = Field(description="Source numbers that support the answer.")
+
+
+class MissingPart(BaseModel):
+    question: str = Field(description="A sub-question of the topic that the results do not answer.")
+    essential: bool = Field(description="True only if the topic cannot be answered as asked without it.")
+    reason: str = Field(description="Not found, sources disagree, or only a snippet was available.")
+
+
+class TopicReport(BaseModel):
+    findings: str = Field(description="Markdown findings citing source numbers as [1]; no source list.")
+    answered: list[Answered]
+    missing_parts: list[MissingPart]
+    coverage: Literal["full", "partial", "minimal"]
+
+
 # ----- Tools (schemas only; the agents execute them) -----
 
 
@@ -78,7 +97,7 @@ class ResearchComplete(BaseModel):
 
 
 class WebSearch(BaseModel):
-    """Search the web. Returns titles, URLs and page excerpts."""
+    """Search the web. Returns the most relevant passages of the result pages, numbered by source."""
 
     query: str
 

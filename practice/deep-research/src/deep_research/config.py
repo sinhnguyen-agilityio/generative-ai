@@ -57,6 +57,7 @@ class Settings:
     output_dir: str = "exports"
     max_concurrent_researchers: int = 3
     max_researcher_searches: int = 5
+    retrieval_k: int = 6  # passages of the result pages shown to the researcher per search
     # Fixed limits, not configurable from the environment.
     max_supervisor_iterations: int = 6
     search_max_results: int = 5
@@ -77,5 +78,6 @@ class Settings:
             output_dir=_env("INTELLIGENCE_OUTPUT_DIR", cls.output_dir),
             max_concurrent_researchers=int(_env("INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS", "3")),
             max_researcher_searches=int(_env("INTELLIGENCE_MAX_SEARCH_CALLS", "5")),
+            retrieval_k=int(_env("INTELLIGENCE_RETRIEVAL_K", "6")),
             langfuse_enabled=_flag("INTELLIGENCE_LANGFUSE_ENABLED"),
         )
