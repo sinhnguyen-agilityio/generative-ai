@@ -3,7 +3,7 @@
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
 
-from deep_research.agents.researcher import ResearcherAgent
+from deep_research.agents.researcher import ResearcherAgent, render_note
 from deep_research.config import ModelSpec, Settings
 from deep_research.search import clean, normalize_url, prepare_pages
 from deep_research.state import Answered, MissingPart, TopicReport
@@ -24,8 +24,8 @@ def run(search=None, store=None, report=TOPIC_REPORT, tools=researcher):
     store = store or FakeStore()
     settings = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"))
     agent = ResearcherAgent(FakeTier({"TopicReport": reporter}, tools=tools), search or FakeSearch(), store, settings)
-    notes = RunnableLambda(agent.research).invoke("topic A", {"configurable": {"thread_id": "t"}})
-    return notes, seen, store
+    note = RunnableLambda(agent.research).invoke("topic A", {"configurable": {"thread_id": "t"}})
+    return render_note(note), seen, store
 
 
 def test_report_has_the_four_criteria_and_code_built_citations():

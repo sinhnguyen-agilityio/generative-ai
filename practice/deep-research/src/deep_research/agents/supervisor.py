@@ -12,7 +12,7 @@ from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from deep_research.agents.researcher import ResearcherAgent
+from deep_research.agents.researcher import ResearcherAgent, render_note
 from deep_research.agents.utils import bullets, today
 from deep_research.config import Settings
 from deep_research.prompts import SUPERVISOR_PROMPT, SUPERVISOR_START
@@ -57,9 +57,13 @@ class SupervisorAgent:
                 call["id"]: pool.submit(copy_context().run, self.researcher.research, call["args"]["research_topic"])
                 for call in research
             }
-            findings = {call_id: future.result() for call_id, future in futures.items()}
+            notes = {call_id: future.result() for call_id, future in futures.items()}
         replies = [
-            ToolMessage(findings.get(call["id"], "Reflection recorded."), tool_call_id=call["id"], name=call["name"])
+            ToolMessage(
+                render_note(notes[call["id"]]) if call["id"] in notes else "Reflection recorded.",
+                tool_call_id=call["id"],
+                name=call["name"],
+            )
             for call in calls
         ]
-        return {"supervisor_messages": replies, "notes": list(findings.values())}
+        return {"supervisor_messages": replies, "notes": list(notes.values())}

@@ -22,7 +22,7 @@ class ResearchState(MessagesState):
     plan_feedback: str  # non-empty: the reviewer asked for a new plan
     supervisor_messages: Annotated[list[AnyMessage], add_messages]
     supervisor_iterations: int
-    notes: Annotated[list[str], operator.add]  # one entry per researched topic
+    notes: Annotated[list[dict], operator.add]  # one topic note per researched topic (see researcher.finalize)
     report: str
     report_feedback: str  # non-empty: the reviewer asked for a new report
     evaluation: dict | None
@@ -34,7 +34,7 @@ class ResearcherState(TypedDict):
     researcher_messages: Annotated[list[AnyMessage], add_messages]
     searches: int
     sources: dict[str, dict]  # url -> {id, title, full_text}: the source numbers cited in the report
-    notes: str
+    notes: dict  # the topic note: {"report": text, "sources": [{id, title, url, full_text}]}
 
 
 # ----- Structured outputs -----
