@@ -45,13 +45,21 @@ def test_research_agent_searches_broad_then_narrow_and_persists_provenance(store
     ]
     # Only the first turn forces a search (not a reflection); later turns may finish without one.
     assert model.tool_choices == ["tavily_search", None, None]
+    # Phrasings for the lookups first; every search's results are evaluated before the
+    # searcher's next decision; the short report last.
     assert [event["role"] for event in traces] == [
+        "query_rewriter",
         "researcher",
+        "result_evaluator",
         "researcher",
+        "result_evaluator",
         "researcher",
-        "research_compressor",
+        "searcher_report",
     ]
     assert {ref.kind for ref in refs} == {
+        "result_evaluations",
+        "passage_lookups",
+        "searcher_report",
         "raw_capture",
         "url_registry",
         "notes",
@@ -61,13 +69,16 @@ def test_research_agent_searches_broad_then_narrow_and_persists_provenance(store
     evidence = json.loads(vfs.read("run", f"research/{todo.todo_id}/evidence/result.json"))
     assert evidence["sufficient"] is True
     assert evidence["search_calls"] == 2
-    assert evidence["summary"].startswith("Findings for")
+    assert evidence["summary"].startswith("- Finding from src_")
     assert evidence["sources"][0]["mcp_server"] == "controlled"
     assert evidence["sources"][0]["provenance"]["query"] == todo.research_question
     assert evidence["sources"][1]["provenance"]["query"] == narrow
     assert evidence["sources"][0]["content_hash"]
     notes = vfs.read("run", f"research/{todo.todo_id}/notes/result.md").decode()
     assert "## Findings" in notes and "Search calls: 2/5" in notes
+    report = json.loads(vfs.read("run", f"research/{todo.todo_id}/report.json"))
+    assert report["points"][0]["status"] == "answered"
+    assert report["stop_reason"] == "model_finished" and report["report_status"] == "complete"
     assert all(chunk.metadata["locator"].startswith("https://") for chunk in chunks)
 
 
@@ -97,15 +108,19 @@ def test_search_budget_is_a_hard_per_task_limit_and_gaps_are_recorded(stores):
             }
         },
     )
-    mcp = ControlledMCP([{"url": "https://primary.test/partial", "content": "Partial evidence"}])
+    # Each search finds one new page, so the searcher keeps making progress until its budget.
+    mcp = ControlledMCP(
+        [[{"url": f"https://primary.test/partial-{n}", "content": "Partial evidence"}] for n in range(8)]
+    )
 
     completed, _, _ = run_worker(vfs, index, "limited", todo, _researcher(model, lambda: mcp))
 
     evidence = json.loads(vfs.read("limited", f"research/{todo.todo_id}/evidence/result.json"))
     assert mcp.calls == 5
     assert completed.status == TodoStatus.COMPLETED  # best available outcome, gap recorded
+    # A point the report leaves missing is the task's unresolved gap.
     assert evidence["sufficient"] is False
-    assert evidence["unresolved_gaps"] == ["cross-platform confirmation"]
+    assert evidence["unresolved_gaps"] == [todo.research_question]
     assert evidence["search_calls"] == 5
 
 
@@ -186,17 +201,32 @@ def test_mcp_failure_is_persisted_as_task_outcome_without_leaking_key(stores):
     vfs, index = stores
     todo = ResearchTodo(research_question="Find primary documentation")
 
+    queries = [todo.research_question, "primary documentation site", "official reference"]
+    model = FakeResearchModel(queries={todo.research_question: queries})
     completed, refs, chunks = run_worker(
-        vfs, index, "failed", todo, _researcher(FakeResearchModel(), FailingMCP)
+        vfs, index, "failed", todo, _researcher(model, FailingMCP)
     )
 
     outcome_text = vfs.read("failed", f"research/{todo.todo_id}/outcome.json").decode()
     outcome = json.loads(outcome_text)
     assert completed.status == TodoStatus.FAILED
-    assert [ref.kind for ref in refs] == ["research_outcome"] and chunks == []
+    assert [ref.kind for ref in refs] == [
+        "result_evaluations",
+        "passage_lookups",
+        "searcher_report",
+        "research_outcome",
+    ]
+    assert chunks == []
     assert outcome["status"] == "failed"
+    assert outcome["failure_kind"] == "technical"
     assert "TimeoutError" in outcome["error"]
     assert "super-secret" not in outcome_text
+    # Two failed searches in a row end the search (FR-007); the record keeps no credential.
+    record_text = vfs.read("failed", f"research/{todo.todo_id}/evaluations.json").decode()
+    record = json.loads(record_text)
+    assert record["stop_reason"] == "search_failures" and len(record["queries"]) == 2
+    assert record["failure_kind"] == "technical"
+    assert "super-secret" not in record_text
 
 
 def test_supervisor_delegates_one_sub_agent_per_todo_in_parallel(stores):
@@ -222,7 +252,12 @@ def test_supervisor_delegates_one_sub_agent_per_todo_in_parallel(stores):
             return super().search(query, **kwargs)
 
     def factory():
-        client = SlowMCP([{"url": f"https://primary.test/{len(clients)}", "content": "evidence"}])
+        client = SlowMCP(
+            [
+                [{"url": f"https://primary.test/{len(clients)}/{i}", "content": "evidence"}]
+                for i in range(4)
+            ]
+        )
         clients.append(client)
         return client
 
@@ -301,13 +336,13 @@ def test_sub_agent_does_not_repeat_a_url_it_already_retrieved(stores):
     )
     captured = []
     researcher = _researcher(model, lambda: mcp)
-    original = researcher.research
+    original = researcher.search
 
-    def research(question, **kwargs):
+    def search(question, **kwargs):
         captured.append(original(question, **kwargs))
         return captured[-1]
 
-    researcher.research = research
+    researcher.search = search
     _, refs, chunks = run_worker(vfs, index, "seen", todo, researcher)
 
     assert [s["url"] for s in captured[0].sources] == [
@@ -426,3 +461,89 @@ def test_failing_sub_agent_does_not_cancel_siblings(stores):
     assert results == {"Works": TodoStatus.COMPLETED, "Breaks": TodoStatus.FAILED}
     outcome = json.loads(vfs.read("mixed", f"research/{broken.todo_id}/outcome.json"))
     assert "Research sub-agent failed" in outcome["error"]
+
+
+class RejectingModel(FakeResearchModel):
+    """FakeResearchModel whose result evaluator rejects every row whose URL contains "spam"."""
+
+    def invoke(self, messages, config=None):
+        import re
+
+        from langchain_core.messages import AIMessage
+
+        if str(messages[0].content).startswith("You evaluate web search results"):
+            rows = re.findall(r"^\[(\d+)\] .*\nURL: (\S+)", str(messages[-1].content), re.M)
+            return AIMessage(content=json.dumps({"rows": [
+                {"index": int(n), "decision": "rejected", "reason": "off_topic"}
+                if "spam" in url
+                else {"index": int(n), "decision": "accepted", "covers": []}
+                for n, url in rows
+            ]}))
+        return super().invoke(messages, config)
+
+
+def test_rejected_results_are_never_captured_claimed_or_indexed(stores):
+    from intelligence_collector.tools.url_tracking import UrlClaims
+
+    vfs, index = stores
+    todo = ResearchTodo(todo_id="t-keep", research_question="SQLite write locking")
+    long_page = "\n\n".join(f"Paragraph {n} about SQLite locking. " * 20 for n in range(12))
+    mcp = ControlledMCP(
+        [
+            {"url": "https://docs.test/locking", "content": "SQLite locking", "raw_content": long_page},
+            {"url": "https://spam.test/ads", "content": "Buy now", "raw_content": "Buy now " * 200},
+        ]
+    )
+    claims = UrlClaims()
+    researcher = _researcher(RejectingModel(), lambda: mcp)
+
+    from intelligence_collector.agents.search_task import SearchTask
+
+    task = SearchTask(vfs, index, researcher, "run", todo, todo.research_question, {"t-keep"})
+    completed, refs, chunks = task.run(claims)
+
+    assert completed.status == TodoStatus.COMPLETED
+    assert claims.owner("https://spam.test/ads") is None
+    assert claims.owner("https://docs.test/locking") == "t-keep"
+    assert {chunk.metadata["locator"] for chunk in chunks} == {"https://docs.test/locking"}
+    # Every chunk of the cleaned page is indexed, not only the passages selected for the searcher.
+    from intelligence_collector.storage.evidence_index import chunk_texts
+    from intelligence_collector.tools.page_content import clean_page
+
+    page, _ = clean_page(long_page)
+    assert len(chunks) == len(chunk_texts("", page)) > 3
+    assert len(index.documents("run")) == len(chunks)
+    record = json.loads(vfs.read("run", f"research/{todo.todo_id}/evaluations.json"))
+    decisions = {e["url"]: (e["decision"], e["reason"]) for e in record["evaluations"]}
+    assert decisions == {
+        "https://docs.test/locking": ("accepted", None),
+        "https://spam.test/ads": ("rejected", "off_topic"),
+    }
+    bundle = json.loads(vfs.read("run", f"research/{todo.todo_id}/evidence/result.json"))
+    assert [s["locator"] for s in bundle["sources"]] == ["https://docs.test/locking"]
+
+
+def test_page_accepted_by_two_parallel_tasks_is_stored_once(stores):
+    vfs, index = stores
+    todos = [ResearchTodo(research_question=f"Shared question {n}") for n in range(2)]
+    shared = {"url": "https://shared.test/page", "content": "shared facts", "raw_content": "shared facts " * 80}
+
+    supervisor = ResearchSupervisor(
+        _researcher(FakeResearchModel(), lambda: ControlledMCP([shared])),
+        vfs,
+        index,
+        max_concurrent_researchers=2,
+    )
+    results = supervisor.delegate("shared", todos)
+
+    captures = [
+        json.loads(vfs.read("shared", f"research/{todo.todo_id}/evidence/result.json"))["sources"]
+        for todo, _, _ in results
+    ]
+    assert all(len(sources) == 1 for sources in captures)
+    stored = [s for sources in captures for s in sources if not s.get("reused_from_task")]
+    assert len(stored) == 1  # one capture; the other task references it
+    locators = {c.metadata["locator"] for c in index.documents("shared")}
+    assert locators == {"https://shared.test/page"}
+    chunk_ids = [c.chunk_id for c in index.documents("shared")]
+    assert len(chunk_ids) == len(set(chunk_ids))

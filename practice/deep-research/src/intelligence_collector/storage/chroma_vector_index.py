@@ -112,6 +112,7 @@ class ChromaVectorIndex:
                     "locator": str(chunk.metadata.get("locator", "")),
                     "source_id": chunk.source_id,
                     "artifact_id": chunk.artifact_id,
+                    "chunk_index": int(chunk.metadata.get("chunk_index", 0) or 0),
                 }
                 for chunk in chunks
             ],
@@ -156,4 +157,25 @@ class ChromaVectorIndex:
                 },
             )
             for chunk_id, text, metadata in zip(ids[0], documents[0], metadatas[0])
+        ]
+
+    def documents(self, run_id: str) -> list[IndexedChunk]:
+        """Every chunk stored for `run_id` (no embedding call)."""
+        result = self._collection.get(where={"run_id": run_id}, include=["documents", "metadatas"])
+        return [
+            IndexedChunk(
+                chunk_id=chunk_id,
+                source_id=metadata.get("source_id", ""),
+                artifact_id=metadata.get("artifact_id", ""),
+                text=text or "",
+                metadata={
+                    "run_id": metadata.get("run_id", ""),
+                    "todo_id": metadata.get("todo_id", ""),
+                    "locator": metadata.get("locator", ""),
+                    "chunk_index": metadata.get("chunk_index", 0),
+                },
+            )
+            for chunk_id, text, metadata in zip(
+                result.get("ids") or [], result.get("documents") or [], result.get("metadatas") or []
+            )
         ]

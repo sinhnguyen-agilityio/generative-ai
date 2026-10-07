@@ -34,6 +34,7 @@ def main():
     from intelligence_collector.agents.scope import ScopeAgent
     from intelligence_collector.agents.researcher import ResearchAgent
     from intelligence_collector.agents.report_judge import ReportJudge
+    from intelligence_collector.agents.claim_judge import ClaimJudge
     from intelligence_collector.config import Settings, RoleModelSettings
     from intelligence_collector.graph.build import build_graph
     from intelligence_collector.graph.nodes import ResearchNodes
@@ -94,6 +95,7 @@ def main():
         researcher,
         report_judge=ReportJudge(routers.reasoning),
         require_faithfulness=True,
+        claim_judge=ClaimJudge(routers.reasoning),
         report_guidelines=settings.report_guidelines,
         max_concurrent_researchers=settings.max_concurrent_researchers,
         recovery_budget=settings.recovery_attempts,

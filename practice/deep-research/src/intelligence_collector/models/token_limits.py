@@ -10,7 +10,10 @@ DEFAULT_OUTPUT_LIMITS = {
     "planner": 1024,
     "supervisor": 1024,
     "researcher": 512,
-    "research_compressor": 1536,
+    "result_evaluator": 1024,
+    "query_rewriter": 512,
+    "searcher_report": 1536,
+    "claim_judge": 3072,
     "synthesizer": 2048,
     "fixer": 768,
     "verify": 3072,
@@ -19,12 +22,18 @@ DEFAULT_OUTPUT_LIMITS = {
 }
 
 
+# research_compressor became searcher_report (spec 002); research_verify was removed earlier.
+RETIRED_ROLES = frozenset({"research_compressor", "research_verify"})
+
+
 def output_limits_from_env() -> dict[str, int]:
     if os.getenv("INTELLIGENCE_DISABLE_OUTPUT_CAPS", "").lower() in {"1", "true"}:
         return {}
     overrides = json.loads(os.getenv("INTELLIGENCE_NODE_OUTPUT_TOKENS", "{}"))
     if not isinstance(overrides, dict):
         raise ValueError("INTELLIGENCE_NODE_OUTPUT_TOKENS must be a JSON object")
+    # Roles that no longer exist are ignored, so an older .env keeps working.
+    overrides = {k: v for k, v in overrides.items() if k not in RETIRED_ROLES}
     if set(overrides) - DEFAULT_OUTPUT_LIMITS.keys():
         raise ValueError("INTELLIGENCE_NODE_OUTPUT_TOKENS contains unknown roles")
     if any(type(value) is not int or not 64 <= value <= 32768 for value in overrides.values()):

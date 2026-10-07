@@ -1,5 +1,5 @@
-"""The side panel: Run (agent cards, verification gates, quality signals, research limits),
-Sources, Activity and Details tabs.
+"""The side panel: Run (agent cards, verification gates, claim verdicts, quality signals,
+research limits), Sources, Activity (with research rounds) and Details tabs.
 
 Agent cards and the activity log render into placeholders held by ``LivePanel``, so a running
 chat turn redraws them after every graph step.
@@ -16,13 +16,25 @@ from intelligence_collector.agents.supervisor import read_supervisor_log
 from intelligence_collector.config import Settings
 from intelligence_collector.contracts import FAITHFULNESS_THRESHOLD
 from intelligence_collector.source_verification import load_catalog
-from intelligence_collector.ui.evidence import SourceView, bundle_sources, todo_bundle
+from intelligence_collector.ui.evidence import (
+    SourceView,
+    bundle_sources,
+    claim_views,
+    research_rounds,
+    snippet_only_urls,
+    task_research,
+    todo_bundle,
+)
 from intelligence_collector.ui.html import (
     agent_header_html,
+    cited_text_html,
+    claim_html,
     domain,
     gates_html,
+    rounds_html,
     section_label_html,
     supervisor_log_html,
+    task_research_html,
     verification_gates,
 )
 from intelligence_collector.ui.run_status import (
@@ -75,6 +87,7 @@ def render_panel(snapshot: dict, vfs) -> LivePanel:
             with st.container(height=PIPELINE_HEIGHT, border=False):
                 agents = {agent: st.empty() for _, agent in AGENTS}
             _run_checks(snapshot)
+            _claims(snapshot, vfs)
             _research_limits()
         with sources_tab:
             _sources(snapshot, vfs)
@@ -136,7 +149,13 @@ def _research_body(status: str, snapshot: dict, vfs) -> None:
             continue
         bundle = todo_bundle(vfs, run_id, todo) if run_id else {}
         sources = bundle_sources(bundle)
-        with st.expander(record_value(todo, "research_question", "Untitled task")):
+        title = record_value(todo, "research_question", "Untitled task")
+        if record_value(todo, "origin") == "follow_up":
+            gaps = ", ".join(record_value(todo, "gap_point_ids", []) or [])
+            title = f"Follow-up (round {record_value(todo, 'round', 2)}): {title}" + (
+                f" · gaps {gaps}" if gaps else ""
+            )
+        with st.expander(title):
             rounds = int(record_value(todo, "research_attempt", 1) or 1)
             if not bundle:
                 verdict = "no evidence bundle"
@@ -145,7 +164,10 @@ def _research_body(status: str, snapshot: dict, vfs) -> None:
             else:
                 verdict = "gaps: " + "; ".join(bundle.get("unresolved_gaps") or ["unknown"])
             plural = "s" if len(sources) != 1 else ""
-            st.caption(f"Round {rounds} · {len(sources)} source{plural} · {verdict}")
+            st.caption(f"Attempt {rounds} · {len(sources)} source{plural} · {verdict}")
+            research = task_research(vfs, run_id, todo) if run_id else None
+            if research is not None:
+                html(task_research_html(research))
             if not sources:
                 st.caption("No sources recorded.")
             for source in sources:
@@ -160,6 +182,8 @@ def _source_summary(source: SourceView) -> None:
         meta.append("full page stored and indexed")
     if source.linked:
         meta.append("found by another task")
+    if source.snippet_only:
+        meta.append("snippet only")
     st.caption(" · ".join(meta))
     if source.summary:
         st.caption(source.summary[:280] + ("…" if len(source.summary) > 280 else ""))
@@ -200,7 +224,7 @@ def _run_checks(snapshot: dict) -> None:
     verification = snapshot_verification(snapshot)
     if verification is not None:
         html(section_label_html("Verification gates"))
-        html(gates_html(verification_gates(verification, snapshot.get("faithfulness_score"))))
+        html(gates_html(verification_gates(verification, snapshot.get("claim_support_score"))))
     present = [
         (key, label)
         for key, label in QUALITY_METRICS
@@ -217,9 +241,26 @@ def _run_checks(snapshot: dict) -> None:
             else:
                 st.caption(f"{label} unavailable: {snapshot.get(key + '_error')}")
     faithfulness = snapshot.get("faithfulness_score")
-    # Same rule as the verification gate: the score must be strictly above the threshold.
+    # Informational only (spec 002, FR-026a): a low RAGAS score never blocks the report.
     if faithfulness is not None and not faithfulness > FAITHFULNESS_THRESHOLD:
         st.warning(f"Not above the {FAITHFULNESS_THRESHOLD:.0%} faithfulness threshold.")
+
+
+def _claims(snapshot: dict, vfs) -> None:
+    """The claim verdicts of the verified draft. Each sentence opens to the exact text the
+    judge read for every source it cites (SC-006)."""
+    claims = claim_views(vfs, snapshot.get("run_id", ""), snapshot)
+    if not claims:
+        return
+    failing = sum(not claim.passed for claim in claims)
+    html(section_label_html(f"Claims · {len(claims) - failing} of {len(claims)} supported"))
+    for claim in claims:
+        mark = "✓" if claim.passed else "✗"
+        with st.expander(f"{mark} {claim.claim_id} · {claim.sentence[:90]}"):
+            html(claim_html(claim))
+            for source in claim.sources:
+                html(cited_text_html(source))
+                st.text(source.text or "(no stored text)")
 
 
 def _research_limits() -> None:
@@ -250,8 +291,10 @@ def _sources(snapshot: dict, vfs) -> None:
         st.caption("The stored evidence could not be read.")
         return
     st.caption(f"{len(catalog.sources)} sources collected in this run")
+    snippets = snippet_only_urls(vfs, run_id, list(snapshot.get("todos") or []))
     for sid, source in catalog.sources.items():
-        with st.expander(f"{sid} · {source.title or domain(source.url)}"):
+        label = f"{sid} · {source.title or domain(source.url)}"
+        with st.expander(label + (" · snippet only" if source.url in snippets else "")):
             st.markdown(f"[{domain(source.url) or source.url}]({source.url})")
             st.markdown(source.excerpt or "_No excerpt recorded._")
 
@@ -278,6 +321,10 @@ def _supervisor_log(snapshot: dict, vfs) -> None:
     if entries:
         html(section_label_html("Research supervisor"))
         html(supervisor_log_html(entries, task_numbers(snapshot)))
+    rounds = research_rounds(vfs, snapshot["run_id"]) if snapshot.get("run_id") else []
+    if rounds:
+        html(section_label_html("Research rounds"))
+        html(rounds_html(rounds))
 
 
 # ----- Details tab -----

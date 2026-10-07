@@ -15,6 +15,13 @@ def normalize_checkpoint(state: dict) -> dict:
         "verifier_attempt": 0,
         "reviewer_requests": [],
         "research_gaps": [],
+        # Supervisor–searcher rounds (spec 002).
+        "research_round": 1,
+        "gap_stall_count": 0,
+        "follow_up_count": 0,
+        "gap_analysis": None,
+        "claim_support_score": None,
+        "claim_evaluation_ref": "",
     }.items():
         result.setdefault(name, value)
     # Preserve consumed legacy allowance; never grant another automatic attempt on restart.
@@ -36,7 +43,31 @@ def normalize_checkpoint(state: dict) -> dict:
     if result.get("verification_issue") == "research_verifier_failure":
         result["verification_issue"] = VerificationIssue.RESEARCH_FAILURE.value
     if "todos" in result:
+        checklist = _checklist(result.get("scoped_request"))
         result["todos"] = [
-            {"research_attempt": 1, "research_instruction": "", **todo} for todo in result["todos"]
+            _with_evidence_points(
+                {"research_attempt": 1, "research_instruction": "", **todo}, checklist
+            )
+            for todo in result["todos"]
         ]
     return result
+
+
+def _checklist(brief) -> list[str]:
+    """The brief's required answers, or its question when it lists none (``ResearchBrief``)."""
+    brief = brief or {}
+    question = str(brief.get("research_question") or "").strip()
+    return list(brief.get("required_answers") or []) or ([question] if question else [])
+
+
+def _with_evidence_points(todo: dict, checklist: list[str]) -> dict:
+    """A todo planned before evidence points existed gets one point, linked to every required
+    answer so that a missing answer still counts as essential. The stored plan and its hash are
+    not touched."""
+    if todo.get("evidence_points"):
+        return todo
+    text = str(todo.get("evidence_needed") or todo.get("research_question") or "").strip()
+    if not text:
+        return todo
+    point = {"point_id": "E1", "text": text[:300], "required_answers": list(checklist)}
+    return {**todo, "evidence_points": [point]}

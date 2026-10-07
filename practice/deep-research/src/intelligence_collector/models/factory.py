@@ -26,8 +26,10 @@ class ModelConfig:
 class ModelRouters(NamedTuple):
     """The two tiers; each agent is constructed with the one it needs.
 
-    reasoning: scope, planner, report judge (verify), feedback classifier.
-    standard: researcher, compressor, synthesizer, fixer, scope guardrail, extension judge.
+    reasoning: scope, planner, supervisor (incl. gap analysis), report judge (verify), claim
+    judge, feedback classifier.
+    standard: researcher, result evaluator, query rewriter, searcher report, synthesizer, fixer,
+    scope guardrail, extension judge.
     """
 
     reasoning: ModelRouter

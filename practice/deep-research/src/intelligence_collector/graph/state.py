@@ -81,6 +81,15 @@ class GraphState(TypedDict, total=False):
     research_status: str
     research_limitations: list[str]
     result_incomplete: bool
+    # Supervisor–searcher rounds (spec 002): the current round, consecutive follow-up rounds that
+    # closed no essential gap, follow-up tasks created, and the latest gap analysis
+    research_round: int
+    gap_stall_count: int
+    follow_up_count: int
+    gap_analysis: dict | None
+    # Claim-level faithfulness gate of the latest evaluated draft (share of supported claims)
+    claim_support_score: float | None
+    claim_evaluation_ref: str
     # Publication
     approval: dict | None
     publication: dict | None

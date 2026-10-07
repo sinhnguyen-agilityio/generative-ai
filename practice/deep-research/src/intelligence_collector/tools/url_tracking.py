@@ -81,6 +81,14 @@ class UrlRegistry:
         """Normalized URL -> id of the task that first captured it."""
         return {key: str(entry.get("task_id", "")) for key, entry in self._entries.items()}
 
+    def source_ids(self, task_ids: set[str] | None = None) -> set[str]:
+        """Source ids of the pages captured by `task_ids` (every task when None)."""
+        return {
+            str(entry.get("source_id", ""))
+            for entry in self._entries.values()
+            if entry.get("source_id") and (task_ids is None or entry.get("task_id") in task_ids)
+        }
+
     def save(self, vfs: ArtifactStore, run_id: str):
         """Persist only when something new was registered; returns the artifact ref or None."""
         if not self._dirty:

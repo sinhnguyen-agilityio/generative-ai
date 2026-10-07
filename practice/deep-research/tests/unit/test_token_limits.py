@@ -77,3 +77,15 @@ def test_router_caps_primary_and_fallback_before_binding_schema():
         "scope", [], ScopeAssessment
     )
     assert seen == [128, 128]
+
+
+def test_retired_roles_in_an_older_env_are_ignored(monkeypatch):
+    from intelligence_collector.models.token_limits import output_limits_from_env
+
+    monkeypatch.setenv(
+        "INTELLIGENCE_NODE_OUTPUT_TOKENS",
+        '{"research_compressor": 1536, "research_verify": 2048, "searcher_report": 900}',
+    )
+    limits = output_limits_from_env()
+    assert limits["searcher_report"] == 900
+    assert "research_compressor" not in limits and "research_verify" not in limits

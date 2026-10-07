@@ -58,6 +58,7 @@ def _plan_payload():
             "What operational and deployment trade-offs do PostgreSQL and SQLite have for local "
             "Python applications, according to primary technical sources?",
         ],
+        "evidence_points": [[{"text": "evidence answering the question", "required_answers": [1]}], [{"text": "evidence answering the question", "required_answers": [1]}]],
     }
 
 

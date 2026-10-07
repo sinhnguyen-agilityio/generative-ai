@@ -4,6 +4,7 @@ verification, approval and publication records.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
@@ -325,6 +326,141 @@ class ResearchBrief(Model):
         return self.required_answers or [self.research_question]
 
 
+# ===== SUPERVISOR–SEARCHER RESEARCH (spec 002) =====
+
+
+class PointStatus(str, Enum):
+    """How far a searcher's evidence answers one evidence point."""
+
+    ANSWERED = "answered"
+    PARTIAL = "partial"
+    MISSING = "missing"
+
+
+class RejectReason(str, Enum):
+    """Why a searcher did not keep a search result."""
+
+    OFF_TOPIC = "off_topic"
+    NO_USABLE_CONTENT = "no_usable_content"
+    DUPLICATE = "duplicate"
+    LOW_CREDIBILITY = "low_credibility"
+    OUTSIDE_SCOPE = "outside_scope"
+
+
+class StopReason(str, Enum):
+    """Why a searcher stopped searching (the first condition that held)."""
+
+    ALL_POINTS_COVERED = "all_points_covered"
+    SEARCH_BUDGET_SPENT = "search_budget_spent"
+    PAGE_BUDGET_FULL = "page_budget_full"
+    NO_PROGRESS = "no_progress"
+    SEARCH_FAILURES = "search_failures"
+    MODEL_FINISHED = "model_finished"
+
+
+class ReportStatus(str, Enum):
+    """Whether a searcher report was used as written, corrected by code, or unreadable."""
+
+    COMPLETE = "complete"
+    CORRECTED = "corrected"
+    UNREADABLE = "unreadable"
+
+
+class FailureKind(str, Enum):
+    """Why a task produced no usable evidence: a technical failure or nothing relevant found."""
+
+    TECHNICAL = "technical"
+    CONTENT = "content"
+
+
+class TaskOrigin(str, Enum):
+    """Whether a research task comes from the approved plan or from gap analysis."""
+
+    PLAN = "plan"
+    FOLLOW_UP = "follow_up"
+
+
+class ClaimVerdict(str, Enum):
+    """How far a report sentence's cited passages support it."""
+
+    SUPPORTED = "supported"
+    PARTLY_SUPPORTED = "partly_supported"
+    UNSUPPORTED = "unsupported"
+    CONTRADICTED = "contradicted"
+
+
+MAX_EVIDENCE_POINTS = 4
+MAX_EVIDENCE_POINT_CHARS = 300
+_POINT_ID = re.compile(r"^E[1-4]$")
+
+
+class EvidencePoint(Model):
+    """One specific thing a research task must find, approved with the plan.
+
+    ``required_answers`` holds the brief checklist items it serves; a point linked to none is
+    non-essential: missing it never creates a follow-up task.
+    """
+
+    point_id: str
+    text: str = Field(min_length=1, max_length=MAX_EVIDENCE_POINT_CHARS)
+    required_answers: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_point(self):
+        if not _POINT_ID.match(self.point_id):
+            raise ValueError("evidence point ids are E1..E4")
+        self.text = self.text.strip()
+        if not self.text:
+            raise ValueError("evidence point text must not be blank")
+        self.required_answers = _clean_items(self.required_answers)
+        return self
+
+    @property
+    def essential(self) -> bool:
+        return bool(self.required_answers)
+
+
+class EvidencePointDraft(Model):
+    """Planner (or supervisor follow-up) output for one evidence point: the text and the 1-based
+    indexes of the required answers it serves."""
+
+    text: str = Field(min_length=1, max_length=MAX_EVIDENCE_POINT_CHARS)
+    required_answers: list[int] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_draft(self):
+        self.text = self.text.strip()
+        if not self.text:
+            raise ValueError("evidence point text must not be blank")
+        if any(index < 1 for index in self.required_answers):
+            raise ValueError("required_answers are 1-based indexes")
+        self.required_answers = list(dict.fromkeys(self.required_answers))
+        return self
+
+
+def evidence_points_from_drafts(
+    drafts: list[EvidencePointDraft], checklist: list[str]
+) -> list[EvidencePoint]:
+    """Number the drafts E1.. and resolve their indexes to checklist texts. Raises ``ValueError``
+    for an index outside the checklist."""
+    points = []
+    for number, draft in enumerate(drafts, start=1):
+        bad = [i for i in draft.required_answers if i > len(checklist)]
+        if bad:
+            raise ValueError(
+                f"required_answers {bad} are outside 1..{len(checklist)} for: {draft.text}"
+            )
+        points.append(
+            EvidencePoint(
+                point_id=f"E{number}",
+                text=draft.text,
+                required_answers=[checklist[i - 1] for i in draft.required_answers],
+            )
+        )
+    return points
+
+
+
 class ResearchTodo(Model):
     """One planned research question and its status."""
 
@@ -334,11 +470,23 @@ class ResearchTodo(Model):
     research_attempt: int = Field(default=1, ge=1)
     research_instruction: str = ""
     evidence_needed: str = ""
+    # 1-4 for planned tasks; empty only on todos from checkpoints older than evidence points
+    # (graph/migration.py derives one point for those).
+    evidence_points: list[EvidencePoint] = Field(
+        default_factory=list, max_length=MAX_EVIDENCE_POINTS
+    )
+    origin: TaskOrigin = TaskOrigin.PLAN
+    round: int = Field(default=1, ge=1)
+    # For a follow-up: the "todo_id:point_id" gaps that prompted it (it is not linked to them).
+    gap_point_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_question(self):
         if not self.research_question.strip():
             raise ValueError("research todo question must not be blank")
+        ids = [point.point_id for point in self.evidence_points]
+        if len(ids) != len(set(ids)):
+            raise ValueError("evidence point ids must be unique within a task")
         return self
 
 
@@ -351,6 +499,11 @@ class TodoPlan(Model):
 
     questions: list[str] = Field(min_length=1, max_length=MAX_PLANNED_QUESTIONS)
     evidence_needed: list[str] = Field(default_factory=list, max_length=MAX_PLANNED_QUESTIONS)
+    # Per question, in the same order: 1-4 evidence points with the 1-based indexes of the
+    # required answers each serves. Index ranges are checked against the brief by the planner.
+    evidence_points: list[list[EvidencePointDraft]] = Field(
+        min_length=1, max_length=MAX_PLANNED_QUESTIONS
+    )
     report_shape: str = ""
 
     @model_validator(mode="after")
@@ -363,6 +516,11 @@ class TodoPlan(Model):
         self.evidence_needed = [item.strip() for item in self.evidence_needed][
             : len(self.questions)
         ]
+        if len(self.evidence_points) != len(self.questions):
+            raise ValueError("evidence_points must give one list per question, in order")
+        for points in self.evidence_points:
+            if not 1 <= len(points) <= MAX_EVIDENCE_POINTS:
+                raise ValueError(f"each question needs 1 to {MAX_EVIDENCE_POINTS} evidence points")
         self.report_shape = self.report_shape.strip()
         return self
 
@@ -544,3 +702,238 @@ class ExtensionEvidenceVerdict(Model):
     relevant_source_ids: list[str] = Field(default_factory=list)
     missing_points: list[str] = Field(default_factory=list)
     summary: str = ""
+
+
+class ResultRowDecision(Model):
+    """Result evaluator output for one search row (by its 1-based index in the batch)."""
+
+    index: int = Field(ge=1)
+    decision: Literal["accepted", "rejected"]
+    reason: Literal["off_topic", "low_credibility", "outside_scope"] | None = None
+    covers: list[str] = Field(default_factory=list)
+
+
+class ResultEvaluationBatch(Model):
+    """Structured output of the result evaluator for one search."""
+
+    rows: list[ResultRowDecision] = Field(default_factory=list)
+
+
+class ResultEvaluation(Model):
+    """One search result's decision for one task (stored in ``evaluations.json``)."""
+
+    url: str
+    title: str = ""
+    query: str = ""
+    search_index: int = Field(ge=1)
+    decision: Literal["accepted", "rejected"]
+    reason: RejectReason | None = None
+    covers: list[str] = Field(default_factory=list)
+    linked_to_task: str | None = None
+    snippet_only: bool = False
+
+    @model_validator(mode="after")
+    def validate_decision(self):
+        if self.decision == "rejected":
+            if self.reason is None:
+                raise ValueError("a rejected result needs a reason")
+            if self.covers:
+                raise ValueError("a rejected result covers no evidence point")
+            if self.snippet_only:
+                raise ValueError("snippet_only applies to accepted results")
+        elif self.reason is not None:
+            raise ValueError("an accepted result has no rejection reason")
+        return self
+
+
+MAX_QUOTE_WORDS = 30
+MAX_REPORT_FINDINGS = 5
+
+
+class PointSupport(Model):
+    """One source behind an answered or partial evidence point, with a verbatim quote."""
+
+    source_id: str = Field(min_length=1)
+    quote: str = Field(min_length=1)
+
+
+class PointReport(Model):
+    """A searcher's status for one evidence point."""
+
+    point_id: str
+    status: PointStatus
+    support: list[PointSupport] = Field(default_factory=list)
+    lookup_used: bool = False
+
+    @model_validator(mode="after")
+    def validate_support(self):
+        if self.status != PointStatus.MISSING and not self.support:
+            raise ValueError("an answered or partial point needs at least one supporting quote")
+        return self
+
+
+class Finding(Model):
+    """One key finding of a searcher report, citing accepted sources."""
+
+    text: str = Field(min_length=1)
+    source_ids: list[str] = Field(min_length=1)
+
+
+class PointReportDraft(Model):
+    """Searcher-report model output for one point (validated and corrected by code)."""
+
+    point_id: str
+    status: PointStatus
+    support: list[PointSupport] = Field(default_factory=list)
+
+
+class SearcherReportDraft(Model):
+    """Structured output of the searcher-report call."""
+
+    points: list[PointReportDraft] = Field(default_factory=list)
+    findings: list[Finding] = Field(default_factory=list)
+
+
+class SearcherReport(Model):
+    """The short structured result of one research task (contracts/searcher-report.md)."""
+
+    todo_id: str
+    points: list[PointReport]
+    findings: list[Finding] = Field(default_factory=list, max_length=MAX_REPORT_FINDINGS)
+    accepted_count: int = Field(default=0, ge=0)
+    rejected_count: int = Field(default=0, ge=0)
+    queries: list[str] = Field(default_factory=list)
+    stop_reason: StopReason
+    failure_kind: FailureKind | None = None
+    report_status: ReportStatus = ReportStatus.COMPLETE
+    corrections: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_report(self):
+        ids = [point.point_id for point in self.points]
+        if len(ids) != len(set(ids)):
+            raise ValueError("one entry per evidence point")
+        if self.report_status == ReportStatus.COMPLETE and self.corrections:
+            raise ValueError("a corrected report must say so")
+        return self
+
+
+class PassageLookupRecord(Model):
+    """One stored-passage lookup for one evidence point."""
+
+    lookup_id: str = Field(default_factory=lambda: str(uuid4()))
+    requested_by: str
+    point_key: str
+    queries: list[str] = Field(default_factory=list)
+    allowed_source_ids: list[str] = Field(default_factory=list)
+    results: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    fallback: Literal["none", "vector_only", "combined_query_only"] = "none"
+    error: str = ""
+
+
+class Gap(Model):
+    """One missing or partial evidence point in a gap analysis."""
+
+    point_key: str
+    text: str
+    status: PointStatus
+    essential: bool
+    required_answers: list[str] = Field(default_factory=list)
+    resolution: Literal[
+        "covered_by_report", "covered_by_lookup", "follow_up", "limitation", "open"
+    ] = "open"
+    covering_source_id: str = ""
+    quote: str = ""
+    lookup_id: str = ""
+    justification: str = ""
+
+
+class GapAnalysis(Model):
+    """The supervisor's analysis at the end of one research round."""
+
+    round: int = Field(ge=1)
+    gaps: list[Gap] = Field(default_factory=list)
+    follow_ups: list[str] = Field(default_factory=list)
+    refusals: list[dict[str, Any]] = Field(default_factory=list)
+    closed_essential: int = Field(default=0, ge=0)
+    stall_count: int = Field(default=0, ge=0)
+    turns_used: int = Field(default=0, ge=0, le=4)
+    turn_limit_reached: bool = False
+    ended: Literal[
+        "no_essential_gaps", "caps_reached", "stalled", "turn_limit", "follow_ups_created"
+    ] = "no_essential_gaps"
+
+
+class Claim(Model):
+    """One fact-stating sentence of a draft and its claim-level verdict."""
+
+    claim_id: str
+    section: str = ""
+    sentence: str
+    cited_source_ids: list[str] = Field(default_factory=list)
+    states_fact: bool = True
+    verdict: ClaimVerdict | None = None
+    per_source: list[dict[str, Any]] = Field(default_factory=list)
+    unsupported_parts: list[str] = Field(default_factory=list)
+    failures: list[str] = Field(default_factory=list)
+
+
+class ClaimEvaluation(Model):
+    """Claim-level faithfulness and citation support of one draft (the faithfulness gate)."""
+
+    draft_version: int = Field(ge=0)
+    artifact_hash: str
+    claims: list[Claim] = Field(default_factory=list)
+    supported_share: float = Field(ge=0, le=1)
+    passed: bool
+
+class QueryPhrasings(Model):
+    """Alternative phrasings for one evidence point."""
+
+    point_id: str
+    phrasings: list[str] = Field(default_factory=list, max_length=3)
+
+
+class QueryRewrite(Model):
+    """Structured output of the query rewriter (2-3 phrasings per evidence point)."""
+
+    points: list[QueryPhrasings] = Field(default_factory=list)
+
+
+class GapCoverageVerdict(Model):
+    """The supervisor's judgment for one essential gap against looked-up passages."""
+
+    point_key: str
+    covered: bool
+    source_id: str = ""
+    quote: str = ""
+    justification: str = ""
+
+
+class GapCoverageBatch(Model):
+    """Structured output of the gap coverage judgment."""
+
+    gaps: list[GapCoverageVerdict] = Field(default_factory=list)
+
+
+class SourceSupport(Model):
+    """Whether one cited source supports part of a claim sentence."""
+
+    source_id: str
+    supports_part: bool
+
+
+class ClaimJudgment(Model):
+    """Claim judge output for one sentence."""
+
+    claim_id: str
+    states_fact: bool
+    verdict: ClaimVerdict
+    per_source: list[SourceSupport] = Field(default_factory=list)
+    unsupported_parts: list[str] = Field(default_factory=list)
+
+
+class ClaimJudgeBatch(Model):
+    """Structured output of one claim judge call."""
+
+    claims: list[ClaimJudgment] = Field(default_factory=list)

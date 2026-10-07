@@ -5,7 +5,7 @@ context would overflow it, and summarizing each page with an LLM costs one large
 page. Instead, as GPT Researcher's context compressor does, each page is cleaned and split into
 the chunks the vector index stores (``storage/evidence_index.chunk_texts``), the chunks are
 ranked against the research question and the search query, and the best few are kept VERBATIM,
-in page order. They become the result's ``content``: what the researcher, the compressor, the
+in page order. They become the result's ``content``: what the researcher, the result evaluator, the searcher report, the
 report writer and the verifiers read, so every gate checks real page text. The cleaned page stays
 in ``raw_content`` for the VFS and the vector index only.
 

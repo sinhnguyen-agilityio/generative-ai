@@ -40,6 +40,7 @@ def run_case(case: dict, label: str) -> dict:
 
     from intelligence_collector.agents.feedback_router import FeedbackRouter
     from intelligence_collector.agents.report_judge import ReportJudge
+    from intelligence_collector.agents.claim_judge import ClaimJudge
     from intelligence_collector.agents.researcher import ResearchAgent
     from intelligence_collector.agents.scope import ScopeAgent
     from intelligence_collector.config import RoleModelSettings, Settings
@@ -142,6 +143,7 @@ def run_case(case: dict, label: str) -> dict:
         report_judge=ReportJudge(routers.reasoning),
         report_guidelines=settings.report_guidelines,
         require_faithfulness=True,
+        claim_judge=ClaimJudge(routers.reasoning),
         max_concurrent_researchers=settings.max_concurrent_researchers,
         recovery_budget=settings.recovery_attempts,
         evidence_top_k=settings.evidence_top_k,

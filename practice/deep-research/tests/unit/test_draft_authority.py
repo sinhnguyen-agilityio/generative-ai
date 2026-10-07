@@ -43,6 +43,8 @@ STALE = {
     "context_precision_details": [{"question": "q", "score": 0.8}],
     "response_relevancy_score": 0.9,
     "response_relevancy_error": "old error",
+    "claim_support_score": 1.0,
+    "claim_evaluation_ref": "verification/claims.v1.json",
 }
 
 
@@ -152,3 +154,32 @@ def test_wrapper_merges_partial_updates_for_registry_and_persists_migrations():
     assert "run_id" not in result
     # The registry sees the run identity from the state and the status after the update.
     assert calls == [("run", "thread", WorkflowStatus.PUBLISHED, Stage.PUBLISHED.value)]
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        lambda tmp: PlannerNodes(_Planner(), VFS(tmp)).planning(_state(research_round=3)),
+        lambda tmp: ApprovalNodes(VFS(tmp), str(tmp / "exports"), _ScopeRouter()).classify_feedback(
+            _state(human_feedback="Different question", research_round=3)
+        ),
+        lambda tmp: RecoveryNodes(VFS(tmp)).apply(
+            _state(recovery_decision={"action": "rescope", "feedback": "Only SQLite"}, research_round=3)
+        ),
+    ],
+)
+def test_new_plan_or_scope_restarts_research_rounds(tmp_path, run):
+    result = run(tmp_path)
+    assert result["research_round"] == 1
+    assert result["gap_stall_count"] == 0 and result["follow_up_count"] == 0
+    assert result["gap_analysis"] is None
+
+
+class _Planner:
+    def plan(self, brief, vfs, run_id, thread_id=""):
+        return [ResearchTodo(research_question="What does 401 mean?")], ""
+
+
+class _ScopeRouter:
+    def route(self, *args, **kwargs):
+        return FeedbackDecision(route="scope")

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from intelligence_collector.ports import ArtifactStore
@@ -75,6 +76,50 @@ class SourceCatalog:
 def _normalize_url(url: str) -> str:
     """Normalize a source URL so the same page always maps to the same ``S<n>`` id."""
     return normalize_url(url.strip().rstrip(".,;:"))
+
+
+# ===== VERBATIM QUOTES =====
+
+_QUOTE_MARKS = str.maketrans(
+    {
+        "‘": "'",
+        "’": "'",
+        "‚": "'",
+        "‛": "'",
+        "“": '"',
+        "”": '"',
+        "„": '"',
+        "–": "-",
+        "—": "-",
+        "−": "-",
+        " ": " ",
+    }
+)
+_SPACES = re.compile(r"\s+")
+
+
+def normalize_for_quote(text: str) -> str:
+    """Comparable form of a quote or a stored passage: NFKC, unified quote marks and dashes,
+    casefolded, whitespace collapsed. Words, digits and punctuation are kept."""
+    text = unicodedata.normalize("NFKC", str(text)).translate(_QUOTE_MARKS)
+    return _SPACES.sub(" ", text.casefold()).strip()
+
+
+def quote_in_text(quote: str, text: str) -> bool:
+    """Whether `quote` appears verbatim (after normalization) in `text`. Blank quotes never do."""
+    needle = normalize_for_quote(quote).strip(" .\"'")
+    return bool(needle) and needle in normalize_for_quote(text)
+
+
+def verified_prefix(quote: str, text: str, max_words: int) -> str:
+    """The longest prefix of `quote` with at most `max_words` words that still appears in
+    `text`; "" when none does."""
+    words = quote.split()
+    for size in range(min(len(words), max_words), 0, -1):
+        candidate = " ".join(words[:size])
+        if quote_in_text(candidate, text):
+            return candidate
+    return ""
 
 
 def catalog_from_bundles(bundles: list[dict]) -> SourceCatalog:

@@ -17,6 +17,7 @@ from intelligence_collector.graph.nodes.common import (
     DEFAULT_RECOVERY_BUDGET,
     _activity,
     invalidate_draft_authority,
+    reset_research_rounds,
 )
 from intelligence_collector.ports import ArtifactStore
 from intelligence_collector.graph.state import GraphState
@@ -233,6 +234,7 @@ class ApprovalNodes:
         # and the attempt/stall counters restart.
         return {
             **update,
+            **reset_research_rounds(),
             "request": feedback,
             "human_feedback": "",
             "reviewer_requests": [],

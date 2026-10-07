@@ -22,7 +22,9 @@ from intelligence_collector.observability.tracing import annotate_current, enter
 # State fields exported to Langfuse as trace scores: {state key: (score name, producing node)}.
 # Only the node that computes a score exports it; later nodes carry the field forward unchanged.
 SCORE_FIELDS = {
-    "faithfulness_score": ("faithfulness", "verifying"),
+    # The claim-level gate (spec 002); RAGAS Faithfulness is informational, scored after it.
+    "claim_support_score": ("claim_support", "verifying"),
+    "faithfulness_score": ("faithfulness", "evaluating_quality"),
     "context_precision_score": ("context_precision", "evaluating_quality"),
     "response_relevancy_score": ("response_relevancy", "evaluating_quality"),
 }

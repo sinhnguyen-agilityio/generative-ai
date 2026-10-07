@@ -29,6 +29,10 @@ class VectorIndex(Protocol):
         todo_id: str | None = None,
     ) -> list[IndexedChunk]: ...
 
+    def documents(self, run_id: str) -> list[IndexedChunk]:
+        """Every chunk indexed for `run_id` (used for keyword ranking in passage lookups)."""
+        ...
+
 
 class LocalVectorIndex:
     """Deterministic lexical fallback; no external service or API key required.
@@ -71,3 +75,11 @@ class LocalVectorIndex:
             rows = [row for row in rows if row.get("metadata", {}).get("todo_id") == todo_id]
         rows.sort(key=lambda r: len(terms & set(r["text"].lower().split())), reverse=True)
         return [IndexedChunk.model_validate(r) for r in rows[:limit]]
+
+    def documents(self, run_id: str) -> list[IndexedChunk]:
+        """Every chunk of `run_id`, in insertion order."""
+        return [
+            IndexedChunk.model_validate(row)
+            for row in self._all()
+            if row.get("metadata", {}).get("run_id") == run_id
+        ]

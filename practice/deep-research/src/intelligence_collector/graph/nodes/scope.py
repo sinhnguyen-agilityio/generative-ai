@@ -10,7 +10,10 @@ from intelligence_collector.contracts import (
     ScopeAssessment,
     Stage,
 )
-from intelligence_collector.graph.nodes.common import invalidate_draft_authority
+from intelligence_collector.graph.nodes.common import (
+    invalidate_draft_authority,
+    reset_research_rounds,
+)
 from intelligence_collector.graph.state import GraphState
 from intelligence_collector.ports import ArtifactStore
 
@@ -90,6 +93,8 @@ class PlannerNodes:
         return {
             # The questions changed, so the old draft and everything vouching for it are stale.
             **invalidate_draft_authority(),
+            # A new plan starts research again at round 1.
+            **reset_research_rounds(),
             "stage": Stage.PLANNING.value,
             "current_action": f"Plan with {len(todos)} research task(s) ready for approval",
             "todos": [todo.model_dump(mode="json") for todo in todos],

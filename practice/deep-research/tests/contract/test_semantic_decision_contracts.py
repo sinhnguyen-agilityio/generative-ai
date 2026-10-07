@@ -25,5 +25,8 @@ def test_semantic_decisions_reject_workflow_changing_malformed_output():
 
 
 def test_todo_plan_output_is_a_list_of_trimmed_questions():
-    plan = TodoPlan(questions=["  First question?  ", "Second question?"])
+    point = [{"text": "evidence", "required_answers": [1]}]
+    plan = TodoPlan(
+        questions=["  First question?  ", "Second question?"], evidence_points=[point, point]
+    )
     assert plan.questions == ["First question?", "Second question?"]

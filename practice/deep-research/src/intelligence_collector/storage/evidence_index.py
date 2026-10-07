@@ -84,6 +84,14 @@ def stored_source_text(vfs: ArtifactStore, run_id: str, source: dict) -> str:
     return str(source.get("excerpt") or "")
 
 
+def stored_text_for_source(vfs: ArtifactStore, run_id: str, source: dict) -> str:
+    """The text a quote from `source` is checked against: its stored cleaned page, plus the
+    passages selected from it (or only its snippet when no page was stored)."""
+    page = stored_source_text(vfs, run_id, source)
+    excerpt = str(source.get("excerpt") or source.get("content") or "")
+    return page if excerpt and excerpt in page else "\n".join(t for t in (page, excerpt) if t)
+
+
 def reindex_run(vfs: ArtifactStore, index: VectorIndex, run_id: str) -> int:
     """Rebuild every chunk of the run from its stored evidence bundles; returns the count.
 

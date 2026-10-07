@@ -70,6 +70,7 @@ def _sha(text: str) -> str:
 def _single_question_plan():
     return {
         "questions": [QUESTION],
+        "evidence_points": [[{"text": "evidence answering the question", "required_answers": [1]}]],
     }
 
 

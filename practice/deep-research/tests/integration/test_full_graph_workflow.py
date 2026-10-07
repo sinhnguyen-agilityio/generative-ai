@@ -23,6 +23,8 @@ from tests.fixtures.fake_models import (
     FakeResearchModel,
     cited_report,
 )
+from intelligence_collector.agents.claim_judge import ClaimJudge
+from tests.fixtures.fake_models import FakeClaimModel
 
 URL = "https://controlled.test/cache"
 REQUEST = "How does a local software cache store and reuse data?"
@@ -56,6 +58,7 @@ def _scope_responses(questions=(QUESTION,)):
         {
             "questions": list(questions),
             "evidence_needed": ["documentation describing cache storage and reuse"],
+            "evidence_points": [[{"text": "evidence answering the question", "required_answers": [1]}]] * len(questions),
             "report_shape": "A short direct answer, then sources.",
         },
     ]
@@ -99,6 +102,7 @@ def _graph(stores, scope_model, *, judge_verdicts=None, drafts=(REPORT,), source
         ),
         faithfulness_evaluator=lambda q, r, c: {"score": 0.96, "unsupported": []},
         require_faithfulness=True,
+        claim_judge=ClaimJudge(ModelRouter(FakeClaimModel())),
     )
     graph = build_graph(
         scope_agent=ScopeAgent(ModelRouter(scope_model)),
@@ -191,6 +195,7 @@ def test_plan_change_request_rescopes_and_needs_a_new_approval(stores):
             {
                 "questions": [QUESTION + " (official documentation)"],
                 "evidence_needed": ["official docs"],
+                "evidence_points": [[{"text": "evidence answering the question", "required_answers": [1]}]],
                 "report_shape": "Short answer.",
             },
         ]
@@ -241,6 +246,7 @@ def test_replacement_plan_waits_for_approval_after_targeted_research_failed(stor
         {
             "questions": ["Which official statistics page reports the cache figure?"],
             "evidence_needed": ["an official statistics page"],
+            "evidence_points": [[{"text": "evidence answering the question", "required_answers": [1]}]],
             "report_shape": "Short answer.",
         }
     ]

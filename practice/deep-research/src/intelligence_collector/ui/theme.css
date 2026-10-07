@@ -45,7 +45,6 @@
 .ic-meter{position:relative;height:8px;border-radius:4px;background:#E1E1DB;margin:6px 0 2px}
 .ic-meter>span{display:block;height:8px;border-radius:4px;background:#1F7A4D}
 .ic-gate.fail .ic-meter>span{background:#B42318}
-.ic-meter>i{position:absolute;left:90%;top:-4px;width:2px;height:16px;background:#1B1E22}
 .ic-log{list-style:none;margin:0;padding:0}
 .ic-log li{display:flex;gap:12px;padding:8px 0;border-bottom:1px solid #F0F0EB;margin:0}
 .ic-tool{flex:none;width:104px;font-family:'IBM Plex Mono',monospace;font-size:.78rem;

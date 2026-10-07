@@ -11,6 +11,8 @@ from intelligence_collector.contracts import ResearchTodo, TodoStatus
 from intelligence_collector.models.router import ModelRouter
 from intelligence_collector.tools.mcp import ControlledMCP
 from tests.fixtures.fake_models import ScriptedSupervisorModel
+from intelligence_collector.agents.claim_judge import ClaimJudge
+from tests.fixtures.fake_models import FakeClaimModel
 
 COMPLETE = ("ResearchComplete", {})
 
@@ -23,23 +25,6 @@ def conduct(todo_id, topic="Find primary documentation."):
     return ("ConductResearch", {"todo_id": todo_id, "research_topic": topic})
 
 
-class RoundAwareModel(ScriptedSupervisorModel):
-    """Compression answers differently for a follow-up round, so merged findings are visible."""
-
-    def invoke(self, messages, config=None):
-        if "compress raw web search results" in str(messages[0].content):
-            follow_up = "Research only this missing evidence" in str(messages[-1].content)
-            summary = (
-                "Round 2: release date [https://t.test/2]"
-                if follow_up
-                else ("Round 1: overview [https://t.test/1]")
-            )
-            return AIMessage(
-                content=json.dumps({"summary": summary, "sufficient": True, "unresolved_gaps": []})
-            )
-        return super().invoke(messages, config)
-
-
 def _todos():
     return [
         ResearchTodo(todo_id="t1", research_question="What is LangGraph?"),
@@ -47,9 +32,17 @@ def _todos():
     ]
 
 
-def _supervisor(stores, model, *, empty_after=None, **kwargs):
+class FailingMCP(ControlledMCP):
+    """An MCP client whose every search fails (a technical failure)."""
+
+    def search(self, query, **kwargs):
+        raise TimeoutError("search provider timed out")
+
+
+def _supervisor(stores, model, *, empty_after=None, fail_first=False, **kwargs):
     """Supervisor over sub-agents whose MCP clients each return one new page; with
-    `empty_after`, clients created after that many return nothing."""
+    `empty_after`, clients created after that many return nothing; with `fail_first`, the first
+    client's searches fail."""
     vfs, index = stores
     clients = []
 
@@ -60,7 +53,7 @@ def _supervisor(stores, model, *, empty_after=None, **kwargs):
             if empty_after is not None and n >= empty_after
             else [{"url": f"https://t.test/{n}", "content": f"Evidence {n}."}]
         )
-        clients.append(ControlledMCP([rows]))
+        clients.append((FailingMCP if fail_first and n == 0 else ControlledMCP)([rows]))
         return clients[-1]
 
     researcher = ResearchAgent(ModelRouter(model), factory)
@@ -92,37 +85,36 @@ def test_supervisor_thinks_delegates_one_parallel_batch_then_completes(stores):
     assert "- todo_id: t1\n  question: What is LangGraph?" in first_input
     replies = model.tool_replies()
     assert replies[0] == "Reflection recorded: Two independent tasks: research both at once."
-    assert replies[1].startswith("Task t1 (round 1): completed\nSufficient: yes\nSources: 1")
+    # The supervisor reads each task's short report: stop reason, points with quotes, findings.
+    assert replies[1].startswith("Task t1 (round 1): completed\nStopped: model_finished")
+    assert "E1 answered: What is LangGraph?" in replies[1]
+    assert '"Evidence 0."' in replies[1] and "Unresolved: none" in replies[1]
     assert replies[2].startswith("Task t2 (round 1): completed")
-    assert "Findings:\nFindings for What is LangGraph?" in replies[1]
     # Without a planner the supervisor is never offered a replan.
     assert "ProposeReplan" not in _system_prompt(model)
 
 
-def test_follow_up_researches_only_the_gap_and_appends_its_findings(stores):
+def test_second_attempt_is_allowed_only_after_a_technical_failure(stores):
     vfs, _ = stores
-    model = RoundAwareModel(
+    model = ScriptedSupervisorModel(
         [
             lambda tasks: [conduct("t1"), conduct("t2")],
-            lambda tasks: [conduct("t1", "Find the first stable release date.")],
+            lambda tasks: [conduct("t1", "Search again for an overview of LangGraph.")],
             lambda tasks: [COMPLETE],
         ]
     )
-    supervisor, clients = _supervisor(stores, model)
+    supervisor, clients = _supervisor(stores, model, fail_first=True)
 
     results = supervisor.delegate("run", _todos())
 
     (t1, t1_refs, _), (t2, _, _) = results
+    replies = model.tool_replies()
+    assert "Failure: technical" in replies[0]
     assert (t1.research_attempt, t1.status) == (2, TodoStatus.COMPLETED)
-    assert t1.research_instruction == "Find the first stable release date."
     assert t2.research_attempt == 1 and len(clients) == 3
-    bundle = json.loads(vfs.read("run", "research/t1/attempts/2/evidence/result.json"))
-    assert bundle["summary"] == (
-        "Round 1: overview [https://t.test/1]\n\nRound 2: release date [https://t.test/2]"
-    )
-    evidence = [ref for ref in t1_refs if ref.kind == "evidence_bundle"]
-    assert len(evidence) == 2  # both rounds' bundles stay in the run's evidence
-    assert model.tool_replies()[-1].startswith("Task t1 (round 2): completed")
+    report = json.loads(vfs.read("run", "research/t1/attempts/2/report.json"))
+    assert report["points"][0]["status"] == "answered"
+    assert replies[-1].startswith("Task t1 (round 2): completed")
 
 
 def test_code_keeps_the_supervisor_inside_the_approved_plan(stores):
@@ -146,8 +138,9 @@ def test_code_keeps_the_supervisor_inside_the_approved_plan(stores):
     assert replies[3] == (
         "Not complete: every task must be researched at least once. Still unresearched: t2"
     )
-    assert replies[4].startswith("Task t1 (round 2): completed")
-    assert replies[5] == "Refused: task t1 already had 2 research rounds."
+    # t1 already has a usable report: a content gap goes to a follow-up task (FR-002a).
+    refusal = "Refused: content gaps are closed by follow-up tasks, not by researching task t1 again."
+    assert replies[4] == replies[5] == refusal
     assert replies[6].startswith("Task t2 (round 1): completed")
     assert [todo.status for todo, _, _ in results] == [TodoStatus.COMPLETED] * 2
 
@@ -166,7 +159,7 @@ def test_turn_limit_never_skips_an_approved_task(stores):
     assert len(clients) == 2  # code delegated both tasks after the last turn
 
 
-def test_failed_follow_up_keeps_the_earlier_evidence(stores):
+def test_refused_re_research_keeps_the_first_attempts_evidence(stores):
     vfs, _ = stores
     model = ScriptedSupervisorModel(
         [
@@ -175,12 +168,13 @@ def test_failed_follow_up_keeps_the_earlier_evidence(stores):
             lambda tasks: [COMPLETE],
         ]
     )
-    supervisor, _ = _supervisor(stores, model, empty_after=2)
+    supervisor, clients = _supervisor(stores, model)
 
     (t1, _, _), _ = supervisor.delegate("run", _todos())
 
-    assert model.tool_replies()[-1].startswith("Task t1 (round 2): failed")
+    assert model.tool_replies()[-1].startswith("Refused: content gaps")
     assert (t1.research_attempt, t1.status) == (1, TodoStatus.COMPLETED)
+    assert len(clients) == 2
     assert json.loads(vfs.read("run", "research/t1/evidence/result.json"))["sources"]
 
 
@@ -247,6 +241,7 @@ def test_graph_routes_a_supervisor_replan_to_human_approval_of_a_replacement_pla
     replacement = {
         "questions": ["Which cache storage mechanisms does the current release document?"],
         "evidence_needed": ["current cache documentation"],
+        "evidence_points": [[{"text": "evidence answering the question", "required_answers": [1]}]],
         "report_shape": "A short direct answer, then sources.",
     }
     nodes = ResearchNodes(
@@ -266,6 +261,7 @@ def test_graph_routes_a_supervisor_replan_to_human_approval_of_a_replacement_pla
         ),
         faithfulness_evaluator=lambda q, r, c: {"score": 0.96, "unsupported": []},
         require_faithfulness=True,
+        claim_judge=ClaimJudge(ModelRouter(FakeClaimModel())),
     )
     graph = build_graph(
         scope_agent=ScopeAgent(ModelRouter(SequencedModel(_scope_responses() + [replacement]))),
@@ -300,7 +296,7 @@ def test_decisions_are_logged_to_the_vfs_and_streamed_to_a_listener(stores):
     from intelligence_collector.agents.supervisor import decision_listener, read_supervisor_log
 
     vfs, _ = stores
-    model = RoundAwareModel(
+    model = ScriptedSupervisorModel(
         [
             lambda tasks: [think("Research both.")],
             lambda tasks: [conduct("t1"), conduct("t2"), conduct("t9")],
@@ -323,25 +319,17 @@ def test_decisions_are_logged_to_the_vfs_and_streamed_to_a_listener(stores):
         "delegate",
         "result",
         "result",
-        "delegate",
-        "result",
+        "refused",  # a content gap of t1 is not researched again (FR-002a)
         "complete",
     ]
     assert heard == log  # the same entries, as they happened
-    first_batch, follow_up = (entry for entry in log if entry["kind"] == "delegate")
+    (first_batch,) = (entry for entry in log if entry["kind"] == "delegate")
     assert [task["todo_id"] for task in first_batch["tasks"]] == ["t1", "t2"]
-    assert follow_up["tasks"] == [
-        {
-            "todo_id": "t1",
-            "question": "What is LangGraph?",
-            "round": 2,
-            "follow_up": True,
-            "topic": "Find the release date.",
-        }
-    ]
     result = log[3]
     assert result["status"] == "completed" and result["sufficient"] is True
     assert result["sources"] == 1 and "findings" not in result
+    assert result["stop_reason"] == "model_finished"
+    assert result["points"][0]["status"] == "answered"
 
 
 def test_a_failing_listener_never_stops_research(stores):

@@ -49,12 +49,14 @@ from intelligence_collector.agents.worker import (
     _evidence_path,
     already_researched,
     failed_outcome,
-    persist_research,
     research_prefix,
     restore_research,
 )
 from intelligence_collector.contracts import ResearchFindings, ResearchTodo, TodoStatus
+from intelligence_collector.agents.search_task import SearchTask
+from intelligence_collector.agents.searcher_report import task_points
 from intelligence_collector.observability.tracing import traced
+from intelligence_collector.storage.passage_lookup import PassageLookup
 from intelligence_collector.models.redaction import redact_error
 from intelligence_collector.tools.url_tracking import UrlClaims, UrlRegistry
 
@@ -143,10 +145,17 @@ class ResearchSupervisor:
         max_concurrent_researchers: int = DEFAULT_MAX_CONCURRENT_RESEARCHERS,
         max_turns: int = DEFAULT_MAX_SUPERVISOR_TURNS,
         max_attempts_per_task: int = DEFAULT_MAX_ATTEMPTS_PER_TASK,
+        lookup_top_k: int = 5,
+        report_max_words: int = 400,
     ):
         self.researcher = researcher
         self.vfs = vfs
         self.index = index
+        # Stored-passage lookups for searchers' gap self-analysis (spec 002, FR-013b).
+        self.lookup = PassageLookup(index, top_k=lookup_top_k) if index is not None else None
+        self.report_max_words = report_max_words
+        self._active_ids: set[str] = set()
+        self._run_id = ""
         self.router = router or getattr(researcher, "router", None)
         self.max_concurrent_researchers = min(
             max(1, max_concurrent_researchers), MAX_CONCURRENT_RESEARCHERS
@@ -169,6 +178,9 @@ class ResearchSupervisor:
     ) -> Delegation:
         """Research every planned todo under the supervisor model; returns ``(todo, refs,
         chunks)`` per todo in plan order. Todos researched earlier are restored, not repeated."""
+        # Lookups may read pages of any task of the active plan, never a superseded one.
+        self._active_ids = {todo.todo_id for todo in todos}
+        self._run_id = run_id
         pending = [
             todo
             for todo in todos
@@ -292,6 +304,11 @@ class ResearchSupervisor:
                     replies[call_id] = (
                         f"Refused: task {todo_id} already had {rounds[todo_id]} research rounds."
                     )
+                elif rounds[todo_id] > 0 and not self._technical_failure(by_id[todo_id]):
+                    replies[call_id] = (
+                        "Refused: content gaps are closed by follow-up tasks, not by researching "
+                        f"task {todo_id} again."
+                    )
                 else:
                     batch.add(todo_id)
                     follow_up = rounds[todo_id] > 0
@@ -326,6 +343,11 @@ class ResearchSupervisor:
                 log.add("refused", text=replies[call_id])
         return replies, jobs, finished, replan
 
+    def _technical_failure(self, todo: ResearchTodo) -> bool:
+        """Whether the task's latest report records a technical failure (FR-002a)."""
+        report = self._latest_report(self._run_id, todo) if self._run_id else None
+        return bool(report) and report.get("failure_kind") == "technical"
+
     @staticmethod
     def _unresearched(pending, rounds) -> list[ResearchTodo]:
         return [todo for todo in pending if rounds[todo.todo_id] == 0]
@@ -339,10 +361,22 @@ class ResearchSupervisor:
     @staticmethod
     def _task_list(pending: list[ResearchTodo], brief: str) -> str:
         lines = [f"Research brief: {brief}" if brief else "", "Pending research tasks:"]
+        rounds = {todo.round for todo in pending}
+        if rounds:
+            lines.insert(1, f"Research round: {max(rounds)}")
         for todo in pending:
             lines.append(f"- todo_id: {todo.todo_id}\n  question: {todo.research_question}")
-            if todo.evidence_needed:
+            if todo.evidence_points:
+                lines.append("  evidence points:")
+                lines.extend(
+                    f"    {point.point_id}: {point.text}"
+                    + (" (essential)" if point.essential else "")
+                    for point in todo.evidence_points
+                )
+            elif todo.evidence_needed:
                 lines.append(f"  evidence needed: {todo.evidence_needed}")
+            if todo.gap_point_ids:
+                lines.append(f"  follow-up for gaps: {', '.join(todo.gap_point_ids)}")
             if todo.research_instruction:
                 lines.append(f"  missing evidence to find: {todo.research_instruction}")
         return "\n".join(line for line in lines if line)
@@ -394,6 +428,13 @@ class ResearchSupervisor:
             results[todo_id] = (todo, refs, chunks)
         return replies
 
+    def _latest_report(self, run_id: str, todo: ResearchTodo) -> dict | None:
+        """The report of the task's latest attempt, or None."""
+        try:
+            return json.loads(self.vfs.read(run_id, f"{research_prefix(todo)}/report.json"))
+        except FileNotFoundError:
+            return None
+
     def _result_summary(self, run_id: str, todo: ResearchTodo) -> dict:
         """One task's outcome after a research round, read from what was persisted."""
         summary = {
@@ -402,6 +443,26 @@ class ResearchSupervisor:
             "round": todo.research_attempt,
             "status": todo.status.value,
         }
+        report = self._latest_report(run_id, todo)
+        if report is not None:
+            texts = {p.point_id: p.text for p in task_points(todo)}
+            summary.update(
+                stop_reason=report.get("stop_reason", ""),
+                failure_kind=report.get("failure_kind"),
+                report_status=report.get("report_status", ""),
+                accepted=report.get("accepted_count", 0),
+                rejected=report.get("rejected_count", 0),
+                points=[
+                    {
+                        "point_id": point["point_id"],
+                        "text": texts.get(point["point_id"], ""),
+                        "status": point["status"],
+                        "support": point.get("support", []),
+                    }
+                    for point in report.get("points", [])
+                ],
+                findings=[f["text"] for f in report.get("findings", [])],
+            )
         try:
             bundle = json.loads(self.vfs.read(run_id, _evidence_path(todo)))
         except FileNotFoundError:
@@ -415,27 +476,38 @@ class ResearchSupervisor:
             "sufficient": bool(bundle.get("sufficient")),
             "sources": len(bundle.get("sources", [])),
             "gaps": list(bundle.get("unresolved_gaps") or []),
-            "findings": str(bundle.get("summary", "")),
         }
 
     @staticmethod
     def _format_result(summary: dict) -> str:
-        """What the supervisor model reads about one task after a research round."""
+        """What the supervisor model reads about one task: its short report, never raw pages."""
         header = f"Task {summary['todo_id']} (round {summary['round']}): {summary['status']}"
+        lines = [header]
+        if summary.get("stop_reason"):
+            lines.append(
+                f"Stopped: {summary['stop_reason']}; results accepted {summary.get('accepted', 0)}"
+                f", rejected {summary.get('rejected', 0)}"
+            )
+        for point in summary.get("points", []):
+            quotes = "; ".join(
+                f'{s["source_id"]} "{s["quote"]}"' for s in point.get("support", [])
+            )
+            lines.append(
+                f"{point['point_id']} {point['status']}: {point['text']}"
+                + (f" — {quotes}" if quotes else "")
+            )
         if "error" in summary:
             error = summary["error"]
-            return (
-                f"{header}\nNo usable evidence: {error}"
-                if error
-                else f"{header}\nNo usable evidence."
-            )
-        gaps = summary["gaps"]
-        return (
-            f"{header}\nSufficient: {'yes' if summary['sufficient'] else 'no'}\n"
-            f"Sources: {summary['sources']}\n"
-            f"Unresolved gaps: {'; '.join(gaps) if gaps else 'none'}\n"
-            f"Findings:\n{summary['findings']}"
-        )
+            lines.append(f"No usable evidence: {error}" if error else "No usable evidence.")
+            if summary.get("failure_kind"):
+                lines.append(f"Failure: {summary['failure_kind']}")
+            return "\n".join(lines)
+        findings = summary.get("findings") or []
+        if findings:
+            lines.append("Findings:\n" + "\n".join(f"- {f}" for f in findings))
+        gaps = summary.get("gaps") or []
+        lines.append(f"Unresolved: {'; '.join(gaps) if gaps else 'none'}")
+        return "\n".join(lines)
 
     def _run_sub_agents(self, run_id: str, jobs: list[ResearchJob], thread_id: str, claims):
         """Synchronous entry point (called from the sync ``researching`` graph node): drives the
@@ -446,96 +518,70 @@ class ResearchSupervisor:
     async def _gather_sub_agents(
         self, run_id: str, jobs: list[ResearchJob], thread_id: str, claims: UrlClaims
     ) -> dict:
-        # Each sub-agent's actual work (LLM calls, MCP search) is still synchronous, so
-        # asyncio.to_thread runs it in a worker thread -- same real parallelism as before, capped
-        # by the semaphore since asyncio.to_thread's own thread pool has no such limit. Unlike a
-        # bare ThreadPoolExecutor, asyncio.to_thread propagates the calling contextvars.Context
-        # into that thread automatically, so Langfuse/OpenTelemetry's "current span" and
-        # LangChain's runnable config still reach each sub-agent's LLM call traces without any
-        # manual context handling here.
+        """Each job runs ``SearchTask``'s steps inside one concurrency slot: phrasings → lookup →
+        search → persist → lookup → report → evidence bundle, so a task's pages are stored and
+        indexed before it reports (FR-009) and its gaps are looked up before it searches the
+        web (FR-013b).
+
+        Model steps run in worker threads through ``asyncio.to_thread``, which propagates the
+        calling ``contextvars.Context`` so Langfuse's current span still reaches each searcher's
+        traces. Lookups and persistence run on the event-loop thread between awaits, so index
+        reads and VFS, URL-registry and index writes never overlap.
+        """
         semaphore = asyncio.Semaphore(self.max_concurrent_researchers)
+        registry = [UrlRegistry.load(self.vfs, run_id)]
+        results: dict[str, tuple] = {}
+        errors: list[BaseException] = []
 
-        async def bounded(job: ResearchJob) -> tuple[str, ResearchOutcome]:
-            """Research one job while holding a concurrency slot."""
+        async def bounded(job: ResearchJob) -> None:
+            todo = job.todo
+            task = SearchTask(
+                self.vfs,
+                self.index,
+                self.researcher,
+                run_id,
+                todo,
+                self._sub_agent_question(job),
+                set(self._active_ids) | {todo.todo_id},
+                thread_id=thread_id,
+                lookup=self.lookup,
+                report_max_words=self.report_max_words,
+            )
             async with semaphore:
-                outcome = await asyncio.to_thread(
-                    self._research_one, run_id, job, thread_id, claims
-                )
-                return job.todo.todo_id, outcome
+                if not task.restore():
+                    await asyncio.to_thread(task.prepare_phrasings)
+                    task.lookup_before_search(registry[0])
+                    await asyncio.to_thread(task.search, claims)
+                try:
+                    with traced("research.persist", metadata={"todo_id": todo.todo_id}):
+                        task.persist(registry[0])
+                        task.lookup_before_report(registry[0])
+                except Exception as exc:
+                    # Finish siblings even if one local index/storage operation failed, and drop
+                    # the failed attempt's uncommitted URL registrations.
+                    errors.append(exc)
+                    registry[0] = UrlRegistry.load(self.vfs, run_id)
+                    return
+                await asyncio.to_thread(task.write)
+                try:
+                    with traced("research.report", metadata={"todo_id": todo.todo_id}) as obs:
+                        results[todo.todo_id] = task.finish()
+                        done, refs, chunks = results[todo.todo_id]
+                        obs.output = {
+                            "status": done.status.value,
+                            "report_status": task.report.report_status.value,
+                            "artifacts": len(refs),
+                            "indexed_chunks": len(chunks),
+                        }
+                except Exception as exc:
+                    errors.append(exc)
 
-        tasks = [asyncio.create_task(bounded(job)) for job in jobs]
-        registry = UrlRegistry.load(self.vfs, run_id)
-        by_id = {job.todo.todo_id: job.todo for job in jobs}
-        results = {}
-        errors = []
-        for finished in asyncio.as_completed(tasks):
-            todo_id, outcome = await finished
-            try:
-                with traced("research.persist", metadata={"todo_id": todo_id}) as observation:
-                    payload = asdict(outcome)
-                    payload["findings"] = (
-                        outcome.findings.model_dump(mode="json") if outcome.findings else None
-                    )
-                    # Pages live in raw/<n>.md; the resume copy keeps only what the LLMs read.
-                    payload["sources"] = [
-                        {key: value for key, value in source.items() if key != "raw_content"}
-                        for source in payload["sources"]
-                    ]
-                    self.vfs.write_json(
-                        run_id,
-                        f"{research_prefix(by_id[todo_id])}/retrieved_outcome.json",
-                        payload,
-                        "retrieved_outcome",
-                        task_id=todo_id,
-                    )
-                    results[todo_id] = persist_research(
-                        self.vfs, self.index, run_id, by_id[todo_id], outcome, registry
-                    )
-                    todo, refs, chunks = results[todo_id]
-                    observation.output = {
-                        "status": todo.status.value,
-                        "artifacts": len(refs),
-                        "indexed_chunks": len(chunks),
-                    }
-            except Exception as exc:
-                # Finish persisting siblings even if one local index/storage operation failed.
-                errors.append(exc)
-                # Drop uncommitted URL registrations from the failed persistence attempt.
-                registry = UrlRegistry.load(self.vfs, run_id)
+        await asyncio.gather(*(bounded(job) for job in jobs))
         if errors:
             raise RuntimeError(
                 "Research persistence failed; completed sibling artifacts are recoverable"
             ) from errors[0]
         return results
-
-    def _research_one(
-        self, run_id: str, job: ResearchJob, thread_id: str, claims: UrlClaims
-    ) -> ResearchOutcome:
-        # One failing sub-agent must not cancel its siblings; the failure becomes its outcome.
-        todo = job.todo
-        try:
-            try:
-                payload = json.loads(
-                    self.vfs.read(run_id, f"{research_prefix(todo)}/retrieved_outcome.json")
-                )
-            except FileNotFoundError:
-                payload = None
-            if payload is not None:
-                if payload.get("findings") is not None:
-                    payload["findings"] = ResearchFindings.model_validate(payload["findings"])
-                return ResearchOutcome(**payload)
-            outcome = self.researcher.research(
-                self._sub_agent_question(job),
-                run_id=run_id,
-                thread_id=thread_id,
-                task_id=todo.todo_id,
-                claims=claims,
-            )
-            if job.follow_up and outcome.findings is not None:
-                outcome.findings = self._with_earlier_findings(run_id, todo, outcome.findings)
-            return outcome
-        except Exception as exc:
-            return failed_outcome(todo, f"Research sub-agent failed: {redact_error(exc)}")
 
     @staticmethod
     def _sub_agent_question(job: ResearchJob) -> str:
@@ -549,16 +595,3 @@ class ResearchSupervisor:
         if job.topic and job.topic != todo.research_question:
             question += f"\n\nResearch focus from the supervisor:\n{job.topic}"
         return question
-
-    def _with_earlier_findings(
-        self, run_id: str, todo: ResearchTodo, findings: ResearchFindings
-    ) -> ResearchFindings:
-        """A follow-up only covers the gap: prepend the earlier round's findings."""
-        earlier_todo = todo.model_copy(update={"research_attempt": todo.research_attempt - 1})
-        try:
-            earlier = json.loads(self.vfs.read(run_id, _evidence_path(earlier_todo)))
-        except FileNotFoundError:
-            return findings
-        return findings.model_copy(
-            update={"summary": f"{earlier.get('summary', '')}\n\n{findings.summary}".strip()}
-        )

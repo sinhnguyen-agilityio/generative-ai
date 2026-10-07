@@ -71,7 +71,10 @@ def test_index_failure_resume_reuses_durable_retrieved_outcome(tmp_path):
     class Researcher:
         calls = 0
 
-        def research(self, question, **kwargs):
+        def summarize(self, outcome, **kwargs):
+            pass
+
+        def search(self, question, **kwargs):
             self.calls += 1
             return ResearchOutcome(
                 question=question,

@@ -39,6 +39,7 @@ from intelligence_collector.graph.routing import (
     route_after_extension,
     route_after_feedback,
     route_after_fix,
+    route_after_gap_analysis,
     route_after_plan_approval,
     route_after_publish,
     route_after_verify,
@@ -156,7 +157,11 @@ def build_graph(
     # The supervisor may propose a replacement plan, which goes back to plan approval.
     research_nodes.supervisor.replan_enabled = True
     graph.add_conditional_edges(Node.RESEARCH, route_after_delegation,
-                                [Node.REPLAN, Node.ASSESS_RESEARCH])
+                                [Node.REPLAN, Node.ANALYZE_GAPS])
+    # Every research round ends with gap analysis; follow-up tasks start the next round.
+    add_node(Node.ANALYZE_GAPS, research_nodes.analyze_gaps)
+    graph.add_conditional_edges(Node.ANALYZE_GAPS, route_after_gap_analysis,
+                                [Node.RESEARCH, Node.REPLAN, Node.ASSESS_RESEARCH])
     graph.add_conditional_edges(Node.ASSESS_RESEARCH, route_after_research, {
         Node.SYNTHESIZE: Node.SYNTHESIZE,
         Node.PREPARE_GAP_RESEARCH: Node.PREPARE_GAP_RESEARCH,

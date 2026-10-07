@@ -21,6 +21,8 @@ from tests.fixtures.fake_models import (
     cited_report,
 )
 from tests.fixtures.graphs import research_graph
+from intelligence_collector.agents.claim_judge import ClaimJudge
+from tests.fixtures.fake_models import FakeClaimModel
 
 URL = "https://controlled.test/cache"
 QUESTION = "How does a local software cache store and reuse data?"
@@ -96,6 +98,7 @@ def _nodes(
     context_precision_evaluator=None,
     response_relevancy_evaluator=None,
     mcp_rows=None,
+    claim_model=None,
 ):
     vfs, index = stores
     CountingMCP.searches = 0
@@ -117,7 +120,17 @@ def _nodes(
         require_faithfulness=require_faithfulness,
         context_precision_evaluator=context_precision_evaluator,
         response_relevancy_evaluator=response_relevancy_evaluator,
+        claim_judge=ClaimJudge(ModelRouter(claim_model or FakeClaimModel())),
     )
+
+
+class FirstDraftFails(FakeClaimModel):
+    """Applies the scripted verdicts to the first evaluated draft only."""
+
+    def invoke(self, messages, config=None):
+        if self.calls >= 1:
+            self.verdicts = {}
+        return super().invoke(messages, config)
 
 
 def _run(stores, report_model, *, run_id="bvf", **kwargs):
@@ -149,12 +162,16 @@ def test_passing_first_draft_stops_without_an_improvement_cycle(stores):
         "coverage",
         "faithfulness",
     ]
+    # The claim judge is the gate; RAGAS Faithfulness is scored once, after it passed.
+    assert result["claim_support_score"] == 1.0
     assert result["faithfulness_score"] == 0.95 and len(faithfulness.calls) == 1
     assert CountingMCP.searches == 1  # one task, one search, no extra research
     record = json.loads(
         vfs.read("bvf", f"verification/result.{result['verification']['verification_id']}.json")
     )
-    assert record["outcome"] == "PASS" and record["faithfulness_score"] == 0.95
+    assert record["outcome"] == "PASS" and record["claim_support_score"] == 1.0
+    claims = json.loads(vfs.read("bvf", record["claim_evaluation_ref"]))
+    assert claims["passed"] and claims["claims"][0]["cited_source_ids"] == ["S1"]
 
 
 def test_writer_receives_question_checklist_constraints_and_answer_first_rules(stores):
@@ -345,71 +362,63 @@ def test_presentation_failure_edits_presentation_only(stores):
     assert CountingMCP.searches == 1
 
 
-def test_faithfulness_must_be_strictly_above_090(stores):
-    vfs, _ = stores
-    scores = iter(
-        [
-            {"score": 0.9, "unsupported": ["The cache is 40% faster."]},
-            {"score": 0.97, "unsupported": []},
-        ]
-    )
+def test_a_partly_supported_sentence_fails_and_drives_a_targeted_repair(stores):
+    sentence = "A cache stores reusable data for later access"
     model = FakeReportModel([GOOD, IMPROVED])
+    claims = FirstDraftFails({sentence: ("partly_supported", True, set())})
 
-    result = _run(stores, model, faithfulness_evaluator=lambda q, r, c: next(scores))
+    # A low RAGAS score never blocks: it is only a quality signal.
+    result = _run(stores, model, claim_model=claims,
+                  faithfulness_evaluator=lambda q, r, c: {"score": 0.5, "unsupported": ["x"]})
 
     first = result["verification_history"][0]
     assert first["passed"] is False
     assert [c["gate"] for c in first["check_results"] if not c["passed"]] == ["faithfulness"]
-    assert "The cache is 40% faster." in model.prompts("write")[1]  # targeted at the claim
-    assert result["verification_outcome"] == "PASS" and result["faithfulness_score"] == 0.97
+    assert sentence in model.prompts("write")[1]  # the rewrite targets the failing sentence
+    assert result["verification_outcome"] == "PASS" and result["claim_support_score"] == 1.0
+    assert result["faithfulness_score"] == 0.5
 
 
 def test_evaluator_error_never_rewrites_the_report(stores):
-    calls = []
-
-    def failing(question, report, contexts):
-        calls.append(report)
-        raise RuntimeError("judge LLM rate limited")
-
+    claims = FakeClaimModel(fail=True)
     model = FakeReportModel([GOOD])
-    result = _run(stores, model, faithfulness_evaluator=failing)
+    result = _run(stores, model, claim_model=claims)
 
     assert result["stage"] == "NEEDS_REVIEW"
     assert result["verification_outcome"] == "ERROR"
     assert result["verification"] is None
     assert len(model.prompts("write")) == 1 and result["draft_version"] == 1
-    assert len(calls) == 2  # first attempt plus one bounded retry, same draft each time
+    assert claims.calls >= 2  # first attempt plus one bounded retry, same draft each time
     assert result.get("bvf_history", []) == []
-    assert "Faithfulness evaluation failed" in result["verifier_error"]
+    assert "Claim evaluation failed" in result["verifier_error"]
 
 
 def test_retry_after_error_reuses_saved_coverage_checks(stores):
-    outcomes = iter([RuntimeError("timeout"), {"score": 0.95, "unsupported": []}])
-
-    def flaky(question, report, contexts):
-        outcome = next(outcomes)
-        if isinstance(outcome, Exception):
-            raise outcome
-        return outcome
+    class Flaky(FakeClaimModel):
+        def invoke(self, messages, config=None):
+            self.fail = self.calls < 2  # the first verification attempt fails (with its retry)
+            return super().invoke(messages, config)
 
     judge = _judge([{"results": [_pass()]}])
-    result = _run(stores, FakeReportModel([GOOD]), report_judge=judge, faithfulness_evaluator=flaky)
+    result = _run(stores, FakeReportModel([GOOD]), report_judge=judge, claim_model=Flaky())
 
     assert result["verification_outcome"] == "PASS"
     assert len(judge.calls) == 1  # coverage was not re-judged for the same draft
 
 
-def test_nan_or_missing_faithfulness_score_is_error(stores):
+def test_invalid_ragas_score_is_recorded_but_never_blocks(stores):
     result = _run(
         stores, FakeReportModel([GOOD]), faithfulness_evaluator=lambda q, r, c: float("nan")
     )
-    assert result["verification_outcome"] == "ERROR" and result["stage"] == "NEEDS_REVIEW"
+    assert result["verification_outcome"] == "PASS" and result["stage"] == "Awaiting Approval"
+    assert result["faithfulness_score"] is None
+    assert result["faithfulness_error"] == "Faithfulness returned no valid score"
 
 
 def test_required_faithfulness_without_evaluator_is_error(stores):
     vfs, index = stores
     nodes = _nodes(stores, FakeReportModel([GOOD]), require_faithfulness=True)
-    nodes.bvf.faithfulness_evaluator = None
+    nodes.bvf.claim_judge = None
     todo = ResearchTodo(todo_id="todo-1", research_question=QUESTION)
     result = research_graph(nodes).invoke(
         {
@@ -582,12 +591,13 @@ def test_recovery_revision_replies_in_chat_and_shows_the_new_report(stores):
     from langgraph.checkpoint.memory import MemorySaver
     from langgraph.types import Command
 
-    scores = iter([0.5, 0.95])
     nodes = _nodes(
         stores,
         FakeReportModel([GOOD, IMPROVED]),
         budget=0,
-        faithfulness_evaluator=lambda q, r, c: {"score": next(scores), "unsupported": ["x"]},
+        claim_model=FirstDraftFails(
+            {"A cache stores reusable data for later access": ("unsupported", True, set())}
+        ),
     )
     graph = research_graph(nodes, checkpointer=MemorySaver(), with_approval=True)
     config = {"configurable": {"thread_id": "rec"}}
@@ -673,3 +683,41 @@ def test_needs_review_ui_shows_the_unverified_draft_and_hides_options_after_a_ne
     monkeypatch.setattr(recovery, "st", hidden)
     recovery.render_recovery_controls({**snapshot, "stage": "Awaiting Approval"})
     assert hidden.expanded == []
+
+
+def test_the_claim_judge_reads_only_the_drafts_evidence_snapshot(stores):
+    vfs, _ = stores
+    seen = []
+
+    class Recording(FakeClaimModel):
+        def invoke(self, messages, config=None):
+            seen.append(str(messages[-1].content))
+            return super().invoke(messages, config)
+
+    result = _run(stores, FakeReportModel([GOOD]), claim_model=Recording())
+
+    snapshot = json.loads(vfs.read("bvf", "synthesis/evidence.v1.json"))
+    assert snapshot["draft_version"] == 1 and set(snapshot["sources"]) == {"S1"}
+    text = snapshot["sources"]["S1"]["text"]
+    assert text and text in seen[0]  # exactly the text shown to the writer
+    assert result["claim_evaluation_ref"].startswith("verification/claims.")
+    # FR-025/FR-027: coverage verdicts per criterion are still stored with the draft's record.
+    record = json.loads(
+        vfs.read("bvf", f"verification/result.{result['verification']['verification_id']}.json")
+    )
+    coverage = [c for c in record["check_results"] if c["gate"] == "coverage"]
+    assert coverage and all("passed" in c for c in coverage) and record["draft_version"] == 1
+
+
+def test_presentation_repair_keeps_the_previous_snapshot(stores):
+    vfs, _ = stores
+    nodes = _nodes(stores, FakeReportModel([GOOD, IMPROVED]))
+    state = {"run_id": "pres", "thread_id": "pres", "scoped_request": BRIEF,
+             "todos": [ResearchTodo(todo_id="todo-1", research_question=QUESTION).model_dump(mode="json")]}
+    state.update(nodes.researching(state))
+    state.update(nodes.bvf.synthesizing(state))
+    state.update(nodes.bvf.synthesizing({**state, "repair": {"route": "presentation", "issues": [], "passing": []}}))
+
+    first = json.loads(vfs.read("pres", "synthesis/evidence.v1.json"))
+    second = json.loads(vfs.read("pres", "synthesis/evidence.v2.json"))
+    assert second["copied_from_version"] == 1 and second["sources"] == first["sources"]

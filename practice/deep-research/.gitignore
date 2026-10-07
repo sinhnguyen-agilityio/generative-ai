@@ -17,3 +17,11 @@ htmlcov/
 .idea/
 *.log
 .tmp/
+
+# OS, editor and tool caches
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+.ruff_cache/
+.mypy_cache/

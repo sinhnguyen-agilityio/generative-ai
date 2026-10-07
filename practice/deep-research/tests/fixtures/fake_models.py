@@ -4,6 +4,63 @@ import re
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 _TASK = re.compile(r"- todo_id: (\S+)\n  question: (.*)")
+_RESULT_ROW = re.compile(r"^\[(\d+)\] ", re.MULTILINE)
+_POINT_ID = re.compile(r"^- (E\d+):", re.MULTILINE)
+
+
+def _source_blocks(text: str) -> list[tuple[str, str]]:
+    """``(source_id, passages)`` per "Source <id>: title / URL: ... / passages" block."""
+    blocks = []
+    for block in ("\n" + text.strip()).split("\nSource ")[1:]:
+        header, _, rest = block.partition("\n")
+        _url, _, passages = rest.partition("\n")
+        blocks.append((header.split(":", 1)[0].strip(), passages))
+    return blocks
+
+
+def rephrase_points(messages) -> dict:
+    """Query-rewriter answer: one extra phrasing per evidence point."""
+    points = _POINT_ID.findall(str(messages[-1].content))
+    return {"points": [{"point_id": p, "phrasings": [f"{p} alternative wording"]} for p in points]}
+
+
+def quote_report(messages, *, answered: bool = True) -> dict:
+    """Searcher-report answer: every point answered (or missing) with a verbatim quote of the
+    first source's first words, and one finding per source."""
+    data = str(messages[-1].content)
+    points_part, _, sources_part = data.partition("Stored sources data:")
+    points = _POINT_ID.findall(points_part)
+    sources = [(sid, text.strip()) for sid, text in _source_blocks(sources_part)]
+    support = []
+    if sources and answered:
+        sid, text = sources[0]
+        first_line = text.splitlines()[0] if text else ""
+        quote = " ".join(first_line.split()[:6])
+        if quote:
+            support = [{"source_id": sid, "quote": quote}]
+    return {
+        "points": [
+            {"point_id": p, "status": "answered" if support else "missing", "support": support}
+            for p in points
+        ],
+        "findings": [
+            {"text": f"Finding from {sid}.", "source_ids": [sid]} for sid, _ in sources[:5]
+        ],
+    }
+
+
+def accept_all_results(messages) -> dict:
+    """Result-evaluator answer that keeps every result and marks every evidence point covered
+    (the behavior of searchers before result evaluation existed)."""
+    data = str(messages[-1].content)
+    points_part, _, rows_part = data.partition("Search results data:")
+    points = _POINT_ID.findall(points_part)
+    return {
+        "rows": [
+            {"index": int(n), "decision": "accepted", "covers": points}
+            for n in _RESULT_ROW.findall(rows_part)
+        ]
+    }
 
 
 def fake_supervisor_turn(messages) -> AIMessage:
@@ -67,9 +124,20 @@ class FakeResearchModel:
         system = str(messages[0].content)
         if system.startswith("You are the research supervisor"):
             return fake_supervisor_turn(messages)
+        if system.startswith("You evaluate web search results"):
+            return AIMessage(content=json.dumps(accept_all_results(messages)))
+        if system.startswith("You write lookup queries"):
+            return AIMessage(content=json.dumps(rephrase_points(messages)))
         question = self._question(messages)
         if question in self.fail_questions:
             raise RuntimeError(f"forced research failure for {question}")
+        if system.startswith("You write the short structured report"):
+            scripted = self.findings.get(question) or {}
+            return AIMessage(
+                content=json.dumps(
+                    quote_report(messages, answered=scripted.get("sufficient", True))
+                )
+            )
         if "compress raw web search results" in messages[0].content:
             return AIMessage(
                 content=json.dumps(
@@ -252,3 +320,52 @@ class FakeModel:
         if role in self.error_roles:
             raise RuntimeError(f"forced model failure for {role}")
         return self.responses.get(role, prompt)
+
+
+_CLAIM = re.compile(r"^(K\d+): (.*)$", re.M)
+_CITED = re.compile(r"^  \[(S\d+)\]", re.M)
+
+
+def judge_claims(messages, *, verdicts=None) -> dict:
+    """Claim-judge answer: every sentence supported by each of its cited sources, unless
+    `verdicts` maps a sentence substring to (verdict, states_fact, unsupported source ids)."""
+    data = str(messages[-1].content)
+    claims = []
+    blocks = re.split(r"\n\n(?=K\d+: )", data.split("\n", 1)[1] if "\n" in data else data)
+    for block in blocks:
+        head = _CLAIM.search(block)
+        if not head:
+            continue
+        claim_id, sentence = head.groups()
+        cited = _CITED.findall(block)
+        # Uncited sentences are framing unless a verdict is scripted for them.
+        verdict, states_fact, bad = "supported", bool(cited), set()
+        for needle, scripted in (verdicts or {}).items():
+            if needle in sentence:
+                verdict, states_fact, bad = scripted
+        claims.append({
+            "claim_id": claim_id,
+            "states_fact": states_fact,
+            "verdict": verdict,
+            "per_source": [{"source_id": sid, "supports_part": sid not in bad} for sid in cited],
+            "unsupported_parts": [] if verdict == "supported" else [sentence[:60]],
+        })
+    return {"claims": claims}
+
+
+class FakeClaimModel:
+    """Scripted claim judge (role ``claim_judge``); see ``judge_claims``. Uncited sentences are
+    framing (states_fact false) unless scripted otherwise."""
+
+    model_name = "fake-claim-judge"
+
+    def __init__(self, verdicts=None, fail=False):
+        self.verdicts = verdicts or {}
+        self.fail = fail
+        self.calls = 0
+
+    def invoke(self, messages, config=None):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("claim judge unavailable")
+        return AIMessage(content=json.dumps(judge_claims(messages, verdicts=self.verdicts)))

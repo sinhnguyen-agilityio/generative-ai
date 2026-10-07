@@ -12,7 +12,10 @@ from intelligence_collector.contracts import (
     Stage,
     TodoStatus,
 )
-from intelligence_collector.graph.nodes.common import invalidate_draft_authority
+from intelligence_collector.graph.nodes.common import (
+    invalidate_draft_authority,
+    reset_research_rounds,
+)
 from intelligence_collector.ports import ArtifactStore
 
 
@@ -115,6 +118,7 @@ class RecoveryNodes:
             }
         return {
             **update,
+            **reset_research_rounds(),
             "stage": Stage.SCOPING.value,
             "request": decision.feedback,
             "draft": "",

@@ -22,6 +22,7 @@ class Node:
     AWAIT_PLAN = "await_plan_approval"
     # Research pipeline
     RESEARCH = "researching"
+    ANALYZE_GAPS = "analyze_gaps"
     ASSESS_RESEARCH = "research_complete"
     # Build-Verify-Fix loop
     SYNTHESIZE = "synthesizing"
@@ -54,6 +55,7 @@ NODE_AGENT = {
     Node.RESEARCH: "Research Supervisor",
     Node.PREPARE_GAP_RESEARCH: "Research Supervisor",
     Node.PREPARE_REPAIR_RESEARCH: "Research Supervisor",
+    Node.ANALYZE_GAPS: "Research Supervisor",
     Node.ASSESS_RESEARCH: "Research Readiness",
     Node.SYNTHESIZE: "Report Writer",
     Node.PREPARE_REVISION: "Report Writer",
@@ -100,9 +102,22 @@ def invalidate_draft_authority() -> dict:
         "publication": None,
         "faithfulness_score": None,
         "faithfulness_error": "",
+        "claim_support_score": None,
+        "claim_evaluation_ref": "",
         "context_precision_score": None,
         "context_precision_error": "",
         "context_precision_details": [],
         "response_relevancy_score": None,
         "response_relevancy_error": "",
+    }
+
+
+def reset_research_rounds() -> dict:
+    """State update for a new plan or scope: research starts again at round 1 with no
+    follow-ups and no gap analysis."""
+    return {
+        "research_round": 1,
+        "gap_stall_count": 0,
+        "follow_up_count": 0,
+        "gap_analysis": None,
     }

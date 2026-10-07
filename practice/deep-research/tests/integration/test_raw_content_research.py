@@ -88,8 +88,8 @@ def test_think_tool_reflection_is_recorded_but_is_not_evidence(stores):
         p for p in reversed(model.prompts) if p.startswith("You are a research agent")
     )
     assert "Reflection recorded: The persistence page answers the question." in final_turn
-    compressor = next(p for p in model.prompts if "compress raw web search results" in p)
-    assert "Reflection recorded" not in compressor
+    report = next(p for p in model.prompts if p.startswith("You write the short structured report"))
+    assert "Reflection recorded" not in report
     bundle = json.loads(vfs.read("run", "research/t1/evidence/result.json"))
     assert bundle["search_calls"] == 1
 
@@ -119,7 +119,8 @@ def test_the_full_page_is_stored_in_the_vfs_and_indexed_as_chunks(stores):
 
     bundle = json.loads(vfs.read("run", "research/t1/evidence/result.json"))
     source = bundle["sources"][0]
-    assert source["excerpt"] == capture["content"]  # the writer reads the passages
+    # The writer reads the selected passages, plus any looked-up passage behind a report quote.
+    assert source["excerpt"].startswith(capture["content"])
     assert source["raw_path"] == "research/t1/raw/0.md"
     assert all("text" not in chunk for chunk in bundle["indexed_chunks"])
 

@@ -61,19 +61,32 @@ trace bb977cf7…  session thread-7f3a
 │     ├─ Planner · await_plan_approval
 │     ├─ Research Supervisor · researching
 │     │  ├─ model.supervisor → [generation]
-│     │  ├─ research_agent · 79aa… [agent]              ┐ sub-agents run concurrently
+│     │  ├─ model.query_rewriter → [generation]        phrasings of the task's points
+│     │  ├─ passage.lookup [retriever]                 lookup before the search
+│     │  ├─ research_agent · 79aa… [agent]              ┐ searchers run concurrently
 │     │  │  ├─ llm_call → model.researcher [generation]  │ (asyncio.to_thread); each one
-│     │  │  ├─ tool_node → mcp.search [tool]             │ nests under researching, never
-│     │  │  └─ compress_research → model.research_compressor → [generation]
-│     │  ├─ research_agent · 3eba… [agent]              ┘ as a separate root
-│     │  ├─ research.persist [span] todo_id=3eba…   (VFS writes + vector_index.upsert)
-│     │  └─ research.persist [span] todo_id=79aa…
+│     │  │  └─ tool_node                                 │ nests under researching, never
+│     │  │     ├─ mcp.search [tool]                      │ as a separate root
+│     │  │     ├─ result_evaluation [span]               │
+│     │  │     └─ model.result_evaluator → [generation]  │
+│     │  ├─ research_agent · 3eba… [agent]              ┘
+│     │  ├─ research.persist [span] todo_id=79aa…   (VFS writes + vector_index.upsert,
+│     │  │                                           then passage.lookup before the report)
+│     │  ├─ searcher.report [span] todo_id=79aa…
+│     │  ├─ model.searcher_report → [generation]
+│     │  ├─ research.report [span] todo_id=79aa…    (lookups, report and evidence bundle)
+│     │  └─ … the same for 3eba…
+│     ├─ Research Supervisor · analyze_gaps
+│     │  ├─ gap_analysis [span]                      round, gap counts, follow-ups
+│     │  └─ model.supervisor → [generation]          only when an essential gap is open
 │     ├─ Research Readiness · research_complete
 │     ├─ Report Writer · synthesizing → model.synthesizer → [generation]
 │     ├─ Verifier · verifying
 │     │  ├─ model.verify → [generation]
-│     │  └─ ragas.faithfulness [evaluator]   → trace score "faithfulness"
+│     │  ├─ claim_judge [evaluator]                  → trace score "claim_support"
+│     │  └─ model.claim_judge → [generation]         one per batch of ≤ 10 sentences
 │     ├─ Verifier · evaluating_quality
+│     │  └─ ragas.faithfulness [evaluator]           → trace score "faithfulness" (informational)
 │     └─ Publisher · approval
 └─ resume · publication_approval: Publisher [agent]
    └─ research_graph
@@ -93,10 +106,10 @@ session that lists it. Node observations carry `node`, `agent`, `stage`, `draft_
 | Graph and nodes | `RunTracer.execution()` creates a Langfuse `CallbackHandler` per invocation; `Execution.graph_config()` puts it in the LangGraph config. LangGraph emits one run per node. `node_wrapper` renames that run `<agent> · <node>` (`enter_node`), records the agent on the execution and adds metadata with `update_current_span`. It does not open a second span |
 | LLM calls | `ModelRouter` passes only `run_name="model.<role>"` and metadata. The call inherits the callback of the node or sub-agent it runs in, so the handler records it once as a generation with model, usage and latency. Structured-output parsing is part of the chain, so an invalid answer is an ERROR on that attempt's `model.<role>` run |
 | Research sub-agents | `ResearchAgent.research` invokes its graph with `run_name="research_agent · <todo_id>"` and `todo_id` metadata. The supervisor runs them with `asyncio.to_thread`, which copies `contextvars` (the OpenTelemetry context and LangChain's parent run config) into the worker thread |
-| MCP, passage selection (`passage.select`), persistence, vector index, RAGAS | `traced(name, as_type=...)` opens a Langfuse observation as a child of the current one. The active client travels in a `ContextVar`, so this also works inside `asyncio.run`, `anyio.run`, `gather` and worker threads. Outside an execution `traced` does nothing |
+| MCP, passage selection (`passage.select`), result evaluation, persistence, passage lookup (`passage.lookup`), searcher reports (`searcher.report`), gap analysis (`gap_analysis`), claim judge (`claim_judge`), vector index, RAGAS | `traced(name, as_type=...)` opens a Langfuse observation as a child of the current one. The active client travels in a `ContextVar`, so this also works inside `asyncio.run`, `anyio.run`, `gather` and worker threads. Outside an execution `traced` does nothing. These spans carry only low-cardinality metadata: counts, task ids, the round and the lookup fallback (`passage.lookup` output is `{hits, fallback}`) |
 | RAGAS judge (OpenAI) | Inside an execution the judge uses `langfuse.openai.AsyncOpenAI`, so each judge call is a generation under its evaluator observation |
 | Recovery, continuation, legacy bridges | `WorkflowRecoveryService(graph, registry, tracer)` wraps every `graph.invoke` in an execution |
-| Scores | `node_wrapper` sends `faithfulness` (from `verifying`) and `context_precision` / `response_relevancy` (from `evaluating_quality`) as trace scores, each only from the node that computes it |
+| Scores | `node_wrapper` sends `claim_support` (from `verifying`, the faithfulness gate) and `faithfulness` / `context_precision` / `response_relevancy` (RAGAS, from `evaluating_quality`) as trace scores, each only from the node that computes it |
 
 ## Data that leaves the process
 

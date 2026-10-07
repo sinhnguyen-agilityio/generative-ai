@@ -86,6 +86,7 @@ def test_failed_todo_write_cannot_traverse_to_research(tmp_path):
                 "questions": [
                     "Which databases suit local Python applications, per primary sources?"
                 ],
+                "evidence_points": [[{"text": "evidence answering the question", "required_answers": [1]}]],
             },
         ]
     )
@@ -192,3 +193,16 @@ def test_node_lifecycle_reports_waiting_on_interrupt():
         wrapped({"run_id": "run", "thread_id": "thread"})
 
     assert events == [("await_plan_approval", "running"), ("await_plan_approval", "waiting")]
+
+
+def test_every_research_round_ends_with_gap_analysis():
+    from intelligence_collector.graph.routing import route_after_delegation, route_after_gap_analysis
+    from intelligence_collector.graph.nodes import Node
+
+    assert route_after_delegation({}) == Node.ANALYZE_GAPS
+    assert route_after_delegation({"research_replan": {"reason": "x"}}) == Node.REPLAN
+    assert route_after_gap_analysis({"gap_analysis": {"ended": "follow_ups_created"}}) == Node.RESEARCH
+    for ended in ("no_essential_gaps", "caps_reached", "stalled", "turn_limit"):
+        assert route_after_gap_analysis({"gap_analysis": {"ended": ended}}) == Node.ASSESS_RESEARCH
+    assert route_after_gap_analysis({"research_replan": {"reason": "x"},
+                                     "gap_analysis": {"ended": "follow_ups_created"}}) == Node.REPLAN

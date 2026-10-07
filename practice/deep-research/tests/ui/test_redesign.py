@@ -118,6 +118,7 @@ def test_run_tab_shows_the_three_verification_gates():
     app = _app_with_snapshot(
         {
             **REVIEW,
+            "claim_support_score": 1.0,
             "faithfulness_score": 0.96,
             "verification": {
                 "passed": True,
@@ -133,7 +134,8 @@ def test_run_tab_shows_the_three_verification_gates():
     run_text = "\n".join(str(m.value) for m in app.tabs[0].markdown)
     assert "Verification gates" in run_text
     assert "1 of 1 required items answered" in run_text
-    assert '<span class="ic-mono">0.96</span>' in run_text
+    assert '<span class="ic-mono">1.00</span>' in run_text  # the claim-support share
+    assert "Report quality (RAGAS) · not a gate" in run_text
     assert 'class="ic-gate fail"' not in run_text
 
 

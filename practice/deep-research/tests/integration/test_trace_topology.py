@@ -32,6 +32,8 @@ from tests.fixtures.fake_models import (
 )
 from tests.fixtures.langfuse_capture import LangfuseCapture
 from tests.integration.test_approval_gate import BRIEF, GOOD, PASS, URL
+from intelligence_collector.agents.claim_judge import ClaimJudge
+from tests.fixtures.fake_models import FakeClaimModel
 
 RUN, THREAD = "run-topology", "thread-topology"
 QUESTIONS = [
@@ -185,6 +187,13 @@ def test_one_invocation_is_one_trace_with_nodes_workers_tools_and_generations(tm
         assert search.output == {"results": 1, "urls": [URL]}
     persists = capture.named("research.persist")
     assert {p.parent_id for p in persists} == {researching.span_id}
+    # Spec 002 steps: one report per task, lookups with their fallback, one round analysis.
+    reports = capture.named("searcher.report")
+    assert sorted(r.metadata["todo_id"] for r in reports) == ["todo-0", "todo-1", "todo-2"]
+    assert all("researching" in capture.ancestors(r) for r in reports)
+    lookups = capture.named("passage.lookup")
+    assert lookups and all(set(lookup.output) == {"hits", "fallback"} for lookup in lookups)
+    assert capture.ancestors(capture.named("gap_analysis")[0])[0] == "analyze_gaps", tree
     # LLM calls are generations with model name and usage, under the node/worker that made them.
     generations = [span for span in spans if span.type == "generation"]
     assert len(generations) == stack.model_calls
@@ -326,6 +335,7 @@ def test_plan_approval_resume_runs_research_in_a_new_execution_of_the_same_trace
         ),
         faithfulness_evaluator=lambda q, r, c: {"score": 0.96, "unsupported": []},
         require_faithfulness=True,
+        claim_judge=ClaimJudge(ModelRouter(FakeClaimModel())),
     )
     graph = build_graph(
         scope_agent=ScopeAgent(ModelRouter(scope_model)),
@@ -364,9 +374,13 @@ def test_plan_approval_resume_runs_research_in_a_new_execution_of_the_same_trace
         assert capture.parent(capture.parent(node)).span_id == first.span_id
     evaluator = capture.named("ragas.faithfulness")[0]
     assert evaluator.type == "evaluator" and evaluator.output == {"score": 0.96, "unsupported": 0}
-    assert capture.ancestors(evaluator)[0] == "verifying"
+    # RAGAS Faithfulness is an informational quality signal; the claim judge is the gate.
+    assert capture.ancestors(evaluator)[0] == "evaluating_quality"
+    gate = capture.named("claim_judge")[0]
+    assert capture.ancestors(gate)[0] == "verifying"
     assert [(score["name"], score["value"], score["trace_id"]) for score in capture.scores] == [
-        ("faithfulness", 0.96, first.trace_id)
+        ("claim_support", 1.0, first.trace_id),
+        ("faithfulness", 0.96, first.trace_id),
     ]
 
 

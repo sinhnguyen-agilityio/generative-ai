@@ -12,6 +12,8 @@ from streamlit.testing.v1 import AppTest
 from intelligence_collector.ui import resources, state, turn
 from intelligence_collector.ui.run_status import agent_status
 from tests.ui.test_chat_progress import _visible_text
+from intelligence_collector.agents.claim_judge import ClaimJudge
+from tests.fixtures.fake_models import FakeClaimModel
 
 APP_PATH = Path(__file__).parents[2] / "app.py"
 
@@ -62,6 +64,7 @@ def research_graph(tmp_path, monkeypatch):
         ),
         faithfulness_evaluator=lambda q, r, c: {"score": 0.96, "unsupported": []},
         require_faithfulness=True,
+        claim_judge=ClaimJudge(ModelRouter(FakeClaimModel())),
     )
     graph = build_graph(
         scope_agent=ScopeAgent(ModelRouter(SequencedModel(_scope_responses()))),

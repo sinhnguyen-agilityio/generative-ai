@@ -13,7 +13,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from intelligence_collector.contracts import FAITHFULNESS_THRESHOLD, Stage
+from intelligence_collector.contracts import Stage
 
 THEME_CSS_PATH = Path(__file__).with_name("theme.css")
 
@@ -132,11 +132,13 @@ def section_label_html(text: str) -> str:
     return f'<div class="ic-label">{escape(text)}</div>'
 
 
-def verification_gates(verification, faithfulness_score) -> list[dict]:
+def verification_gates(verification, claim_support_score) -> list[dict]:
     """The three verification gates of one verified draft: coverage, citations, faithfulness.
 
     Each gate: ``name``, ``passed`` (None when that gate has no recorded result) and
-    ``detail``; faithfulness also carries its ``score``."""
+    ``detail``; faithfulness also carries its ``score``: the share of factual sentences the
+    claim judge found supported by their own cited sources (spec 002, FR-026). The gate passes
+    only at full support; RAGAS faithfulness is a quality signal shown elsewhere."""
     results = list(getattr(verification, "check_results", None) or [])
     by_gate: dict[str, list] = {}
     for check in results:
@@ -164,17 +166,20 @@ def verification_gates(verification, faithfulness_score) -> list[dict]:
             "detail": "Every [S#] resolves to a collected source",
         },
     ]
-    score = faithfulness_score
+    score = claim_support_score
     passed = gate_passed("faithfulness")
     if score is not None and passed is None:
-        passed = score > FAITHFULNESS_THRESHOLD
+        passed = score >= 1.0
+    failing = sum(len(check.details) for check in by_gate.get("faithfulness", []))
     gates.append(
         {
             "name": "Faithfulness",
             "passed": passed,
             "score": score,
-            "detail": f"Must be above {FAITHFULNESS_THRESHOLD:.2f}; every claim is checked "
-            "against its cited source",
+            "detail": f"{failing} sentence{'s' if failing != 1 else ''} not supported by "
+            "the sources it cites"
+            if failing
+            else "Every factual sentence is supported by the sources it cites",
         }
     )
     return gates
@@ -200,7 +205,7 @@ def gates_html(gates: list[dict]) -> str:
         value = f'<span class="ic-mono">{score:.2f}</span>' if score is not None else status
         meter = (
             f'<div class="ic-meter" aria-hidden="true"><span style="width:{max(0.0, min(score, 1.0)) * 100:.0f}%">'
-            "</span><i></i></div>"
+            "</span></div>"
             if score is not None
             else ""
         )
@@ -280,3 +285,80 @@ def research_banner_html(tasks: int, sources: int, follow_ups: int) -> str:
 
 def domain(url: str) -> str:
     return urlsplit(url).netloc.removeprefix("www.")
+
+
+def _label(text: str) -> str:
+    return text.replace("_", " ")
+
+
+def task_research_html(research) -> str:
+    """One task's searches (``ui.evidence.TaskResearch``): queries, accepted and rejected
+    results with reasons, why it stopped, and its report's status and open points."""
+    rejected = sum(research.rejected.values())
+    reasons = ", ".join(
+        f"{_label(reason)} {count}" for reason, count in sorted(research.rejected.items())
+    )
+    lines = [
+        f"{research.accepted} accepted · {rejected} rejected" + (f" ({escape(reasons)})" if reasons else "")
+    ]
+    status = []
+    if research.stop_reason:
+        status.append(f"stopped: {escape(_label(research.stop_reason))}")
+    if research.report_status:
+        status.append(f"report: {escape(research.report_status)}")
+    if status:
+        lines.append(" · ".join(status))
+    if research.open_points:
+        lines.append("Open: " + escape(", ".join(research.open_points)))
+    queries = "".join(f"<li>{escape(query)}</li>" for query in research.queries)
+    body = "".join(f'<div class="ic-muted">{line}</div>' for line in lines)
+    if queries:
+        body += f'<div class="ic-muted">Queries:</div><ol class="ic-muted">{queries}</ol>'
+    return body
+
+
+def rounds_html(rounds) -> str:
+    """The research rounds (``ui.evidence.RoundView``) as a timeline: how each round's gap
+    analysis ended, the essential gaps still open and the follow-up tasks it created."""
+    rows = []
+    for view in rounds:
+        body = escape(f"Round {view.round}: {_label(view.ended) or 'analyzed'}")
+        if view.closed_essential:
+            body += escape(f" · {view.closed_essential} essential gap(s) closed")
+        for follow_up in view.follow_ups:
+            gaps = ", ".join(follow_up.gap_point_ids)
+            body += (
+                f'<div class="ic-muted">Follow-up: {escape(follow_up.question)}'
+                + (f" · gaps {escape(gaps)}" if gaps else "")
+                + "</div>"
+            )
+        for gap in view.open_essential:
+            body += f'<div class="ic-muted">Open: {escape(gap)}</div>'
+        for refusal in view.refusals:
+            body += f'<div class="ic-muted">Refused: {escape(refusal)}</div>'
+        rows.append(
+            f'<li><span class="ic-tool ic-act">gap_analysis</span><div>{body}</div></li>'
+        )
+    return f'<ol class="ic-log">{"".join(rows)}</ol>' if rows else ""
+
+
+def claim_html(claim) -> str:
+    """One judged sentence (``ui.evidence.ClaimView``): its verdict and why it failed."""
+    tone = "ok" if claim.passed else "fail"
+    verdict = _label(claim.verdict) or "judged"
+    body = chip_html(f"{claim.claim_id} · {verdict}", tone)
+    body += f'<div class="ic-quote">{escape(claim.sentence)}</div>'
+    if claim.failures:
+        body += f'<div class="ic-muted">Failed: {escape("; ".join(claim.failures))}</div>'
+    return body
+
+
+def cited_text_html(source) -> str:
+    """The header of one cited source under a claim; the text itself is shown as plain text."""
+    label = ' <span class="ic-cite">snippet only</span>' if source.snippet_only else ""
+    link = (
+        f'<a href="{escape(source.url, quote=True)}">{escape(source.title)}</a>'
+        if source.url
+        else escape(source.title)
+    )
+    return f'<div><span class="ic-cite">{escape(source.source_id)}</span> {link}{label}</div>'

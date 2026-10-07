@@ -22,6 +22,7 @@ from intelligence_collector.graph.nodes.common import (
     Node,
     invalidate_draft_authority,
     node_agent,
+    reset_research_rounds,
 )
 from intelligence_collector.graph.nodes.interrupts import (
     await_clarification,
@@ -43,6 +44,7 @@ __all__ = [
     "Node",
     "node_agent",
     "invalidate_draft_authority",
+    "reset_research_rounds",
     "await_clarification",
     "await_plan_approval",
     "await_recovery",

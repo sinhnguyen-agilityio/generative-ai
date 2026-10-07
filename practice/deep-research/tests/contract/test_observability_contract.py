@@ -117,7 +117,10 @@ def test_node_wrapper_annotates_the_node_and_scores_only_where_the_score_is_prod
     capture = LangfuseCapture()
     verifying = node_wrapper(
         "verifying",
-        lambda state: {**state, "faithfulness_score": 0.91, "draft_version": 2},
+        # verifying produces the claim-level gate score; a faithfulness field it carries
+        # forward is not its own score (RAGAS runs later, in evaluating_quality).
+        lambda state: {**state, "claim_support_score": 0.91, "faithfulness_score": 0.5,
+                       "draft_version": 2},
         capture.tracer,
     )
     approval = node_wrapper("approval", lambda state: state, capture.tracer)
@@ -132,4 +135,4 @@ def test_node_wrapper_annotates_the_node_and_scores_only_where_the_score_is_prod
 
     node = capture.named("verifying")[0]
     assert node.metadata["node"] == "verifying" and node.metadata["draft_version"] == 2
-    assert [(s["name"], s["value"]) for s in capture.scores] == [("faithfulness", 0.91)]
+    assert [(s["name"], s["value"]) for s in capture.scores] == [("claim_support", 0.91)]

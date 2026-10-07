@@ -46,6 +46,17 @@ def _bounded_int(name: str, default: int, maximum: int) -> int:
     return value
 
 
+def _ranged_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer between {minimum} and {maximum}") from exc
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
 EVAL_METRICS = ("faithfulness", "context_precision", "response_relevancy")
 
 
@@ -94,10 +105,17 @@ class Settings:
     evidence_top_k: int = 6
     output_dir: str = "exports"
     max_search_calls: int = 5
-    # Distinct pages one research sub-agent keeps for its todo, across all of its searches.
-    max_sources_per_task: int = 3
+    # Distinct accepted pages one searcher keeps for its task, across all of its searches.
+    max_sources_per_task: int = 5
     max_concurrent_researchers: int = 3
     recovery_attempts: int = 3
+    # Passages one stored-passage lookup returns (spec 002, FR-013f).
+    lookup_top_k: int = 5
+    # Follow-up tasks gap analysis may create (spec 002, FR-019).
+    max_follow_ups_per_run: int = 4
+    max_follow_ups_per_answer: int = 2
+    # Word limit of a searcher's short report (spec 002, FR-014).
+    report_max_words: int = 400
     faithfulness_model: str = "gpt-4.1-mini"
     faithfulness_provider: str = "openai"
     # RAGAS metrics scored on the final report (judge = the faithfulness model above).
@@ -122,7 +140,7 @@ class Settings:
             output_dir=os.getenv("INTELLIGENCE_OUTPUT_DIR", cls.output_dir),
             max_search_calls=_bounded_int("INTELLIGENCE_MAX_SEARCH_CALLS", 5, MAX_SEARCH_CALLS),
             max_sources_per_task=_bounded_int(
-                "INTELLIGENCE_MAX_SOURCES_PER_TASK", 3, MAX_SOURCES_PER_TASK
+                "INTELLIGENCE_MAX_SOURCES_PER_TASK", 5, MAX_SOURCES_PER_TASK
             ),
             max_concurrent_researchers=_bounded_int(
                 "INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS", 3, MAX_CONCURRENT_RESEARCHERS
@@ -130,6 +148,12 @@ class Settings:
             recovery_attempts=_bounded_int(
                 "INTELLIGENCE_RECOVERY_ATTEMPTS", 3, MAX_RECOVERY_ATTEMPTS
             ),
+            lookup_top_k=_ranged_int("INTELLIGENCE_LOOKUP_TOP_K", 5, 1, 20),
+            max_follow_ups_per_run=_ranged_int("INTELLIGENCE_MAX_FOLLOW_UPS_PER_RUN", 4, 0, 8),
+            max_follow_ups_per_answer=_ranged_int(
+                "INTELLIGENCE_MAX_FOLLOW_UPS_PER_ANSWER", 2, 0, 4
+            ),
+            report_max_words=_ranged_int("INTELLIGENCE_REPORT_MAX_WORDS", 400, 100, 1000),
             report_guidelines=_json_string_list(
                 "INTELLIGENCE_REPORT_GUIDELINES", DEFAULT_REPORT_GUIDELINES
             ),
@@ -144,7 +168,7 @@ class Settings:
 @dataclass(frozen=True)
 class RoleModelSettings:
     """Model profiles for deep-reasoning (scope, planner, verify) and standard (researcher,
-    research_compressor, synthesizer, fixer) roles. Each profile may have its own fallback."""
+    result_evaluator, query_rewriter, searcher_report, synthesizer, fixer) roles. Each profile may have its own fallback."""
 
     reasoning_model: str
     standard_model: str

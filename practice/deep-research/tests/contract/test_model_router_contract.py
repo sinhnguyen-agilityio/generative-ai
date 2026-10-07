@@ -60,7 +60,7 @@ def test_invoke_messages_uses_provider_native_structured_output():
 
     router = ModelRouter(StructuredModel())
 
-    result = router.invoke_messages("research_compressor", [HumanMessage(content="hi")], _Decision)
+    result = router.invoke_messages("searcher_report", [HumanMessage(content="hi")], _Decision)
 
     assert result == _Decision(ok=True)
     assert bound == [_Decision]

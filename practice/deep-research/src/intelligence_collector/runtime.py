@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import sqlite3
 
+from intelligence_collector.agents.claim_judge import ClaimJudge
 from intelligence_collector.agents.extension_judge import ExtensionJudge
 from intelligence_collector.agents.feedback_router import FeedbackRouter
 from intelligence_collector.agents.passage_selector import PassageSelector
@@ -72,11 +73,12 @@ def _judge_key_env(settings: Settings) -> str:
 
 
 def quality_evaluators(settings: Settings, embeddings) -> dict:
-    """RAGAS evaluators keyed by their ``ResearchNodes`` argument. Faithfulness is the third
-    verification gate, so it is always built when the judge key is set; Context Precision and
-    Response Relevancy follow ``INTELLIGENCE_EVAL_METRICS``. The judge (default OpenAI
-    gpt-4.1-mini) is independent of the app's reasoning/standard tier models. Without the
-    judge key no evaluator exists and verification reports ERROR (see ``require_faithfulness``).
+    """RAGAS evaluators keyed by their ``ResearchNodes`` argument: informational quality
+    signals of a passing report (spec 002, FR-026a). Faithfulness is always built when the judge
+    key is set; Context Precision and Response Relevancy follow ``INTELLIGENCE_EVAL_METRICS``.
+    The judge (default OpenAI gpt-4.1-mini) is independent of the app's reasoning/standard tier
+    models. Without the judge key no evaluator exists and the report has no RAGAS signals; the
+    faithfulness gate itself is the claim judge.
     Response Relevancy reuses the vector index's embeddings."""
     api_key = os.getenv(_judge_key_env(settings), "").strip()
     if not api_key:
@@ -120,8 +122,8 @@ def _research_nodes(
     judge_key = _judge_key_env(settings)
     if not os.getenv(judge_key, "").strip():
         warn(
-            f"Report verification needs RAGAS Faithfulness: configure {judge_key}. "
-            "Until then every verification ends in ERROR and no report can be approved."
+            f"RAGAS quality signals (informational faithfulness, context precision, response "
+            f"relevancy) need {judge_key}; verification itself does not."
         )
     embeddings = default_embeddings(settings.embedding_model, settings.embedding_provider)
     # Passage selection and the vector index embed the same page chunks: the index reuses the
@@ -154,7 +156,15 @@ def _research_nodes(
         max_concurrent_researchers=settings.max_concurrent_researchers,
         recovery_budget=settings.recovery_attempts,
         evidence_top_k=settings.evidence_top_k,
+        # The faithfulness gate: every factual sentence judged against its own cited passages,
+        # on the reasoning tier (spec 002, FR-026).
+        claim_judge=ClaimJudge(agent.router),
         require_faithfulness=True,
+        # Supervisor–searcher limits (spec 002).
+        lookup_top_k=settings.lookup_top_k,
+        report_max_words=settings.report_max_words,
+        max_follow_ups_per_run=settings.max_follow_ups_per_run,
+        max_follow_ups_per_answer=settings.max_follow_ups_per_answer,
         **quality_evaluators(settings, embeddings),
     )
 

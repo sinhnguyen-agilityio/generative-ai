@@ -66,7 +66,7 @@ def test_gates_summarize_coverage_citations_and_faithfulness():
         ],
     )
 
-    coverage, citations, faithfulness = verification_gates(verification, 0.96)
+    coverage, citations, faithfulness = verification_gates(verification, 1.0)
 
     assert coverage == {
         "name": "Coverage",
@@ -74,18 +74,35 @@ def test_gates_summarize_coverage_citations_and_faithfulness():
         "detail": "1 of 2 required items answered",
     }
     assert citations["passed"] is True
-    assert faithfulness["passed"] is True and faithfulness["score"] == 0.96
+    assert faithfulness["passed"] is True and faithfulness["score"] == 1.0
+    assert faithfulness["detail"] == "Every factual sentence is supported by the sources it cites"
     html = gates_html([coverage, citations, faithfulness])
     assert html.count('class="ic-gate fail"') == 1
-    assert 'style="width:96%"' in html  # the meter, with the 0.90 marker drawn over it
+    assert 'style="width:100%"' in html
 
 
-def test_faithfulness_alone_decides_its_gate_from_the_threshold():
+def test_faithfulness_gate_counts_the_failing_claims():
+    verification = VerificationResult(
+        artifact_hash="h",
+        passed=False,
+        check_results=[
+            VerificationCheck(
+                name="claims", passed=False, gate="faithfulness",
+                details=["K1: uncited — x", "K3: contradicted — y"],
+            )
+        ],
+    )
+    *_, faithfulness = verification_gates(verification, 0.6)
+    assert faithfulness["passed"] is False and faithfulness["score"] == 0.6
+    assert faithfulness["detail"] == "2 sentences not supported by the sources it cites"
+
+
+def test_claim_support_alone_passes_only_at_full_support():
     verification = VerificationResult(
         artifact_hash="h", passed=False, check_results=[_check("coverage", True, "a")]
     )
-    *_, faithfulness = verification_gates(verification, 0.85)
-    assert faithfulness["passed"] is False
+    assert verification_gates(verification, 0.95)[-1]["passed"] is False
+    assert verification_gates(verification, 1.0)[-1]["passed"] is True
 
 
 def test_supervisor_log_shows_decisions_in_order_and_escapes_reflections():

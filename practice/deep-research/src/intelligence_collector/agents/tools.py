@@ -29,6 +29,7 @@ CONDUCT_RESEARCH_TOOL_NAME = "ConductResearch"
 RESEARCH_COMPLETE_TOOL_NAME = "ResearchComplete"
 PROPOSE_REPLAN_TOOL_NAME = "ProposeReplan"
 WRITE_TODOS_TOOL_NAME = "write_todos"
+CREATE_FOLLOW_UP_TOOL_NAME = "CreateFollowUp"
 
 SEARCH_TOOL = _function(
     SEARCH_TOOL_NAME,
@@ -123,12 +124,64 @@ WRITE_TODOS_TOOL = _function(
             "description": "For each question, in the same order, one short line naming the "
             "evidence that would answer it.",
         },
+        "evidence_points": {
+            "type": "array",
+            "description": "For each question, in the same order, 1 to 4 evidence points: the "
+            "specific things its research must find. Each lists the 1-based numbers of the "
+            "required answers it serves (an empty list for a point no required answer needs). "
+            "Every required answer must be served by at least one point.",
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "required_answers": {"type": "array", "items": {"type": "integer"}},
+                    },
+                    "required": ["text", "required_answers"],
+                },
+            },
+        },
         "report_shape": {
             "type": "string",
             "description": "One sentence describing the report that answers the brief.",
         },
     },
-    ["questions", "evidence_needed", "report_shape"],
+    ["questions", "evidence_needed", "evidence_points", "report_shape"],
+)
+
+
+CREATE_FOLLOW_UP_TOOL = _function(
+    CREATE_FOLLOW_UP_TOOL_NAME,
+    "Create one follow-up research task for essential evidence points that are still missing "
+    "after this round. It is researched in the next round by a separate searcher.",
+    {
+        "question": {
+            "type": "string",
+            "description": "A standalone research question naming exactly what to find; it stays "
+            "inside the approved research question.",
+        },
+        "evidence_points": {
+            "type": "array",
+            "description": "1 to 4 specific things the follow-up must find, each with the 1-based "
+            "numbers of the required answers it serves (at least one).",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "required_answers": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["text", "required_answers"],
+            },
+        },
+        "gap_point_keys": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "The open gap keys (todo_id:point_id) this follow-up targets.",
+        },
+        "reason": {"type": "string", "description": "Why the gap needs more research."},
+    },
+    ["question", "evidence_points", "gap_point_keys", "reason"],
 )
 
 

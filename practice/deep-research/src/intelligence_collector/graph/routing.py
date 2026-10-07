@@ -87,8 +87,19 @@ def route_after_fix(state: GraphState) -> str:
 
 
 def route_after_delegation(state: GraphState) -> str:
-    """A supervisor's replan proposal goes to replacement planning; otherwise assess research."""
-    return Node.REPLAN if state.get("research_replan") else Node.ASSESS_RESEARCH
+    """A supervisor's replan proposal goes to replacement planning; otherwise the round ends with
+    gap analysis."""
+    return Node.REPLAN if state.get("research_replan") else Node.ANALYZE_GAPS
+
+
+def route_after_gap_analysis(state: GraphState) -> str:
+    """Follow-up tasks start the next research round; a replan proposal goes to replacement
+    planning; otherwise research is assessed."""
+    if state.get("research_replan"):
+        return Node.REPLAN
+    if (state.get("gap_analysis") or {}).get("ended") == "follow_ups_created":
+        return Node.RESEARCH
+    return Node.ASSESS_RESEARCH
 
 
 def route_after_research(state: GraphState) -> str:

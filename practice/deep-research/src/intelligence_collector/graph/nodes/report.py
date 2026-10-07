@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
+import re
 
 from langchain_core.messages import AIMessage
 
@@ -16,6 +18,7 @@ from intelligence_collector.agents.report_judge import (
     verification_result,
 )
 from intelligence_collector.agents.report_writer import (
+    EXCERPT_CHARS,
     DEFAULT_EVIDENCE_TOP_K,
     DIRECT_READ_CHARS,
     ReportWriter,
@@ -35,6 +38,8 @@ from intelligence_collector.contracts import (
     VerificationIssue,
     VerificationResult,
 )
+from intelligence_collector.agents.claim_judge import ClaimJudge, cited_ids, claim_check
+from intelligence_collector.models.redaction import redact_error
 from intelligence_collector.graph.nodes.common import (
     EXTENSION_PASSAGES,
     FAITHFULNESS_THRESHOLD,
@@ -105,6 +110,7 @@ class BVFNodes:
         context_precision_evaluator: ContextPrecisionEvaluator | None = None,
         response_relevancy_evaluator: ResponseRelevancyEvaluator | None = None,
         planner=None,
+        claim_judge: ClaimJudge | None = None,
     ):
         self.vfs = vfs
         self.index = index
@@ -114,8 +120,11 @@ class BVFNodes:
         self.recovery_budget = recovery_budget
         self.evidence_top_k = evidence_top_k
         self.direct_read_chars = DIRECT_READ_CHARS
+        # RAGAS Faithfulness: an informational quality signal of the passing draft (FR-026a).
         self.faithfulness_evaluator = faithfulness_evaluator
-        # When required, a missing evaluator is a configuration ERROR rather than a skipped gate.
+        # The faithfulness gate is the claim judge (FR-026). When required, a missing judge is a
+        # configuration ERROR rather than a skipped gate.
+        self.claim_judge = claim_judge
         self.require_faithfulness = require_faithfulness
         self.context_precision_evaluator = context_precision_evaluator
         self.response_relevancy_evaluator = response_relevancy_evaluator
@@ -219,6 +228,7 @@ class BVFNodes:
             writer_evidence,
             "retrieval",
         )
+        snapshot_ref = self._write_snapshot(state["run_id"], catalog, repair, version)
         return {
             # A changed artifact never inherits a previous verification, approval, publication
             # or quality score.
@@ -242,8 +252,53 @@ class BVFNodes:
                 *state.get("artifacts", []),
                 ref.model_dump(mode="json"),
                 ranking_ref.model_dump(mode="json"),
+                snapshot_ref.model_dump(mode="json"),
             ],
         }
+
+    @staticmethod
+    def _snapshot_from(catalog) -> dict:
+        """Every source shown to the writer: its title, URL and the exact text shown."""
+        sources: dict[str, dict] = {}
+        shown_under: dict[str, list[str]] = {}
+        for bundle in catalog.bundles:
+            for sid in bundle.source_ids:
+                source = catalog.sources.get(sid)
+                if source is None:
+                    continue
+                sources.setdefault(
+                    sid,
+                    {"title": source.title, "url": source.url, "text": source.excerpt[:EXCERPT_CHARS]},
+                )
+                shown_under.setdefault(sid, []).append(bundle.question)
+        return {"sources": sources, "shown_under": shown_under}
+
+    def _write_snapshot(self, run_id: str, catalog, repair, version: int):
+        """``synthesis/evidence.v{N}.json``: the only text the claim judge may read for this draft
+        (FR-023). A presentation-only repair shows the writer no evidence text, so it keeps the
+        previous draft's snapshot."""
+        snapshot = None
+        if (repair or {}).get("route") == RepairRoute.PRESENTATION and version > 1:
+            try:
+                previous = json.loads(self.vfs.read(run_id, f"synthesis/evidence.v{version - 1}.json"))
+                snapshot = {**previous, "copied_from_version": version - 1}
+            except FileNotFoundError:
+                snapshot = None
+        if snapshot is None:
+            snapshot = self._snapshot_from(catalog)
+        snapshot["draft_version"] = version
+        return self.vfs.write_json(
+            run_id, f"synthesis/evidence.v{version}.json", snapshot, "draft_evidence"
+        )
+
+    def _snapshot(self, state, catalog) -> dict:
+        """The current draft's snapshot; a draft written before snapshots existed uses the
+        whole catalog as shown to the writer."""
+        version = state.get("draft_version", 0)
+        try:
+            return json.loads(self.vfs.read(state["run_id"], f"synthesis/evidence.v{version}.json"))
+        except FileNotFoundError:
+            return self._snapshot_from(catalog)
 
     def prepare_revision(self, state):
         """Before a reviewer- or recovery-requested rewrite: fold the reviewer requests into
@@ -266,57 +321,6 @@ class BVFNodes:
             "coverage_cache": partial,
             "verifier_attempt": state.get("verifier_attempt", 0) + 1,
         }
-
-    def _faithfulness(self, brief, report, catalog):
-        """Third gate. Returns ``(check, score, error)``; ``error`` means ERROR."""
-        if self.faithfulness_evaluator is None:
-            return (
-                None,
-                None,
-                ("Faithfulness evaluator is not configured" if self.require_faithfulness else None),
-            )
-        contexts = cited_source_excerpts(report, catalog)
-        try:
-            with traced(
-                "ragas.faithfulness", as_type="evaluator", metadata={"contexts": len(contexts)}
-            ) as observation:
-                result = self.faithfulness_evaluator(
-                    brief.original_question or brief.research_question, report, contexts
-                )
-                observation.output = (
-                    {
-                        "score": result.get("score"),
-                        "unsupported": len(result.get("unsupported") or []),
-                    }
-                    if isinstance(result, dict)
-                    else {"score": result}
-                )
-        except Exception as exc:
-            return None, None, f"Faithfulness evaluation failed: {type(exc).__name__}"
-        score = result.get("score") if isinstance(result, dict) else result
-        unsupported = list(result.get("unsupported") or []) if isinstance(result, dict) else []
-        if (
-            not isinstance(score, (int, float))
-            or isinstance(score, bool)
-            or math.isnan(score)
-            or not 0 <= score <= 1
-        ):
-            return None, None, "Faithfulness returned no valid score"
-        passed = score > FAITHFULNESS_THRESHOLD
-        check = VerificationCheck(
-            name="faithfulness",
-            passed=passed,
-            gate="faithfulness",
-            details=[]
-            if passed
-            else [
-                f"RAGAS Faithfulness {score:.2f} is not above {FAITHFULNESS_THRESHOLD:.2f}."
-                + (" Unsupported statements: " + " | ".join(unsupported[:8]) if unsupported else "")
-            ],
-            missing_points=[] if passed else unsupported[:8],
-            affected_ids=[] if passed else ["faithfulness"],
-        )
-        return check, float(score), None
 
     def verifying(self, state):
         """Run the three gates on the exact current draft and record PASS, FAIL or ERROR.
@@ -374,25 +378,46 @@ class BVFNodes:
                         affected_ids=[f"citation:{error}"],
                     )
                 )
-        score = None
+        evaluation = None
         if all(check.passed for check in checks):
-            check, score, error = self._faithfulness(brief, report, catalog)
-            if error:
-                return self._error(
-                    state,
-                    error,
-                    {
-                        "artifact_hash": artifact_hash,
-                        "checks": [c.model_dump(mode="json") for c in checks],
-                    },
-                )
-            if check is not None:
-                checks.append(check)
+            # Third gate (FR-026): every factual sentence supported by its own cited passages.
+            saved = {
+                "artifact_hash": artifact_hash,
+                "checks": [c.model_dump(mode="json") for c in checks],
+            }
+            if self.claim_judge is None:
+                if self.require_faithfulness:
+                    return self._error(state, "Claim judge is not configured", saved)
+            else:
+                try:
+                    evaluation = self.claim_judge.evaluate(
+                        report,
+                        self._snapshot(state, catalog).get("sources", {}),
+                        draft_version=state.get("draft_version", 0),
+                        artifact_hash=artifact_hash,
+                        run_id=state["run_id"],
+                        thread_id=state.get("thread_id", ""),
+                    )
+                except Exception as exc:
+                    return self._error(
+                        state, f"Claim evaluation failed: {redact_error(exc)}", saved
+                    )
+                checks.append(claim_check(evaluation))
         result = verification_result(checks, artifact_hash)
         fingerprint = failure_fingerprint(result)
         stalled = not result.passed and fingerprint == state.get("progress_fingerprint")
         run_id = state["run_id"]
         save_catalog_state(self.vfs, run_id, state.get("evidence", []))
+        claims_path = ""
+        refs = []
+        if evaluation is not None:
+            claims_path = f"verification/claims.{result.verification_id}.json"
+            refs.append(
+                self.vfs.write_json(
+                    run_id, claims_path, evaluation.model_dump(mode="json"), "claim_evaluation"
+                )
+            )
+        claim_score = evaluation.supported_share if evaluation is not None else None
         ref = self.vfs.write_json(
             run_id,
             f"verification/result.{result.verification_id}.json",
@@ -400,7 +425,8 @@ class BVFNodes:
                 **result.model_dump(mode="json"),
                 "outcome": "PASS" if result.passed else "FAIL",
                 "draft_version": state.get("draft_version", 0),
-                "faithfulness_score": score,
+                "claim_support_score": claim_score,
+                "claim_evaluation_ref": claims_path,
             },
             "verification",
         )
@@ -417,7 +443,8 @@ class BVFNodes:
             "verification": result.model_dump(mode="json"),
             "verification_outcome": "PASS" if result.passed else "FAIL",
             "verification_issue": VerificationIssue.DRAFT_DEFECT.value,
-            "faithfulness_score": score,
+            "claim_support_score": claim_score,
+            "claim_evaluation_ref": claims_path,
             "coverage_cache": None,
             "verifier_attempt": 0,
             "verifier_error": "",
@@ -429,17 +456,24 @@ class BVFNodes:
             "progress_fingerprint": fingerprint,
             "stall_count": state.get("stall_count", 0) + 1 if stalled else 0,
             "recovery_budget": state.get("recovery_budget", self.recovery_budget),
-            "artifacts": [*state.get("artifacts", []), ref.model_dump(mode="json")],
+            "artifacts": [
+                *state.get("artifacts", []),
+                *(r.model_dump(mode="json") for r in refs),
+                ref.model_dump(mode="json"),
+            ],
         }
 
     def evaluating_quality(self, state):
-        """Optional RAGAS observations of the passing report: Context Precision and Response
-        Relevancy. Faithfulness was already scored as a verification gate and is not repeated.
+        """Optional RAGAS observations of the passing report: Faithfulness (over the cited
+        sources' snapshot text), Context Precision and Response Relevancy. None of them is a
+        gate: the claim judge already decided faithfulness (FR-026a).
 
         Each metric runs only when configured; a judge failure is recorded for that metric
         alone and never re-enters the loop.
         """
         update: dict = {
+            "faithfulness_score": None,
+            "faithfulness_error": "",
             "context_precision_score": None,
             "context_precision_error": "",
             "context_precision_details": [],
@@ -456,13 +490,20 @@ class BVFNodes:
                 )
             ),
         ]
-        if self.context_precision_evaluator is None and self.response_relevancy_evaluator is None:
+        if (
+            self.context_precision_evaluator is None
+            and self.response_relevancy_evaluator is None
+            and self.faithfulness_evaluator is None
+        ):
             return update
 
         catalog = self._catalog(state)
         question = ResearchBrief.model_validate(state["scoped_request"]).research_question
         draft = state.get("draft", "")
-        record: dict = {"question": question, "faithfulness_score": state.get("faithfulness_score")}
+        record: dict = {
+            "question": question,
+            "claim_support_score": state.get("claim_support_score"),
+        }
 
         def run(metric: str, evaluate):
             """Run one metric; a failure is recorded under ``<metric>_error``, never raised."""
@@ -474,6 +515,34 @@ class BVFNodes:
                 update[f"{metric}_error"] = str(exc)
                 return None
 
+        if self.faithfulness_evaluator is not None:
+            snapshot = self._snapshot(state, catalog).get("sources", {})
+            cited = cited_ids(draft)
+            contexts = [
+                f"{snapshot[sid].get('title', '')}\n{snapshot[sid].get('text', '')}".strip()
+                for sid in cited
+                if sid in snapshot
+            ]
+            brief = ResearchBrief.model_validate(state["scoped_request"])
+            raw: dict = {}
+
+            def faithfulness():
+                """The trace keeps the score and a count, never the statements themselves."""
+                raw["result"] = self.faithfulness_evaluator(
+                    brief.original_question or brief.research_question, draft, contexts
+                )
+                found = raw["result"]
+                if isinstance(found, dict):
+                    return {"score": found.get("score"), "unsupported": len(found.get("unsupported") or [])}
+                return {"score": found}
+
+            run("faithfulness", faithfulness)
+            result = raw.get("result")
+            score = result.get("score") if isinstance(result, dict) else result
+            if isinstance(score, (int, float)) and not isinstance(score, bool) and not math.isnan(score):
+                update["faithfulness_score"] = float(score)
+            elif result is not None and not update["faithfulness_error"]:
+                update["faithfulness_error"] = "Faithfulness returned no valid score"
         if self.context_precision_evaluator is not None:
             ranked = [
                 {
@@ -627,7 +696,14 @@ class BVFNodes:
             run_id=state["run_id"],
             thread_id=state.get("thread_id", ""),
         )
-        new = create_todos(self.vfs, state["run_id"], plan.questions, plan.evidence_needed)
+        new = create_todos(
+            self.vfs,
+            state["run_id"],
+            plan.questions,
+            plan.evidence_needed,
+            plan.evidence_points,
+            brief.checklist,
+        )
         record = plan_record(brief, [*todos, *new], plan.report_shape, kind="replacement")
         version = state.get("plan_version", 0) + 1
         ref = self.vfs.write_json(

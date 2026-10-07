@@ -1,0 +1,72 @@
+{
+  "description": "Plans with planted gaps for gap-analysis tests (SC-004). `required_answers` is the brief checklist; each evidence point links to 1-based indexes. `reports` are the searcher reports of round 1; `pages` are the stored pages of the run; `expected` is what gap analysis must decide.",
+  "cases": [
+    {
+      "id": "essential-and-minor-gap",
+      "required_answers": [
+        "Maximum database size of SQLite and PostgreSQL",
+        "Concurrent writers in SQLite and PostgreSQL"
+      ],
+      "tasks": [
+        {"todo_id": "t1", "question": "Storage limits of SQLite and PostgreSQL",
+         "evidence_points": [
+           {"point_id": "E1", "text": "SQLite maximum database size", "required_answers": [1]},
+           {"point_id": "E2", "text": "History of the SQLite file format", "required_answers": []}
+         ]},
+        {"todo_id": "t2", "question": "Write concurrency of SQLite and PostgreSQL",
+         "evidence_points": [
+           {"point_id": "E1", "text": "SQLite concurrent writers", "required_answers": [2]},
+           {"point_id": "E2", "text": "PostgreSQL concurrent writers", "required_answers": [2]}
+         ]}
+      ],
+      "reports": [
+        {"todo_id": "t1", "points": [
+          {"point_id": "E1", "status": "answered", "support": [{"source_id": "src_limits", "quote": "maximum database size is 281 TB"}]},
+          {"point_id": "E2", "status": "missing", "support": []}
+        ]},
+        {"todo_id": "t2", "points": [
+          {"point_id": "E1", "status": "missing", "support": []},
+          {"point_id": "E2", "status": "missing", "support": []}
+        ]}
+      ],
+      "pages": [
+        {"source_id": "src_limits", "todo_id": "t1", "url": "https://www.sqlite.org/limits.html", "text": "Maximum database size. The maximum database size is 281 TB. In WAL mode there can only be one writer at a time."},
+        {"source_id": "src_pg", "todo_id": "t2", "url": "https://www.postgresql.org/docs/current/mvcc-intro.html", "text": "PostgreSQL uses multiversion concurrency control so that readers never block writers."}
+      ],
+      "expected": {
+        "essential_gaps": ["t2:E1", "t2:E2"],
+        "non_essential_gaps": ["t1:E2"],
+        "covered_by_lookup": ["t2:E1"],
+        "follow_up_for": ["t2:E2"],
+        "limitations": ["t1:E2"]
+      }
+    },
+    {
+      "id": "no-essential-gap",
+      "required_answers": ["Definition of HTTP 403"],
+      "tasks": [
+        {"todo_id": "t1", "question": "HTTP 403 in RFC 9110",
+         "evidence_points": [
+           {"point_id": "E1", "text": "Definition of 403", "required_answers": [1]},
+           {"point_id": "E2", "text": "Origin of the 403 code number", "required_answers": []}
+         ]}
+      ],
+      "reports": [
+        {"todo_id": "t1", "points": [
+          {"point_id": "E1", "status": "answered", "support": [{"source_id": "src_rfc", "quote": "server understood the request but refuses to fulfill it"}]},
+          {"point_id": "E2", "status": "missing", "support": []}
+        ]}
+      ],
+      "pages": [
+        {"source_id": "src_rfc", "todo_id": "t1", "url": "https://www.rfc-editor.org/rfc/rfc9110", "text": "The 403 (Forbidden) status code indicates that the server understood the request but refuses to fulfill it."}
+      ],
+      "expected": {
+        "essential_gaps": [],
+        "non_essential_gaps": ["t1:E2"],
+        "covered_by_lookup": [],
+        "follow_up_for": [],
+        "limitations": ["t1:E2"]
+      }
+    }
+  ]
+}
