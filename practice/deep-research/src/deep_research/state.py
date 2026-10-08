@@ -33,8 +33,8 @@ class ResearcherState(TypedDict):
     topic: str
     researcher_messages: Annotated[list[AnyMessage], add_messages]
     searches: int
-    sources: dict[str, dict]  # url -> {id, title, full_text}: the source numbers cited in the report
-    notes: dict  # the topic note: {"report": text, "sources": [{id, title, url, full_text}]}
+    sources: dict[str, dict]  # url -> {id, title, full_text, passages shown}: the numbers the report cites
+    notes: dict  # the topic note: {"report": text, "sources": [{id, title, url, full_text, passages}]}
 
 
 # ----- Structured outputs -----
@@ -59,12 +59,6 @@ class ResearchPlan(BaseModel):
     topics: list[str] = Field(
         description="2-5 independent research topics covering the brief; each one short, standalone sentence."
     )
-
-
-class Evaluation(BaseModel):
-    faithfulness: float = Field(ge=0, le=1, description="Share of report claims supported by the findings.")
-    relevance: float = Field(ge=0, le=1, description="How well the report answers the brief.")
-    comment: str = Field(description="One or two sentences explaining the scores.")
 
 
 class Answered(BaseModel):

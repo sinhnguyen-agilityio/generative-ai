@@ -24,8 +24,9 @@ from deep_research.config import Settings
 from deep_research.state import ResearchState
 
 
-def build_graph(settings: Settings, reasoning, standard, search, store, checkpointer=None):
-    """``reasoning`` and ``standard`` are model tiers (see models.Tier)."""
+def build_graph(settings: Settings, reasoning, standard, search, store, checkpointer=None, scorer=None):
+    """``reasoning`` and ``standard`` are model tiers (see models.Tier); ``scorer`` replaces the
+    evaluator's RAGAS scoring (see EvaluatorAgent)."""
     guardrail = GuardrailAgent(standard)
     scope = ScopeAgent(reasoning)
     planner = PlannerAgent(reasoning)
@@ -33,7 +34,7 @@ def build_graph(settings: Settings, reasoning, standard, search, store, checkpoi
     researcher = ResearcherAgent(standard, search, store, settings)
     supervisor = SupervisorAgent(reasoning, researcher, settings)
     writer = WriterAgent(standard)
-    evaluator = EvaluatorAgent(reasoning, settings)
+    evaluator = EvaluatorAgent(settings, scorer)
     publisher = PublisherAgent(settings.output_dir)
 
     graph = StateGraph(ResearchState)

@@ -17,6 +17,9 @@ dependencies = [
     "chromadb>=0.5",
     "mcp>=1",
     "langfuse>=2",
+    "ragas>=0.4.3,<0.5",
+    # ragas 0.4 imports langchain_community.chat_models.vertexai, which later releases removed.
+    "langchain-community==0.4.1",
 ]
 
 [project.optional-dependencies]

@@ -7,7 +7,7 @@ from deep_research.agents.researcher import ResearcherAgent, render_note
 from deep_research.config import ModelSpec, Settings
 from deep_research.search import clean, normalize_url, prepare_pages
 from deep_research.state import Answered, MissingPart, TopicReport
-from tests.fakes import SNIPPET, TOPIC_REPORT, FakeSearch, FakeStore, FakeTier, call, researcher, result
+from tests.fakes import PAGE, SNIPPET, TOPIC_REPORT, FakeSearch, FakeStore, FakeTier, call, researcher, result
 
 
 def run(search=None, store=None, report=TOPIC_REPORT, tools=researcher):
@@ -36,6 +36,15 @@ def test_report_has_the_four_criteria_and_code_built_citations():
     assert notes.endswith("1 sources, 1 domains, 0 snippet only\n[1] Page a: https://example.com/a")
     assert store.queries == ["q"]  # the long page went through retrieval
     assert seen[0].startswith("[1] Page a — https://example.com/a (full text)\nFact 0:")
+
+
+def test_cited_sources_carry_the_passages_the_model_saw():
+    settings = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"))
+    agent = ResearcherAgent(FakeTier({"TopicReport": TOPIC_REPORT}, tools=researcher), FakeSearch(), FakeStore(), settings)
+    note = RunnableLambda(agent.research).invoke("topic A", {"configurable": {"thread_id": "t"}})
+    [source] = note["sources"]
+    assert source["url"] == "https://example.com/a"
+    assert source["passages"] == [PAGE[:1000]]  # the retrieved passage shown to the model
 
 
 def test_a_page_seen_again_keeps_its_source_number():

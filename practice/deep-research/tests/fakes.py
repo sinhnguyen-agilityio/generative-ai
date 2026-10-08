@@ -15,7 +15,7 @@ from deep_research.config import ModelSpec, Settings
 from deep_research.orchestrator import build_graph
 from deep_research.runner import DeepResearch
 from deep_research.state import (
-    Answered, ClarifyWithUser, Evaluation, ResearchBrief, ResearchPlan, SafetyVerdict, TopicReport,
+    Answered, ClarifyWithUser, ResearchBrief, ResearchPlan, SafetyVerdict, TopicReport,
 )
 
 
@@ -104,6 +104,16 @@ TOPIC_REPORT = TopicReport(
 )
 
 
+def fake_scorer(scores):
+    """Stands in for the RAGAS scorer: returns ``scores``, or raises it when it is an exception."""
+    def score(brief, report, contexts):
+        if isinstance(scores, Exception):
+            raise scores
+        return scores
+
+    return score
+
+
 def make_app(output_dir: Path, clarify=False, evaluation=None, safe=True, topics=("topic A", "topic B")):
     """A ``DeepResearch`` app on scripted models; returns ``(app, store)``. Reports are
     "# Report v1", "# Report v2", ... in the order they are written."""
@@ -113,7 +123,6 @@ def make_app(output_dir: Path, clarify=False, evaluation=None, safe=True, topics
             "ClarifyWithUser": ClarifyWithUser(need_clarification=clarify, question="Which year?", verification="Starting."),
             "ResearchBrief": ResearchBrief(brief="Research X."),
             "ResearchPlan": ResearchPlan(topics=list(topics)),
-            "Evaluation": evaluation or Evaluation(faithfulness=0.9, relevance=0.8, comment="ok"),
         },
         tools=supervisor,
     )
@@ -125,5 +134,6 @@ def make_app(output_dir: Path, clarify=False, evaluation=None, safe=True, topics
         plain=lambda _: f"# Report v{next(reports)}",
     )
     store = FakeStore()
-    graph = build_graph(settings, reasoning, standard, FakeSearch(), store, checkpointer=MemorySaver())
+    scorer = fake_scorer(evaluation or {"faithfulness": 0.9, "answer_relevancy": 0.8})
+    graph = build_graph(settings, reasoning, standard, FakeSearch(), store, checkpointer=MemorySaver(), scorer=scorer)
     return DeepResearch(settings, graph=graph), store

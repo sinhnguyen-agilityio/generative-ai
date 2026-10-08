@@ -80,9 +80,8 @@ def show_evaluation(evaluation: dict | None) -> None:
         st.caption(f"Evaluation failed: {evaluation['error']}")
     else:
         left, right = st.columns(2)
-        left.metric("Faithfulness", f"{evaluation['faithfulness']:.2f}")
-        right.metric("Relevance", f"{evaluation['relevance']:.2f}")
-        st.caption(evaluation["comment"])
+        left.metric("Faithfulness", f"{evaluation['faithfulness']:.2f}", help="Share of claims the sources support (RAGAS)")
+        right.metric("Answer relevancy", f"{evaluation['answer_relevancy']:.2f}", help="How directly the report answers the brief (RAGAS)")
 
 
 def review_report(app: DeepResearch, thread_id: str, pending: dict) -> None:

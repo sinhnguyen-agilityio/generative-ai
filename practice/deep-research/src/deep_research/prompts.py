@@ -160,23 +160,3 @@ REPORT_REVISION = """
 
 The user reviewed the previous report and asked for changes: {feedback}
 """
-
-# ----- Evaluator -----
-
-EVALUATION_PROMPT = """You evaluate a research report.
-
-<Brief>
-{brief}
-</Brief>
-
-<Findings the writer was given>
-{notes}
-</Findings>
-
-<Report>
-{report}
-</Report>
-
-Score faithfulness as the share of the report's factual claims that the findings support
-(1.0 = every claim supported). Score relevance as how completely and directly the report answers
-the brief (1.0 = fully). Be strict and explain the scores briefly."""

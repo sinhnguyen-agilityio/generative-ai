@@ -87,15 +87,22 @@ class ResearcherAgent:
 
     def _web_search(self, query: str, topic: str, run_id: str, sources: dict[str, dict]) -> str:
         """Search, index the result pages, and return the passages most relevant to the query.
-        New pages get the next source number in ``sources``; a page seen before keeps its number."""
+        New pages get the next source number in ``sources``; a page seen before keeps its number.
+        Each source keeps the passages shown to the model: the evidence its citations rest on."""
         try:
             pages = prepare_pages(self.search.search(query))
         except Exception as exc:
             logger.exception("Search failed")
             return f"Search failed: {exc}"
         for page in pages:
-            sources.setdefault(page["url"], {"id": len(sources) + 1, "title": page["title"], "full_text": page["full_text"]})
-        return format_passages(self._passages(query, pages, topic, run_id), sources)
+            sources.setdefault(
+                page["url"], {"id": len(sources) + 1, "title": page["title"], "full_text": page["full_text"], "passages": []}
+            )
+        passages = self._passages(query, pages, topic, run_id)
+        for passage in passages:
+            source = sources[passage["url"]]
+            sources[passage["url"]] = {**source, "passages": [*source["passages"], passage["text"]]}
+        return format_passages(passages, sources)
 
     def _passages(self, query: str, pages: list[dict], topic: str, run_id: str) -> list[dict]:
         small = sum(len(p["text"]) for p in pages) < SMALL_RESULTS_CHARS
@@ -133,7 +140,7 @@ class ResearcherAgent:
 
 def finalize(report: TopicReport, sources: dict[str, dict]) -> dict:
     """Check the model's report against the sources; return the topic note
-    ``{"report": text, "sources": [{id, title, url, full_text}]}`` with only the cited sources.
+    ``{"report": text, "sources": [{id, title, url, full_text, passages}]}`` with only the cited sources.
 
     The sources travel as data, never as text to parse back: the report quotes web content, so
     any source list written into it could be forged.
@@ -179,7 +186,7 @@ def finalize(report: TopicReport, sources: dict[str, dict]) -> dict:
     ] or ["- None"]
     lines += ["## Findings", findings or "None."]
     cited_sources = [
-        {"id": n, "title": by_id[n][1]["title"], "url": by_id[n][0], "full_text": by_id[n][1]["full_text"]}
+        {"id": n, "url": by_id[n][0], **{k: by_id[n][1][k] for k in ("title", "full_text", "passages")}}
         for n in cited
     ]
     return {"report": "\n".join(lines), "sources": cited_sources}
