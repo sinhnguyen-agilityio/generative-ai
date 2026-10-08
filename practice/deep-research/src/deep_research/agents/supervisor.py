@@ -1,5 +1,5 @@
-"""Supervisor agent: delegates topics to researchers in parallel, reviews their findings and
-decides whether to research more or hand over to the writer.
+"""Supervisor agent: researches the approved plan, reviews the topic reports and decides whether
+to delegate follow-ups or hand over to the writer.
 
     supervisor ⇄ supervisor_tools
 """
@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from typing import Literal
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from deep_research.agents.researcher import ResearcherAgent, render_note
 from deep_research.agents.utils import bullets, today
@@ -27,15 +27,21 @@ class SupervisorAgent:
         self.max_iterations = settings.max_supervisor_iterations
 
     def supervisor(self, state: ResearchState):
-        """Ask the model what to do next; the first turn starts from the brief and approved plan."""
-        new = []
+        """The first turn researches the approved plan as it is, one researcher per topic, without a
+        model call and without counting as an iteration. Later turns ask the model to review the
+        topic reports and delegate follow-ups."""
         if not state.get("supervisor_messages"):
-            new.append(HumanMessage(SUPERVISOR_START.format(brief=state["brief"], plan=bullets(state["plan"]))))
-        system = SystemMessage(SUPERVISOR_PROMPT.format(date=today(), max_parallel=self.max_parallel))
-        response = self.llm.invoke([system, *state.get("supervisor_messages", []), *new])
+            start = HumanMessage(SUPERVISOR_START.format(brief=state["brief"], plan=bullets(state["plan"])))
+            calls = [
+                {"name": "ConductResearch", "args": {"research_topic": topic}, "id": f"plan-{i}", "type": "tool_call"}
+                for i, topic in enumerate(state["plan"], 1)
+            ]
+            return {"supervisor_messages": [start, AIMessage("", tool_calls=calls)], "supervisor_iterations": 0}
+        system = SystemMessage(SUPERVISOR_PROMPT.format(date=today()))
+        response = self.llm.invoke([system, *state["supervisor_messages"]])
         return {
-            "supervisor_messages": [*new, response],
-            "supervisor_iterations": state.get("supervisor_iterations", 0) + 1,
+            "supervisor_messages": [response],
+            "supervisor_iterations": state["supervisor_iterations"] + 1,
         }
 
     def next_step(self, state: ResearchState) -> Literal["supervisor_tools", "write_report"]:
@@ -48,7 +54,9 @@ class SupervisorAgent:
         return "write_report" if done else "supervisor_tools"
 
     def supervisor_tools(self, state: ResearchState):
-        """Run every requested topic through a researcher, in parallel, and answer each tool call."""
+        """Run every requested topic through a researcher and answer each tool call. The pool is a
+        queue: at most ``max_parallel`` researchers run at once, and a free one takes the next topic.
+        The node returns once the whole round is done, so the supervisor reviews all its reports."""
         calls = state["supervisor_messages"][-1].tool_calls
         research = [call for call in calls if call["name"] == "ConductResearch"]
         with ThreadPoolExecutor(max_workers=self.max_parallel) as pool:

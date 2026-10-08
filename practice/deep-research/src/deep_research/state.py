@@ -56,7 +56,9 @@ class ResearchBrief(BaseModel):
 
 
 class ResearchPlan(BaseModel):
-    topics: list[str] = Field(description="2-5 independent research topics covering the brief.")
+    topics: list[str] = Field(
+        description="2-5 independent research topics covering the brief; each one short, standalone sentence."
+    )
 
 
 class Evaluation(BaseModel):

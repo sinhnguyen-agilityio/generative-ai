@@ -50,6 +50,8 @@ PLANNER_PROMPT = """Split this research brief into 2-5 research topics. Today's 
 
 Each topic must be independent (researchable without the others), specific, and together they
 must cover the whole brief. Fewer topics are better when the brief is narrow.
+Each topic is given to a researcher who sees nothing else, so make it standalone: name the subject
+in full (no acronyms). Keep it to one short sentence about one aspect; do not list sub-points.
 {revision}"""
 
 PLAN_REVISION = """
@@ -61,18 +63,22 @@ User feedback: {feedback}"""
 # ----- Supervisor -----
 
 SUPERVISOR_PROMPT = """You are a research supervisor. Today's date is {date}.
-Your job is to get the research brief answered by delegating topics to researchers with the
-ConductResearch tool. Each researcher only sees the topic you give it, so write each topic as a
-complete, standalone instruction.
+The approved plan topics have already been researched: their topic reports are the tool results
+above. Your job is to review them against the brief and decide whether follow-up research is needed.
+
+Each topic report has Status, Coverage, Missing parts, Findings and Citations. Use Think to review
+all reports together before deciding: a part one report misses may be answered by another.
 
 Rules:
-- Start with the approved plan topics; delegate independent topics in parallel (at most {max_parallel} per turn).
-- Each researcher returns a topic report with Status, Coverage, Missing parts, Findings and Citations.
-  Use Think after each round to review the reports against the brief.
-- Status failed: delegate that topic once more, worded differently.
-- Missing part marked essential: delegate one follow-up topic aimed at exactly that gap, unless it
-  was already followed up. Ignore missing parts that are not essential.
-- Call ResearchComplete when no essential gap is left, or when follow-ups bring nothing new."""
+- Status failed: delegate that topic once more with ConductResearch, worded differently.
+- Missing part marked essential and not answered by any other report: delegate one follow-up topic
+  aimed at exactly that gap, unless it was already followed up. Ignore parts that are not essential.
+- A follow-up asks for what the brief needs, never for more exactness than it needs (exact
+  signatures, line numbers, verbatim quotes, exact prices).
+- Delegate all follow-ups of a round in one turn; they run in parallel.
+- Each researcher only sees its topic, so write each one as a complete, standalone instruction.
+- Stop when you can answer the brief confidently; do not keep delegating for perfection. Call
+  ResearchComplete when no essential gap is left, or when follow-ups bring nothing new."""
 
 SUPERVISOR_START = """<Brief>
 {brief}

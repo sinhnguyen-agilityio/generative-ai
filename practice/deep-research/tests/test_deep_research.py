@@ -39,6 +39,22 @@ def test_full_run_with_plan_and_report_review(tmp_path):
     assert Path(view.values["published_path"]).read_text(encoding="utf-8") == "# Report v2"
 
 
+def test_the_approved_plan_is_researched_as_it_is_before_the_supervisor_model_runs(tmp_path):
+    topics = [f"topic {c}" for c in "ABCDE"]
+    app, store = make_app(tmp_path, topics=topics)
+    drain(app.ask("t6", "Research X"))
+    edited = [*topics[:4], "topic E, reworded by the reviewer"]
+    drain(app.resume("t6", {"approved": True, "topics": edited}))
+
+    values = app.view("t6").values
+    first, plan_round, *reports, review = values["supervisor_messages"]
+    assert [c["args"]["research_topic"] for c in plan_round.tool_calls] == edited  # all five, unchanged
+    assert [m.type for m in reports] == ["tool"] * 5  # every topic reported before the model's turn
+    assert review.tool_calls[0]["name"] == "ResearchComplete"
+    assert values["supervisor_iterations"] == 1  # the plan round is not a model turn
+    assert len(values["notes"]) == 5 and len(store.added) == 5
+
+
 def test_failed_evaluation_does_not_block_review(tmp_path):
     app, _ = make_app(tmp_path, evaluation=RuntimeError("judge down"))
     drain(app.ask("t2", "Research X"))

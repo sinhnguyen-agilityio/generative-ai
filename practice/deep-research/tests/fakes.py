@@ -49,13 +49,8 @@ def call(name: str, args: dict, call_id: str) -> dict:
 
 
 def supervisor(messages):
-    if any(isinstance(m, ToolMessage) for m in messages):
-        return AIMessage("", tool_calls=[call("ResearchComplete", {}, "done")])
-    return AIMessage("", tool_calls=[
-        call("Think", {"reflection": "two topics"}, "t1"),
-        call("ConductResearch", {"research_topic": "topic A"}, "r1"),
-        call("ConductResearch", {"research_topic": "topic B"}, "r2"),
-    ])
+    """Called only after the plan is researched: the reports are enough."""
+    return AIMessage("", tool_calls=[call("ResearchComplete", {}, "done")])
 
 
 def researcher(messages):
@@ -109,7 +104,7 @@ TOPIC_REPORT = TopicReport(
 )
 
 
-def make_app(output_dir: Path, clarify=False, evaluation=None, safe=True):
+def make_app(output_dir: Path, clarify=False, evaluation=None, safe=True, topics=("topic A", "topic B")):
     """A ``DeepResearch`` app on scripted models; returns ``(app, store)``. Reports are
     "# Report v1", "# Report v2", ... in the order they are written."""
     settings = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"), output_dir=str(output_dir))
@@ -117,7 +112,7 @@ def make_app(output_dir: Path, clarify=False, evaluation=None, safe=True):
         {
             "ClarifyWithUser": ClarifyWithUser(need_clarification=clarify, question="Which year?", verification="Starting."),
             "ResearchBrief": ResearchBrief(brief="Research X."),
-            "ResearchPlan": ResearchPlan(topics=["topic A", "topic B"]),
+            "ResearchPlan": ResearchPlan(topics=list(topics)),
             "Evaluation": evaluation or Evaluation(faithfulness=0.9, relevance=0.8, comment="ok"),
         },
         tools=supervisor,
