@@ -17,7 +17,7 @@ def test_full_run_with_plan_and_report_review(tmp_path):
 
     drain(app.ask("t1", "Research X"))
     view = app.view("t1")
-    assert view.pending == {"type": "plan", "topics": ["topic A", "topic B"]}
+    assert view.pending == {"type": "plan", "topics": ["topic A", "topic B"], "criteria": ["What is X?"]}
 
     nodes = drain(app.resume("t1", {"approved": False, "feedback": "add C"}))
     assert nodes == ["review_plan", "planner"]
@@ -30,7 +30,8 @@ def test_full_run_with_plan_and_report_review(tmp_path):
     assert len(view.values["notes"]) == 2
     assert sorted(store.added) == [("t1", "topic A"), ("t1", "topic B")]
 
-    drain(app.resume("t1", {"approved": False, "feedback": "shorter"}))
+    nodes = drain(app.resume("t1", {"approved": False, "feedback": "shorter"}))
+    assert nodes == ["review_report", "triage", "write_report", "verify", "evaluate"]  # rewriting needs no search
     assert app.view("t1").pending["report"] == "# Report v2"
 
     drain(app.resume("t1", {"approved": True}))
@@ -53,6 +54,31 @@ def test_the_approved_plan_is_researched_as_it_is_before_the_supervisor_model_ru
     assert review.tool_calls[0]["name"] == "ResearchComplete"
     assert values["supervisor_iterations"] == 1  # the plan round is not a model turn
     assert len(values["notes"]) == 5 and len(store.added) == 5
+
+
+def test_a_follow_up_that_needs_research_reopens_the_supervisor_before_the_writer(tmp_path):
+    app, store = make_app(tmp_path)
+    drain(app.ask("t7", "Research X"))
+    drain(app.resume("t7", {"approved": True}))
+
+    nodes = drain(app.resume("t7", {"approved": False, "feedback": "Research pricing too"}))
+    assert nodes == [
+        "review_report", "triage", "supervisor", "supervisor_tools", "supervisor", "write_report", "verify", "evaluate"
+    ]
+    values = app.view("t7").values
+    closed, request = values["supervisor_messages"][-5:-3]
+    assert closed.type == "tool" and closed.tool_call_id == "done"  # the call that closed research is answered
+    assert "Research pricing too" in request.text
+    assert [m.text for m in values["messages"][-2:]] == ["# Report v1", "Research pricing too"]  # kept as a chat
+    assert len(values["notes"]) == 3 and len(store.added) == 3
+    assert values["research_request"] == "" and values["report"] == "# Report v2"
+
+
+def test_criteria_edited_at_plan_review_are_kept(tmp_path):
+    app, _ = make_app(tmp_path)
+    drain(app.ask("t8", "Research X"))
+    drain(app.resume("t8", {"approved": True, "criteria": ["What is X?", " ", "Who uses X?"]}))
+    assert app.view("t8").values["criteria"] == ["What is X?", "Who uses X?"]
 
 
 def test_failed_evaluation_does_not_block_review(tmp_path):

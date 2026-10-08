@@ -7,7 +7,7 @@ Used by the tests and by the run skill's offline Streamlit entry point
 from itertools import count
 from pathlib import Path
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -15,7 +15,7 @@ from deep_research.config import ModelSpec, Settings
 from deep_research.orchestrator import build_graph
 from deep_research.runner import DeepResearch
 from deep_research.state import (
-    Answered, ClarifyWithUser, ResearchBrief, ResearchPlan, SafetyVerdict, TopicReport,
+    Answered, ClarifyWithUser, FollowUp, ReportCheck, ResearchBrief, ResearchPlan, SafetyVerdict, TopicReport,
 )
 
 
@@ -49,7 +49,10 @@ def call(name: str, args: dict, call_id: str) -> dict:
 
 
 def supervisor(messages):
-    """Called only after the plan is researched: the reports are enough."""
+    """After the plan round the reports are enough; a reviewer's research request (the last
+    message) gets one follow-up topic."""
+    if isinstance(messages[-1], HumanMessage):
+        return AIMessage("", tool_calls=[call("ConductResearch", {"research_topic": "follow-up"}, "more")])
     return AIMessage("", tool_calls=[call("ResearchComplete", {}, "done")])
 
 
@@ -114,15 +117,29 @@ def fake_scorer(scores):
     return score
 
 
-def make_app(output_dir: Path, clarify=False, evaluation=None, safe=True, topics=("topic A", "topic B")):
+PASSED = ReportCheck(sentences=[], criteria=[])
+
+
+def triage(prompt):
+    """A follow-up that mentions research needs research; anything else is a rewrite."""
+    message = prompt.split("<Message>")[1].split("</Message>")[0]
+    return FollowUp(kind="research" if "research" in message.lower() else "revise")
+
+
+def make_app(
+    output_dir: Path, clarify=False, evaluation=None, safe=True, topics=("topic A", "topic B"), check=PASSED, writer=None
+):
     """A ``DeepResearch`` app on scripted models; returns ``(app, store)``. Reports are
-    "# Report v1", "# Report v2", ... in the order they are written."""
+    "# Report v1", "# Report v2", ... in the order they are written, unless ``writer(prompt)``
+    writes them. ``check`` is the verifier's verdict (a callable answers from the prompt)."""
     settings = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"), output_dir=str(output_dir))
     reasoning = FakeTier(
         {
             "ClarifyWithUser": ClarifyWithUser(need_clarification=clarify, question="Which year?", verification="Starting."),
-            "ResearchBrief": ResearchBrief(brief="Research X."),
+            "ResearchBrief": ResearchBrief(brief="Research X.", criteria=["What is X?"]),
             "ResearchPlan": ResearchPlan(topics=list(topics)),
+            "ReportCheck": check,
+            "FollowUp": triage,
         },
         tools=supervisor,
     )
@@ -131,7 +148,7 @@ def make_app(output_dir: Path, clarify=False, evaluation=None, safe=True, topics
     standard = FakeTier(
         {"SafetyVerdict": verdict, "TopicReport": TOPIC_REPORT},
         tools=researcher,
-        plain=lambda _: f"# Report v{next(reports)}",
+        plain=writer or (lambda _: f"# Report v{next(reports)}"),
     )
     store = FakeStore()
     scorer = fake_scorer(evaluation or {"faithfulness": 0.9, "answer_relevancy": 0.8})

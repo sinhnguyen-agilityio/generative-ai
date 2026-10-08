@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
-from deep_research.agents.utils import CITATION, thread_id, today
+from deep_research.agents.utils import CITATION, SENTENCE_END, thread_id, today
 from deep_research.config import Settings
 from deep_research.prompts import RESEARCHER_PROMPT, TOPIC_REPORT_PROMPT
 from deep_research.search import format_passages, prepare_pages
@@ -27,7 +27,6 @@ from deep_research.state import MissingPart, ResearcherState, Think, TopicReport
 logger = logging.getLogger(__name__)
 
 SMALL_RESULTS_CHARS = 8000  # results this short are shown whole, without retrieval
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _SOURCE_LINE = re.compile(r"^\[\d+\] .+: \S+$")
 
 
@@ -211,7 +210,7 @@ def _keep_cited(findings: str, valid) -> str:
         if line.lstrip().startswith("## ") or _SOURCE_LINE.match(line.strip()):
             continue
         kept = []
-        for sentence in _SENTENCE_END.split(line):
+        for sentence in SENTENCE_END.split(line):
             ids = [int(n) for n in CITATION.findall(sentence)]
             if ids and not any(n in valid for n in ids):
                 continue

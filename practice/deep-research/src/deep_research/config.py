@@ -53,6 +53,7 @@ class Settings:
     chroma_path: str = ".data/chroma"
     embedding_model: str = "gemini-embedding-2"
     embedding_provider: str = "google_genai"
+    evaluation_model: str = "gemini-flash-latest"  # RAGAS judge, a Gemini model (GOOGLE_API_KEY)
     checkpoint_path: str = ".data/checkpoints.sqlite3"
     output_dir: str = "exports"
     max_concurrent_researchers: int = 3
@@ -74,6 +75,7 @@ class Settings:
             chroma_path=_env("INTELLIGENCE_CHROMA_PATH", cls.chroma_path),
             embedding_model=_env("INTELLIGENCE_EMBEDDING_MODEL", cls.embedding_model),
             embedding_provider=_env("INTELLIGENCE_EMBEDDING_PROVIDER", cls.embedding_provider),
+            evaluation_model=_env("INTELLIGENCE_EVALUATION_MODEL", cls.evaluation_model),
             checkpoint_path=_env("INTELLIGENCE_CHECKPOINT_PATH", cls.checkpoint_path),
             output_dir=_env("INTELLIGENCE_OUTPUT_DIR", cls.output_dir),
             max_concurrent_researchers=int(_env("INTELLIGENCE_MAX_CONCURRENT_RESEARCHERS", "3")),

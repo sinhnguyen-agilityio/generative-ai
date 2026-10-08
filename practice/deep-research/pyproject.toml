@@ -18,6 +18,8 @@ dependencies = [
     "mcp>=1",
     "langfuse>=2",
     "ragas>=0.4.3,<0.5",
+    # The RAGAS judge: Gemini through google-genai, wrapped by Instructor (see agents/evaluator.py).
+    "instructor[google-genai]>=1.17",
     # ragas 0.4 imports langchain_community.chat_models.vertexai, which later releases removed.
     "langchain-community==0.4.1",
 ]

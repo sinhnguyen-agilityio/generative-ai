@@ -1,4 +1,4 @@
-"""Chat models. Reasoning tier: clarify, brief, planner, supervisor, evaluator.
+"""Chat models. Reasoning tier: clarify, brief, planner, supervisor, verifier, triage.
 Standard tier: guardrail, researcher, topic report, report writer."""
 
 from __future__ import annotations
@@ -19,6 +19,14 @@ def _create(model: str, provider: str | None, timeout: float, kwargs: dict):
     return llm
 
 
+def _structured(llm, schema):
+    # gpt-oss on Groq may rename the tool it must call ("safetyVerdict"), and Groq rejects the
+    # call; Groq's structured outputs constrain the JSON to the schema instead (strict for gpt-oss).
+    if llm._llm_type == "groq-chat":
+        return llm.with_structured_output(schema, method="json_schema", strict=True)
+    return llm.with_structured_output(schema)
+
+
 class Tier:
     """A primary chat model plus an optional fallback, tried in that order."""
 
@@ -35,7 +43,7 @@ class Tier:
         return runnable.with_fallbacks([build(self.fallback)]) if self.fallback else runnable
 
     def structured(self, schema):
-        return self._wrap(lambda llm: llm.with_structured_output(schema))
+        return self._wrap(lambda llm: _structured(llm, schema))
 
     def tools(self, tools):
         return self._wrap(lambda llm: llm.bind_tools(tools))

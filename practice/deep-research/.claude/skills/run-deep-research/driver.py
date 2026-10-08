@@ -64,18 +64,24 @@ def wait_text(page, text: str, timeout_s: float) -> None:
     print(f"saw '{text}'")
 
 
-def full_flow(page, shots: Path, question: str, timeout_s: float) -> None:
+def full_flow(page, shots: Path, question: str, timeout_s: float, follow_up: bool) -> None:
     box = page.get_by_placeholder("What should I research?")
     box.fill(question)
     box.press("Enter")
     wait_text(page, "Review the research plan", timeout_s)
     shot(page, shots, "2-plan-review")
     page.get_by_role("button", name="Approve and start research").click()
-    wait_text(page, "Review the report", timeout_s)
-    shot(page, shots, "3-report-review")
-    page.get_by_role("button", name="Approve and publish").click()
+    wait_text(page, "Publish report", timeout_s)
+    shot(page, shots, "3-report")
+    if follow_up:  # scripted writer: the rewrite is "# Report v2"
+        box = page.get_by_placeholder("Ask for more research or changes to the report")
+        box.fill("Make it shorter")
+        box.press("Enter")
+        wait_text(page, "Report v2", timeout_s)
+        shot(page, shots, "4-follow-up")
+    page.get_by_role("button", name="Publish report").click()
     wait_text(page, "Report published to", timeout_s)
-    shot(page, shots, "4-published")
+    shot(page, shots, "5-published")
 
 
 def main() -> None:
@@ -102,9 +108,9 @@ def main() -> None:
             wait_text(page, "New research", 60)
             shot(page, args.shots, "1-landing")
             if args.mode == "offline":
-                full_flow(page, args.shots, "Compare LangGraph and CrewAI", timeout_s)
+                full_flow(page, args.shots, "Compare LangGraph and CrewAI", timeout_s, follow_up=True)
             elif args.question:
-                full_flow(page, args.shots, args.question, timeout_s)
+                full_flow(page, args.shots, args.question, timeout_s, follow_up=False)
             exceptions = page.locator("[data-testid='stException']").all_inner_texts()
             browser.close()
     finally:

@@ -64,12 +64,13 @@ class DeepResearch:
         return self._stream(thread_id, {"messages": [HumanMessage(check_input(text))]})
 
     def resume(self, thread_id: str, decision: dict):
-        """Raises ``GuardrailViolation`` when the reviewer's feedback or topics are rejected."""
+        """Raises ``GuardrailViolation`` when the reviewer's feedback, topics or criteria are rejected."""
         decision = dict(decision)
         if decision.get("feedback"):
             decision["feedback"] = check_input(decision["feedback"])
-        if decision.get("topics"):
-            decision["topics"] = [check_input(t) for t in decision["topics"] if t.strip()]
+        for key in ("topics", "criteria"):
+            if decision.get(key):
+                decision[key] = [check_input(t) for t in decision[key] if t.strip()]
         return self._stream(thread_id, Command(resume=decision))
 
     def continue_run(self, thread_id: str):

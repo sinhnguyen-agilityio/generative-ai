@@ -1,6 +1,6 @@
 ---
 name: run-deep-research
-description: Run, start, drive and screenshot the deep-research Streamlit app (multi-agent research with plan and report review), offline on scripted models or live with .env. Use when asked to run the app, take a screenshot of its UI, check a UI or graph change end-to-end, or run its tests.
+description: Run, start, drive and screenshot the deep-research Streamlit app (multi-agent research with plan review, a verified report and chat follow-ups), offline on scripted models or live with .env. Use when asked to run the app, take a screenshot of its UI, check a UI or graph change end-to-end, or run its tests.
 ---
 
 A Streamlit app (`app.py` → `src/deep_research/ui.py`). Drive it with
@@ -19,14 +19,14 @@ All paths are relative to `practice/deep-research/`. Verified on Windows 11 (Git
 
 ## Run (agent path)
 
-Offline, full flow: ask → approve plan → approve report → published, one screenshot per step:
+Offline, full flow: ask → approve plan → report → follow-up → publish, one screenshot per step:
 
 ```bash
 uv run --no-sync --with playwright python .claude/skills/run-deep-research/driver.py offline
 ```
 
 Expected tail: `saw 'Report published to'`, `console errors: none`, `streamlit exceptions: none`,
-exit 0. Screenshots: `.claude/skills/run-deep-research/shots/{1-landing,2-plan-review,3-report-review,4-published}.png`.
+exit 0. Screenshots: `.claude/skills/run-deep-research/shots/{1-landing,2-plan-review,3-report,4-follow-up,5-published}.png` (offline also sends one follow-up, "Make it shorter"; live skips it).
 Streamlit log: `.claude/skills/run-deep-research/streamlit-8599.log`. Both are git-ignored.
 
 Live app with `.env`, landing page only (free: builds models, Tavily client and Chroma, sends nothing):

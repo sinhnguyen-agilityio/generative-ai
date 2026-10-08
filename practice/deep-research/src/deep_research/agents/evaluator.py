@@ -5,7 +5,10 @@ changes the route, and a failure is recorded in state instead of raised.
 - answer_relevancy: how directly the report answers the brief.
 
 The contexts are the passages behind the sources the topic notes cite, so faithfulness measures the
-whole pipeline, not only whether the writer copied the notes."""
+whole pipeline, not only whether the writer copied the notes.
+
+The judge is a Gemini model (``evaluation_model``) through the google-genai SDK, apart from the
+research tiers, so the models that write the report do not grade it."""
 
 from __future__ import annotations
 
@@ -15,21 +18,20 @@ import logging
 from langchain_core.runnables import RunnableConfig
 
 from deep_research import tracing
-from deep_research.agents.utils import CITATION, thread_id
+from deep_research.agents.utils import CITATION, passages_by_url, thread_id
 from deep_research.agents.writer import SOURCES_HEADING
-from deep_research.config import ModelSpec, Settings
+from deep_research.config import Settings
 from deep_research.state import ResearchState
 
 logger = logging.getLogger(__name__)
 
-# Faithfulness lists every claim of the report with a verdict and a reason; a full report needs room.
-MAX_COMPLETION_TOKENS = 32768
+TIMEOUT_MS = 120_000
 
 
 class EvaluatorAgent:
     def __init__(self, settings: Settings, scorer=None):
-        """``scorer(brief, report, contexts) -> {name: score}``; RAGAS on the reasoning tier by default."""
-        self.scorer = scorer or RagasScorer(settings.reasoning, settings.embedding_model, settings.embedding_provider)
+        """``scorer(brief, report, contexts) -> {name: score}``; RAGAS on ``evaluation_model`` by default."""
+        self.scorer = scorer or RagasScorer(settings.evaluation_model, settings.embedding_model, settings.embedding_provider)
         self.langfuse = settings.langfuse_enabled
 
     def evaluate(self, state: ResearchState, config: RunnableConfig):
@@ -46,21 +48,14 @@ class EvaluatorAgent:
 
 def contexts(notes: list[dict]) -> list[str]:
     """The passages of every source the topic notes cite, each passage once."""
-    passages = {}
-    for note in notes:
-        for source in note["sources"]:
-            for passage in source.get("passages", []):
-                passages.setdefault(passage, None)
-    return list(passages)
+    return list(dict.fromkeys(p for texts in passages_by_url(notes).values() for p in texts))
 
 
 class RagasScorer:
-    def __init__(self, spec: ModelSpec, embedding_model: str, embedding_provider: str):
-        if (spec.provider or "openai") != "openai":
-            raise ValueError(f"RAGAS evaluation supports the openai provider only, not {spec.provider}")
+    def __init__(self, model: str, embedding_model: str, embedding_provider: str):
         from deep_research.search import _embeddings
 
-        self.spec = spec
+        self.model = model
         self.embeddings = _embeddings(embedding_model, embedding_provider)
 
     def __call__(self, brief: str, report: str, contexts: list[str]) -> dict[str, float]:
@@ -70,7 +65,7 @@ class RagasScorer:
         from ragas.metrics.collections import AnswerRelevancy, Faithfulness
 
         # A new client per run: an async client cannot be reused across asyncio.run loops.
-        llm = _ragas_llm(self.spec)
+        llm = _ragas_llm(self.model)
         faithfulness, relevancy = await asyncio.gather(
             Faithfulness(llm=llm).ascore(user_input=brief, response=report, retrieved_contexts=contexts),
             AnswerRelevancy(llm=llm, embeddings=_ragas_embeddings(self.embeddings)).ascore(
@@ -80,26 +75,19 @@ class RagasScorer:
         return {"faithfulness": float(faithfulness.value), "answer_relevancy": float(relevancy.value)}
 
 
-def _ragas_llm(spec: ModelSpec):
-    from openai import AsyncOpenAI
-    from ragas.llms import llm_factory
+def _ragas_llm(model: str):
+    """A Gemini judge on an async google-genai client (reads GOOGLE_API_KEY).
 
-    llm = llm_factory(spec.model, provider="openai", client=AsyncOpenAI(timeout=spec.timeout))
+    ragas 0.4.3's ``llm_factory`` wraps a google-genai client for sync calls only, and the metrics
+    call ``agenerate``, so the async Instructor client is built here. Instructor drops ragas'
+    1024-token output cap for Gemini, so a long claim list is not truncated."""
+    import instructor
+    from google import genai
+    from google.genai import types
+    from ragas.llms.base import InstructorLLM
 
-    # ragas 0.4.3 reads "gpt-5.4-nano" as version int("5.4"), fails, and keeps max_tokens, which
-    # GPT-5 models reject. Map the parameters as ragas does for GPT-5 models; drop this once fixed.
-    if spec.model.startswith("gpt-5"):
-        def openai_params():
-            args = dict(llm.model_args)
-            args["max_completion_tokens"] = max(args.pop("max_tokens", 0) or 0, MAX_COMPLETION_TOKENS)
-            args["temperature"] = 1.0
-            args.pop("top_p", None)
-            if spec.kwargs.get("reasoning_effort"):
-                args["reasoning_effort"] = spec.kwargs["reasoning_effort"]
-            return args
-
-        llm._map_openai_params = openai_params
-    return llm
+    client = genai.Client(http_options=types.HttpOptions(timeout=TIMEOUT_MS))
+    return InstructorLLM(client=instructor.from_genai(client, use_async=True), model=model, provider="google")
 
 
 def _ragas_embeddings(embeddings):

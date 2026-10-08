@@ -1,4 +1,4 @@
-"""Streamlit UI: chat with the agent, review the plan, review the report, publish."""
+"""Streamlit UI: chat with the agent, review the plan, read the report, follow up or publish."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ NODE_LABELS = {
     "planner": "Drafted the research plan",
     "supervisor_tools": "Researchers finished a round",
     "write_report": "Wrote the report",
+    "verify": "Checked the report against its sources",
+    "triage": "Read your follow-up",
     "evaluate": "Evaluated the report",
     "publish": "Published the report",
 }
@@ -48,7 +50,7 @@ def run(start) -> None:
             for node, update in stream:
                 status.write(_describe(node, update))
                 if node == "write_report":
-                    status.update(label="Evaluating the report…")
+                    status.update(label="Checking the report…")
         except Exception as exc:
             status.update(label="Stopped with an error", state="error")
             st.error(f"{type(exc).__name__}: {exc}")
@@ -61,11 +63,16 @@ def review_plan(app: DeepResearch, thread_id: str, pending: dict) -> None:
     st.subheader("Review the research plan")
     with st.form("plan"):
         topics = st.text_area("Topics, one per line (edit freely)", "\n".join(pending["topics"]), height=180)
+        criteria = st.text_area(
+            "Acceptance criteria: what the report must answer, one per line",
+            "\n".join(pending.get("criteria", [])),
+            height=120,
+        )
         feedback = st.text_input("Or ask the planner for changes")
         approve = st.form_submit_button("Approve and start research", type="primary")
         revise = st.form_submit_button("Revise plan")
     if approve:
-        run(lambda: app.resume(thread_id, {"approved": True, "topics": topics.splitlines()}))
+        run(lambda: app.resume(thread_id, {"approved": True, "topics": topics.splitlines(), "criteria": criteria.splitlines()}))
     elif revise:
         if feedback.strip():
             run(lambda: app.resume(thread_id, {"approved": False, "feedback": feedback}))
@@ -84,22 +91,36 @@ def show_evaluation(evaluation: dict | None) -> None:
         right.metric("Answer relevancy", f"{evaluation['answer_relevancy']:.2f}", help="How directly the report answers the brief (RAGAS)")
 
 
-def review_report(app: DeepResearch, thread_id: str, pending: dict) -> None:
-    st.subheader("Review the report")
-    show_evaluation(pending.get("evaluation"))
-    with st.container(border=True):
+def show_verification(verification: dict | None) -> None:
+    if not verification:
+        return
+    if "error" in verification:
+        st.caption(f"Source check failed: {verification['error']}")
+        return
+    st.caption(
+        f"Source check: {verification['support']:.0%} of claims supported by their cited sources "
+        f"after {verification['rounds']} fix round(s); {len(verification['removed'])} unsupported sentence(s) removed."
+    )
+    if verification["unmet"]:
+        st.warning(
+            "Not answered by the research so far (ask for more research below):\n"
+            + "\n".join(f"- {c}" for c in verification["unmet"])
+        )
+
+
+def answer(app: DeepResearch, thread_id: str, pending: dict) -> None:
+    """The verified report as the assistant's answer. Publishing it ends the research; a message
+    in the chat box asks for more research or changes instead."""
+    with st.chat_message("assistant"):
         st.markdown(pending["report"])
-    with st.form("report"):
-        feedback = st.text_area("Changes for the writer")
-        approve = st.form_submit_button("Approve and publish", type="primary")
-        revise = st.form_submit_button("Revise report")
-    if approve:
-        run(lambda: app.resume(thread_id, {"approved": True}))
-    elif revise:
-        if feedback.strip():
-            run(lambda: app.resume(thread_id, {"approved": False, "feedback": feedback}))
-        else:
-            st.warning("Describe the changes you want first.")
+        show_verification(pending.get("verification"))
+        show_evaluation(pending.get("evaluation"))
+        if st.button("Publish report", type="primary"):
+            run(lambda: app.resume(thread_id, {"approved": True}))
+    if prompt := st.chat_input("Ask for more research or changes to the report"):
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        run(lambda: app.resume(thread_id, {"approved": False, "feedback": prompt}))
 
 
 def main() -> None:
@@ -123,12 +144,13 @@ def main() -> None:
     if view.pending and view.pending["type"] == "plan":
         review_plan(app, thread_id, view.pending)
     elif view.pending and view.pending["type"] == "report":
-        review_report(app, thread_id, view.pending)
+        answer(app, thread_id, view.pending)
     elif view.unfinished:
         st.warning("The last run stopped before it finished.")
         if st.button("Continue", type="primary"):
             run(lambda: app.continue_run(thread_id))
     elif view.values.get("published_path"):
+        show_verification(view.values.get("verification"))
         show_evaluation(view.values.get("evaluation"))
         with st.container(border=True):
             st.markdown(view.values["report"])

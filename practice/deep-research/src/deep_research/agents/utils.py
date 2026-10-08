@@ -8,6 +8,7 @@ from datetime import datetime
 from langchain_core.runnables import RunnableConfig
 
 CITATION = re.compile(r"\[(\d+)\]")
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
 def today() -> str:
@@ -38,3 +39,12 @@ def merge_notes(notes: list[dict]) -> tuple[str, dict[int, tuple[str, str]]]:
             sources.setdefault(local[source["id"]], (source["title"], source["url"]))
         merged.append(CITATION.sub(lambda m: f"[{local[int(m.group(1))]}]" if int(m.group(1)) in local else "", note["report"]))
     return "\n\n---\n\n".join(merged), sources
+
+
+def passages_by_url(notes: list[dict]) -> dict[str, list[str]]:
+    """The passages the researchers were shown, per cited URL, each passage once."""
+    passages: dict[str, dict[str, None]] = {}
+    for note in notes:
+        for source in note["sources"]:
+            passages.setdefault(source["url"], {}).update(dict.fromkeys(source.get("passages", [])))
+    return {url: list(texts) for url, texts in passages.items()}

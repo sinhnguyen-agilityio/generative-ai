@@ -1,6 +1,6 @@
 """The evaluator scores the final report against the passages behind the cited sources."""
 
-from deep_research.agents.evaluator import EvaluatorAgent
+from deep_research.agents.evaluator import EvaluatorAgent, _ragas_llm
 from deep_research.config import ModelSpec, Settings
 
 SETTINGS = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"))
@@ -36,11 +36,7 @@ def test_a_scorer_failure_is_recorded_not_raised():
     assert result == {"evaluation": {"error": "RuntimeError: ragas down"}}
 
 
-def test_ragas_needs_an_openai_model():
-    groq = Settings(reasoning=ModelSpec("openai/gpt-oss-120b", provider="groq"), standard=ModelSpec("fake"))
-    try:
-        EvaluatorAgent(groq)
-    except ValueError as exc:
-        assert "openai provider only" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
+def test_the_ragas_judge_is_an_async_gemini_client(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")  # the client is built offline; nothing is sent
+    llm = _ragas_llm("gemini-test")
+    assert (llm.model, llm.provider, llm.is_async) == ("gemini-test", "google", True)
