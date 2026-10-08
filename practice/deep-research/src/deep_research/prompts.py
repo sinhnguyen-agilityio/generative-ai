@@ -176,7 +176,9 @@ Requirements:
 - Markdown, with a "# Title" and "## " sections that fit the brief.
 - Use only facts from the findings, and cite them with the source numbers used there, as [1] or [1][3].
 - Do not write a sources section; it is added after the report.
-- State clearly what the findings could not establish.
+- If the findings could not establish something the brief asks about, say so once, in a short
+  "## Limitations" section at the end. Leave out missing parts marked not essential, and do not
+  add limitation notes inside other sections.
 - Write in the language of the brief."""
 
 REPORT_REVISION = """
