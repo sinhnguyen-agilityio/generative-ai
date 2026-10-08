@@ -52,13 +52,15 @@ class ClarifyWithUser(BaseModel):
 
 
 class ResearchBrief(BaseModel):
-    brief: str = Field(description="Self-contained research brief written from the conversation.")
+    brief: str = Field(description="One detailed research question in the first person; no headings or sections.")
 
 
 class ResearchPlan(BaseModel):
     topics: list[str] = Field(
-        description="2-5 independent research topics covering the brief; each one short, standalone sentence."
+        description="1-5 non-overlapping research topics covering the question; each one short, standalone sentence."
     )
+
+
 
 
 class Answered(BaseModel):

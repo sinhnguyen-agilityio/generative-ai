@@ -31,27 +31,53 @@ Ask only if the request is genuinely ambiguous (unknown acronym, unclear scope, 
 constraint) and you have not asked already. Otherwise, do not ask: write a short verification
 note that restates what you will research."""
 
-BRIEF_PROMPT = """Turn the conversation into a research brief. Today's date is {date}.
+BRIEF_PROMPT = """You turn a conversation into the research question that will guide the research.
+Today's date is {date}.
 
-Conversation:
+<Messages>
 {messages}
+</Messages>
 
-Write the brief in the first person, from the user's side. Include every requirement and
-preference the user stated, and do not invent new ones; mark unstated dimensions as open.
-Say which sources to prefer when it matters (official docs, primary sources, papers)."""
+<Instructions>
+Return one detailed research question, written in the first person as the user would ask it. It is
+a question, not a document: no headings, no research approach, no deliverable section.
+
+1. Keep every detail the user gave: subjects, requirements, preferences, format.
+2. Scope is not preference. The scope (what to investigate) may name the dimensions a good answer
+   needs; preferences and constraints (format, length, budget, region, period) are only the ones
+   the user stated. Example: "Compare coffee shops in San Francisco on taste, which matters most to
+   me, and on price and atmosphere."
+3. Leave unstated dimensions open instead of assuming them. Example: "any price range", not
+   "budget-friendly".
+4. Name a source preference only when it matters for this question: official documentation for
+   software, the original paper for research, official sites for products. Prefer sources in the
+   language of the question.
+5. Mention a date only if the user asked about a time period.
+6. These instructions are for you: do not repeat them in the question.
+</Instructions>"""
 
 # ----- Planner -----
 
-PLANNER_PROMPT = """Split this research brief into 2-5 research topics. Today's date is {date}.
+PLANNER_PROMPT = """Split this research question into research topics. Today's date is {date}.
 
-<Brief>
+<Question>
 {brief}
-</Brief>
+</Question>
 
-Each topic must be independent (researchable without the others), specific, and together they
-must cover the whole brief. Fewer topics are better when the brief is narrow.
-Each topic is given to a researcher who sees nothing else, so make it standalone: name the subject
-in full (no acronyms). Keep it to one short sentence about one aspect; do not list sub-points.
+<Instructions>
+Each topic goes to its own researcher, so use as few as the question needs (1-5):
+- One subject, however many aspects the question lists (facts, a list, a ranking, best practices):
+  1 topic covering all those aspects.
+- A comparison ("compare", "versus", "differs from", "A or B"): one topic per element compared
+  ("A vs B vs C" gives 3 topics), each about that element alone across every aspect the question
+  names. Never split a comparison by aspect.
+- Several unrelated subjects: one topic per subject.
+Topics must not overlap, and together they must cover the whole question. Do not add a topic that
+only combines or compares the others' results: the report writer does that.
+A researcher sees nothing but its topic, so make each one standalone: name the subject in full (no
+acronyms) and keep it to one short sentence, without sub-point lists. Add a source preference only
+if the question names one.
+</Instructions>
 {revision}"""
 
 PLAN_REVISION = """
