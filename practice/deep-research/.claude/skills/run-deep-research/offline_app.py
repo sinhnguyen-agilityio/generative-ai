@@ -10,7 +10,7 @@ sys.path[:0] = [str(UNIT / "src"), str(UNIT)]
 
 import streamlit as st  # noqa: E402
 
-from deep_research import ui  # noqa: E402
+from ui import app as ui  # noqa: E402
 from tests.fakes import make_app  # noqa: E402
 
 

@@ -11,8 +11,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from deep_research.agents.supervisor import SupervisorAgent
 from deep_research.guardrail_violation import GuardrailViolation
-from deep_research.model_spec import ModelSpec
-from deep_research.settings import Settings
+from models.model_spec import ModelSpec
+from config.settings import Settings
 from deep_research.utils.guardrail import check_input
 from tests.fakes import FakeTier, call, make_app, supervisor
 

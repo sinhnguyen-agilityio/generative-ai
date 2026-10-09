@@ -5,7 +5,7 @@ from deep_research.agents.writer import WriterAgent
 from deep_research.schemas.answered import Answered
 from deep_research.schemas.topic_report import TopicReport
 from deep_research.utils.notes import failed_note, finalize, merge_notes, render_note
-from deep_research.utils.search import prepare_pages
+from search.utils import prepare_pages
 from tests.fakes import FakeTier, result
 
 

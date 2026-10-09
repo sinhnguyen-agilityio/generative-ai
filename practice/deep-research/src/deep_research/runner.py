@@ -12,11 +12,11 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 
 from deep_research.orchestrator import build_graph
-from deep_research.page_store import PageStore
-from deep_research.settings import Settings
-from deep_research.tavily_search import TavilySearch
-from deep_research.thread_view import ThreadView
-from deep_research.tier import Tier
+from storage.page_store import PageStore
+from config.settings import Settings
+from search.tavily_search import TavilySearch
+from deep_research.states.thread_view import ThreadView
+from models.tier import Tier
 from deep_research.utils import tracing
 from deep_research.utils.guardrail import check_input
 

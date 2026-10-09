@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
 from langgraph.checkpoint.memory import MemorySaver
 
-from deep_research.model_spec import ModelSpec
+from models.model_spec import ModelSpec
 from deep_research.orchestrator import build_graph
 from deep_research.runner import DeepResearch
 from deep_research.schemas.answered import Answered
@@ -22,7 +22,7 @@ from deep_research.schemas.research_brief import ResearchBrief
 from deep_research.schemas.research_plan import ResearchPlan
 from deep_research.schemas.safety_verdict import SafetyVerdict
 from deep_research.schemas.topic_report import TopicReport
-from deep_research.settings import Settings
+from config.settings import Settings
 
 
 class FakeTier:

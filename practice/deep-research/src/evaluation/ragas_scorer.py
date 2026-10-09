@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from deep_research.utils.evaluation import _ragas_embeddings, _ragas_llm
+from evaluation.utils import _ragas_embeddings, _ragas_llm
 
 
 class RagasScorer:
@@ -16,7 +16,7 @@ class RagasScorer:
             embedding_model: Embedding model used for answer relevancy.
             embedding_provider: Provider selecting the embedding client.
         """
-        from deep_research.utils.embeddings import embeddings
+        from models.embeddings import embeddings
 
         self.model = model
         self.embeddings = embeddings(embedding_model, embedding_provider)

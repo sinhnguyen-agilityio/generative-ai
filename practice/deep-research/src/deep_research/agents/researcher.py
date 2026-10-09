@@ -21,11 +21,11 @@ from langgraph.graph import END, START, StateGraph
 from deep_research.prompts import RESEARCHER_PROMPT, TOPIC_REPORT_PROMPT
 from deep_research.schemas.think import Think
 from deep_research.schemas.topic_report import TopicReport
-from deep_research.settings import Settings
+from config.settings import Settings
 from deep_research.states.researcher_state import ResearcherState
 from deep_research.utils.notes import failed_note, finalize
 from deep_research.utils.runtime import thread_id
-from deep_research.utils.search import format_passages, prepare_pages
+from search.utils import format_passages, prepare_pages
 from deep_research.utils.text import today
 
 logger = logging.getLogger(__name__)

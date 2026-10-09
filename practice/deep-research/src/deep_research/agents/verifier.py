@@ -18,7 +18,7 @@ from langchain_core.runnables import RunnableConfig
 
 from deep_research.prompts import VERIFY_PROMPT
 from deep_research.schemas.report_check import ReportCheck
-from deep_research.settings import Settings
+from config.settings import Settings
 from deep_research.states.research_state import ResearchState
 from deep_research.utils import tracing
 from deep_research.utils.notes import merge_notes, passages_by_url

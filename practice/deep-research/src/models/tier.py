@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from deep_research.model_spec import ModelSpec
-from deep_research.utils.models import _create, _structured
+from models.model_spec import ModelSpec
+from models.utils import _create, _structured
 
 
 class Tier:

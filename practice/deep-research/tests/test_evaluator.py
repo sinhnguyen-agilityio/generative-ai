@@ -1,9 +1,9 @@
 """The evaluator scores the final report against the passages behind the cited sources."""
 
 from deep_research.agents.evaluator import EvaluatorAgent
-from deep_research.model_spec import ModelSpec
-from deep_research.settings import Settings
-from deep_research.utils.evaluation import _ragas_llm
+from models.model_spec import ModelSpec
+from config.settings import Settings
+from evaluation.utils import _ragas_llm
 
 SETTINGS = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"))
 CONFIG = {"configurable": {"thread_id": "t"}}

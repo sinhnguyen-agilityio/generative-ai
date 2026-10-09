@@ -4,11 +4,11 @@ back to the writer at most twice, then deletes the unsupported sentences left.""
 from itertools import count
 
 from deep_research.agents.verifier import VerifierAgent
-from deep_research.model_spec import ModelSpec
+from models.model_spec import ModelSpec
 from deep_research.schemas.criterion_verdict import CriterionVerdict
 from deep_research.schemas.report_check import ReportCheck
 from deep_research.schemas.sentence_verdict import SentenceVerdict
-from deep_research.settings import Settings
+from config.settings import Settings
 from deep_research.utils.report import with_sources
 from deep_research.utils.verification import parse, remove
 from tests.fakes import FakeTier, make_app

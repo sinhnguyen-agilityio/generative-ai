@@ -1,22 +1,8 @@
-"""Prepare evaluation contexts and RAGAS model interfaces."""
+"""Configure RAGAS judge and embedding interfaces."""
 
 from __future__ import annotations
 
-from deep_research.utils.notes import passages_by_url
-
 TIMEOUT_MS = 120_000
-
-
-def contexts(notes: list[dict]) -> list[str]:
-    """Collect each cited evidence passage once for report evaluation.
-
-    Args:
-        notes: Topic notes containing cited sources and the passages researchers read.
-
-    Returns:
-        Deduplicated context passages in first-seen order.
-    """
-    return list(dict.fromkeys(p for texts in passages_by_url(notes).values() for p in texts))
 
 
 def _ragas_llm(model: str):
@@ -50,6 +36,6 @@ def _ragas_embeddings(embeddings):
     Returns:
         Adapter implementing the RAGAS text-embedding interface.
     """
-    from deep_research.ragas_embeddings import RagasEmbeddings
+    from evaluation.ragas_embeddings import RagasEmbeddings
 
     return RagasEmbeddings(embeddings)

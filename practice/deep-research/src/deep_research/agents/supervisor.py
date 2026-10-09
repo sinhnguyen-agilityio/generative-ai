@@ -18,7 +18,7 @@ from deep_research.prompts import SUPERVISOR_MORE, SUPERVISOR_PROMPT, SUPERVISOR
 from deep_research.schemas.conduct_research import ConductResearch
 from deep_research.schemas.research_complete import ResearchComplete
 from deep_research.schemas.think import Think
-from deep_research.settings import Settings
+from config.settings import Settings
 from deep_research.states.supervisor_input import SupervisorInput
 from deep_research.states.supervisor_output import SupervisorOutput
 from deep_research.states.supervisor_state import SupervisorState

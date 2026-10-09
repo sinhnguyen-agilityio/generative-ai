@@ -7,7 +7,7 @@ from pathlib import Path
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from deep_research.utils.embeddings import embeddings
+from models.embeddings import embeddings
 
 MAX_CHUNKS_PER_URL = 2  # so one page cannot fill all retrieved passages
 

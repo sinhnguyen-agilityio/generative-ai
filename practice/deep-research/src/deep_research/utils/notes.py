@@ -54,6 +54,18 @@ def passages_by_url(notes: list[dict]) -> dict[str, list[str]]:
 
 
 
+def contexts(notes: list[dict]) -> list[str]:
+    """Collect each cited evidence passage once for report evaluation.
+
+    Args:
+        notes: Topic notes containing cited sources and the passages researchers read.
+
+    Returns:
+        Deduplicated context passages in first-seen order.
+    """
+    return list(dict.fromkeys(p for texts in passages_by_url(notes).values() for p in texts))
+
+
 def finalize(report: TopicReport, sources: dict[str, dict]) -> dict:
     """Check the model's report against the sources; return the topic note
     ``{"report": text, "sources": [{id, title, url, full_text, passages}]}`` with only the cited sources.

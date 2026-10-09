@@ -7,11 +7,11 @@ from dotenv import dotenv_values
 from langchain_core.messages import HumanMessage
 from langchain_groq import ChatGroq
 
-from deep_research.model_spec import ModelSpec
+from models.model_spec import ModelSpec
 from deep_research.schemas.safety_verdict import SafetyVerdict
 from deep_research.schemas.think import Think
-from deep_research.tier import Tier
-from deep_research.utils.models import _structured
+from models.tier import Tier
+from models.utils import _structured
 
 
 def test_groq_structured_output_uses_a_strict_json_schema_not_a_tool():

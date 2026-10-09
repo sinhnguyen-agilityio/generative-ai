@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
-from deep_research.model_spec import ModelSpec
-from deep_research.utils.env import _env, _flag
+from models.model_spec import ModelSpec
+from config.env import _env, _flag
 
 
 @dataclass(frozen=True)

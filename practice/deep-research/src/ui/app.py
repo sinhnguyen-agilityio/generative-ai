@@ -8,8 +8,8 @@ import streamlit as st
 
 from deep_research.guardrail_violation import GuardrailViolation
 from deep_research.runner import DeepResearch
-from deep_research.settings import Settings
-from deep_research.utils.ui import _describe
+from config.settings import Settings
+from ui.progress import _describe
 
 
 @st.cache_resource

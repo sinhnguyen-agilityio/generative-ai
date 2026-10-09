@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from deep_research.utils.env import _env
+from config.env import _env
 
 
 @dataclass(frozen=True)

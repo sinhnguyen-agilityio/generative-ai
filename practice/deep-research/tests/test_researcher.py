@@ -8,13 +8,13 @@ from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from deep_research.agents.researcher import ResearcherAgent
-from deep_research.model_spec import ModelSpec
+from models.model_spec import ModelSpec
 from deep_research.schemas.answered import Answered
 from deep_research.schemas.missing_part import MissingPart
 from deep_research.schemas.topic_report import TopicReport
-from deep_research.settings import Settings
+from config.settings import Settings
 from deep_research.utils.notes import render_note
-from deep_research.utils.search import clean, normalize_url, prepare_pages
+from search.utils import clean, normalize_url, prepare_pages
 from tests.fakes import (
     PAGE,
     SNIPPET,

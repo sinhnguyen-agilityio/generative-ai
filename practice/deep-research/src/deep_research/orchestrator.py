@@ -23,7 +23,7 @@ from deep_research.agents.scope import ScopeAgent
 from deep_research.agents.supervisor import SupervisorAgent
 from deep_research.agents.verifier import VerifierAgent
 from deep_research.agents.writer import WriterAgent
-from deep_research.settings import Settings
+from config.settings import Settings
 from deep_research.states.research_state import ResearchState
 from deep_research.utils.routing import (
     next_after_clarify,

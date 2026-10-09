@@ -16,11 +16,11 @@ import logging
 
 from langchain_core.runnables import RunnableConfig
 
-from deep_research.ragas_scorer import RagasScorer
-from deep_research.settings import Settings
+from evaluation.ragas_scorer import RagasScorer
+from config.settings import Settings
 from deep_research.states.research_state import ResearchState
 from deep_research.utils import tracing
-from deep_research.utils.evaluation import contexts
+from deep_research.utils.notes import contexts
 from deep_research.utils.report import SOURCES_HEADING
 from deep_research.utils.runtime import thread_id
 from deep_research.utils.text import CITATION
