@@ -17,8 +17,8 @@ class Settings:
     tavily_url: str = "https://mcp.tavily.com/mcp/"
     tavily_api_key: str = field(default="", repr=False)
     chroma_path: str = ".data/chroma"
-    embedding_model: str = "gemini-embedding-2"
-    embedding_provider: str = "google_genai"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_provider: str = "openai"
     evaluation_model: str = "gemini-flash-latest"  # RAGAS judge, a Gemini model (GOOGLE_API_KEY)
     checkpoint_path: str = ".data/checkpoints.sqlite3"
     output_dir: str = "exports"
