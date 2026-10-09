@@ -17,7 +17,7 @@ class Tier:
         """
         self.primary = _create(spec.model, spec.provider, spec.timeout, spec.kwargs)
         self.fallback = (
-            _create(spec.fallback_model, spec.fallback_provider, spec.timeout, {})
+            _create(spec.fallback_model, spec.fallback_provider, spec.timeout, spec.fallback_kwargs)
             if spec.fallback_model
             else None
         )

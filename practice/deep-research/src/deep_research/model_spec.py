@@ -10,7 +10,7 @@ from deep_research.utils.env import _env
 
 @dataclass(frozen=True)
 class ModelSpec:
-    """One model tier: a primary model and an optional fallback (run with default settings)."""
+    """One model tier with independent primary and fallback provider options."""
 
     model: str
     provider: str | None = None
@@ -18,6 +18,7 @@ class ModelSpec:
     fallback_model: str | None = None
     fallback_provider: str | None = None
     timeout: float = 60.0
+    fallback_kwargs: dict = field(default_factory=dict)
 
     @classmethod
     def from_env(cls, tier: str, timeout: float) -> ModelSpec:
@@ -45,4 +46,5 @@ class ModelSpec:
             fallback_model=_env(prefix + "FALLBACK_MODEL") or None,
             fallback_provider=_env(prefix + "FALLBACK_PROVIDER") or None,
             timeout=float(_env(prefix + "TIMEOUT") or timeout),
+            fallback_kwargs=json.loads(_env(prefix + "FALLBACK_KWARGS") or "{}"),
         )
