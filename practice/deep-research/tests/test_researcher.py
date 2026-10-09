@@ -2,6 +2,7 @@
 
 import asyncio
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
 from langchain_core.tools import BaseTool
@@ -12,6 +13,7 @@ from models.model_spec import ModelSpec
 from deep_research.schemas.answered import Answered
 from deep_research.schemas.missing_part import MissingPart
 from deep_research.schemas.topic_report import TopicReport
+from deep_research.tools.think import think_tool
 from config.settings import Settings
 from deep_research.utils.notes import render_note
 from search.utils import clean, normalize_url, prepare_pages
@@ -233,3 +235,34 @@ def test_search_tool_hides_runtime_state_and_executes_with_trusted_context():
     assert store.added == [("trusted thread", "trusted topic")]
     assert update["researcher_messages"][0].tool_call_id == "s"
     assert update["sources"]["https://example.com/a"]["passages"]
+
+
+def test_think_executes_as_a_traced_tool_without_searching_or_changing_sources():
+    """Verify Think exposes reflection, executes with callbacks, and returns a linked reply."""
+    started = []
+
+    class ToolObserver(BaseCallbackHandler):
+        def on_tool_start(self, serialized, input_str, **kwargs):
+            """Capture actual tool executions rather than synthetic acknowledgments."""
+            started.append(serialized["name"])
+
+    assert isinstance(think_tool, BaseTool)
+    schema = convert_to_openai_tool(think_tool)["function"]
+    assert schema["name"] == "Think"
+    assert set(schema["parameters"]["properties"]) == {"reflection"}
+    settings = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"))
+    store = FakeStore()
+    agent = ResearcherAgent(FakeTier({}, tools=researcher), FakeSearch(), store, settings)
+    reflection = "Established: fact [1]. Missing: none. Enough: yes. Next: stop."
+    message = AIMessage("", tool_calls=[call("Think", {"reflection": reflection}, "review")])
+    sources = {"https://example.com/a": {"id": 1, "passages": ["fact"]}}
+    update = asyncio.run(agent.researcher_tools(
+        {"topic": "topic", "sources": sources, "researcher_messages": [message]},
+        {"callbacks": [ToolObserver()]},
+    ))
+    [reply] = update["researcher_messages"]
+    assert started == ["Think"]
+    assert reply.name == "Think" and reply.tool_call_id == "review"
+    assert reply.content == f"Reflection recorded: {reflection}"
+    assert update["sources"] == sources
+    assert store.added == []

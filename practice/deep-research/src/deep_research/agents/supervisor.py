@@ -11,13 +11,14 @@ import asyncio
 from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
 from deep_research.agents.researcher import ResearcherAgent
 from deep_research.prompts import SUPERVISOR_MORE, SUPERVISOR_PROMPT, SUPERVISOR_START
 from deep_research.schemas.conduct_research import ConductResearch
 from deep_research.schemas.research_complete import ResearchComplete
-from deep_research.schemas.think import Think
+from deep_research.tools.think import think_tool
 from config.settings import Settings
 from deep_research.states.supervisor_input import SupervisorInput
 from deep_research.states.supervisor_output import SupervisorOutput
@@ -35,7 +36,7 @@ class SupervisorAgent:
             researcher: Agent executing each delegated topic independently.
             settings: Prompt concurrency guidance and enforced supervisor model-turn limit.
         """
-        self.llm = llm.tools([ConductResearch, ResearchComplete, Think])
+        self.llm = llm.tools([ConductResearch, ResearchComplete, think_tool])
         self.researcher = researcher
         self.max_topics_per_round = settings.max_concurrent_researchers
         self.max_iterations = settings.max_supervisor_iterations
@@ -86,11 +87,12 @@ class SupervisorAgent:
         research_complete = any(call["name"] == "ResearchComplete" for call in calls)
         return END if exceeded_iterations or no_tool_calls or research_complete else "supervisor_tools"
 
-    async def supervisor_tools(self, state: SupervisorState):
-        """Execute delegated research concurrently and acknowledge reflection calls.
+    async def supervisor_tools(self, state: SupervisorState, config: RunnableConfig = None):
+        """Execute delegated research concurrently and record the model's reflections.
 
         Args:
             state: Latest supervisor message containing tool calls.
+            config: Graph configuration forwarded to executable reflection calls.
         Returns:
             A ToolMessage per call and new topic notes after the entire round finishes.
         """
@@ -102,8 +104,9 @@ class SupervisorAgent:
         for call in calls:
             if call["name"] == "ConductResearch":
                 content = render_note(notes[call["id"]])
-            elif call["name"] == "Think":
-                content = "Reflection recorded."
+            elif call["name"] == think_tool.name:
+                replies.append(await think_tool.ainvoke(call, config))
+                continue
             else:
                 content = f"Unknown tool: {call['name']}"
             replies.append(ToolMessage(content, tool_call_id=call["id"], name=call["name"]))

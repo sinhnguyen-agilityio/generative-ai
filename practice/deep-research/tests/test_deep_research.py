@@ -261,6 +261,8 @@ def test_supervisor_without_initial_plan_thinks_before_delegating():
     result = asyncio.run(agent.graph.ainvoke({"brief": "Research X"}))
     assert "<Initial plan>\nNone." in seen[0][-1].text
     assert "first use Think" in seen[0][0].text
+    assert seen[1][-1].tool_call_id == "plan"
+    assert seen[1][-1].text == "Reflection recorded: Research the main question"
     assert result["notes"] == [{"report": "Research X", "sources": []}]
     assert result["supervisor_iterations"] == 3
 

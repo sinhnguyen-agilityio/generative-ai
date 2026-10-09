@@ -19,7 +19,7 @@ from langchain_core.tools import InjectedToolArg, StructuredTool
 from langgraph.graph import END, START, StateGraph
 
 from deep_research.prompts import RESEARCHER_PROMPT, TOPIC_REPORT_PROMPT
-from deep_research.schemas.think import Think
+from deep_research.tools.think import think_tool
 from deep_research.schemas.topic_report import TopicReport
 from config.settings import Settings
 from deep_research.states.researcher_state import ResearcherState
@@ -49,7 +49,7 @@ class ResearcherAgent:
             description="Search the web and return relevant source passages, numbered for citations.",
         )
         self.search_tool = search_tool
-        self.llm = llm.tools([self.search_tool, Think])
+        self.llm = llm.tools([self.search_tool, think_tool])
         self.reporter = llm.structured(TopicReport)
         self.search = search
         self.store = store
@@ -88,7 +88,7 @@ class ResearcherAgent:
         return {"researcher_messages": [await self.llm.ainvoke([system, *state["researcher_messages"]])]}
 
     async def researcher_tools(self, state: ResearcherState, config: RunnableConfig):
-        """Run searches from one model turn concurrently and acknowledge Think.
+        """Run searches concurrently and execute the model's reflection tool calls.
 
         Args:
             state: Latest tool calls and the topic's source registry.
@@ -108,8 +108,10 @@ class ResearcherAgent:
         for call in calls:
             if call["name"] == "WebSearch":
                 replies.append(by_id[call["id"]])
+            elif call["name"] == think_tool.name:
+                replies.append(await think_tool.ainvoke(call, config))
             else:
-                content = "Reflection recorded." if call["name"] == "Think" else f"Unknown tool: {call['name']}"
+                content = f"Unknown tool: {call['name']}"
                 replies.append(ToolMessage(content, tool_call_id=call["id"], name=call["name"]))
         return {"researcher_messages": replies, "sources": sources}
 

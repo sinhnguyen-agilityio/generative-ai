@@ -9,7 +9,7 @@ from langchain_groq import ChatGroq
 
 from models.model_spec import ModelSpec
 from deep_research.schemas.safety_verdict import SafetyVerdict
-from deep_research.schemas.think import Think
+from deep_research.tools.think import think_tool
 from models.tier import Tier
 from models.utils import _structured
 
@@ -39,7 +39,7 @@ def test_example_config_preserves_reasoning_sandwich_for_primary_and_fallback(mo
     assert tier.fallback.model_name == "openai/gpt-oss-120b"
     assert tier.fallback.reasoning_effort == effort
 
-    tools = tier.tools([Think])
+    tools = tier.tools([think_tool])
     payload = tier.primary._get_request_payload([HumanMessage("Review the evidence.")], **tools.runnable.kwargs)
     assert payload["reasoning"]["effort"] == effort
     assert payload["tools"][0]["name"] == "Think"
