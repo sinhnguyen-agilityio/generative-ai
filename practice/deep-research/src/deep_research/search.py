@@ -14,7 +14,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-MIN_FULL_TEXT = 500  # cleaned page text shorter than this is not a usable page; use the snippet
+# cleaned page text shorter than this is not a usable page; use the snippet
+MIN_FULL_TEXT = 500
 MIN_TEXT = 200  # results with less text than this are dropped
 MAX_CHUNKS_PER_URL = 2  # so one page cannot fill all retrieved passages
 
@@ -40,7 +41,8 @@ class TavilySearch:
                 await session.initialize()
                 return await session.call_tool(
                     "tavily_search",
-                    {"query": query, "max_results": self.max_results, "include_raw_content": True},
+                    {"query": query, "max_results": self.max_results,
+                        "include_raw_content": True},
                     read_timeout_seconds=self.timeout,
                 )
 
@@ -51,12 +53,15 @@ class TavilySearch:
         except Exception as exc:
             # The URL carries the API key and transport errors quote it: raise a clean error,
             # without the original as context, so it never reaches the model, logs or traces.
-            raise RuntimeError(f"Tavily search failed ({type(exc).__name__})") from None
+            raise RuntimeError(
+                f"Tavily search failed ({type(exc).__name__})") from None
         payload = getattr(result, "structured_content", None)
         if not payload:
-            text = "".join(b.text for b in result.content if getattr(b, "type", "") == "text")
+            text = "".join(b.text for b in result.content if getattr(
+                b, "type", "") == "text")
             payload = json.loads(text or "{}")
-        rows = payload.get("results", []) if isinstance(payload, dict) else payload
+        rows = payload.get("results", []) if isinstance(
+            payload, dict) else payload
         return [
             {
                 "url": row["url"],
@@ -73,7 +78,8 @@ class TavilySearch:
 def normalize_url(url: str) -> str:
     """One key per page: no fragment, no utm_* parameters, no trailing slash, lower-case host."""
     parts = urlsplit(url.strip())
-    params = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not k.lower().startswith("utm_")]
+    params = [(k, v) for k, v in parse_qsl(
+        parts.query, keep_blank_values=True) if not k.lower().startswith("utm_")]
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), urlencode(params), ""))
 
 
@@ -98,17 +104,17 @@ def prepare_pages(results: list[dict]) -> list[dict]:
     cleaned text is too short falls back to Tavily's snippet; a result with too little text is dropped,
     and so is a result whose normalized URL an earlier result already has."""
     pages = {}
-    for row in results:
-        url = normalize_url(row["url"])
-        text, snippet = clean(row["raw_content"]), row["content"].strip()
+    for result in results:
+        url = normalize_url(result["url"])
+        text, snippet = clean(result["raw_content"]), result["content"].strip()
         full_text = len(text) >= MIN_FULL_TEXT
         if not full_text:
             text = snippet
         if url not in pages and len(text) >= MIN_TEXT:
             pages[url] = {
                 # One line: a title is rendered into source lines, so it must not break them.
-                "url": url, "title": " ".join(row["title"].split()) or url, "text": text,
-                "snippet": snippet, "full_text": full_text, "score": row["score"],
+                "url": url, "title": " ".join(result["title"].split()) or url, "text": text,
+                "snippet": snippet, "full_text": full_text, "score": result["score"],
             }
     return list(pages.values())
 
@@ -122,7 +128,8 @@ def format_passages(passages: list[dict], sources: dict[str, dict]) -> str:
     for url, texts in grouped.items():
         source = sources[url]
         kind = "full text" if source["full_text"] else "snippet only"
-        blocks.append(f"[{source['id']}] {source['title']} — {url} ({kind})\n" + "\n...\n".join(texts))
+        blocks.append(
+            f"[{source['id']}] {source['title']} — {url} ({kind})\n" + "\n...\n".join(texts))
     return "\n\n---\n\n".join(blocks) or "No results."
 
 
@@ -149,14 +156,16 @@ class PageStore:
         self._collection = chromadb.PersistentClient(path=path).get_or_create_collection(
             name, metadata={"hnsw:space": "cosine"}
         )
-        self._splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        self._splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=100)
 
     def add(self, pages: list[dict], *, run_id: str, topic: str) -> None:
         ids, texts, metadatas = [], [], []
         for page in pages:
             for i, chunk in enumerate(self._splitter.split_text(page["text"])):
                 # No topic in the id: a page has one set of chunks per run, whichever topic found it.
-                ids.append(hashlib.sha1(f"{run_id}|{page['url']}|{i}".encode()).hexdigest())
+                ids.append(hashlib.sha1(
+                    f"{run_id}|{page['url']}|{i}".encode()).hexdigest())
                 texts.append(chunk)
                 metadatas.append({
                     "run_id": run_id, "topic": topic, "url": page["url"], "title": page["title"],
@@ -164,7 +173,8 @@ class PageStore:
                 })
         if ids:
             vectors = self._embeddings.embed_documents(texts)
-            self._collection.upsert(ids=ids, embeddings=vectors, documents=texts, metadatas=metadatas)
+            self._collection.upsert(
+                ids=ids, embeddings=vectors, documents=texts, metadatas=metadatas)
 
     def query(self, text: str, *, run_id: str, urls: list[str], k: int) -> list[dict]:
         """The ``k`` chunks of these pages most similar to ``text``, as ``{url, text}``."""

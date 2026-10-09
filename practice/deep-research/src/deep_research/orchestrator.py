@@ -27,6 +27,42 @@ from deep_research.config import Settings
 from deep_research.state import ResearchState
 
 
+def next_after_clarify(state: ResearchState):
+    if state["needs_clarification"]:
+        return END
+    return "write_brief"
+
+
+def next_after_guardrail(state: ResearchState):
+    if state["blocked"]:
+        return END
+    return "clarify"
+
+
+def next_after_review_plan(state: ResearchState):
+    if state["plan_feedback"]:
+        return "planner"
+    return "supervisor"
+
+
+def next_after_verify(state: ResearchState):
+    if (state["verification"] or {}).get("issues"):
+        return "write_report"
+    return "evaluate"
+
+
+def next_after_review_report(state: ResearchState):
+    if state["report_feedback"]:
+        return "triage"
+    return "publish"
+
+
+def next_after_triage(state: ResearchState):
+    if state["research_request"]:
+        return "supervisor"
+    return "write_report"
+
+
 def build_graph(settings: Settings, reasoning, standard, search, store, checkpointer=None, scorer=None):
     """``reasoning`` and ``standard`` are model tiers (see models.Tier); ``scorer`` replaces the
     evaluator's RAGAS scoring (see EvaluatorAgent)."""
@@ -57,19 +93,19 @@ def build_graph(settings: Settings, reasoning, standard, search, store, checkpoi
     graph.add_node("publish", publisher.publish)
 
     graph.add_edge(START, "guardrail")
-    graph.add_conditional_edges("guardrail", lambda s: END if s["blocked"] else "clarify", ["clarify", END])
-    graph.add_conditional_edges("clarify", lambda s: END if s["needs_clarification"] else "write_brief", ["write_brief", END])
+    graph.add_conditional_edges("guardrail", next_after_guardrail, ["clarify", END])
+    graph.add_conditional_edges("clarify", next_after_clarify, ["write_brief", END])
     graph.add_edge("write_brief", "planner")
     graph.add_edge("planner", "review_plan")
-    graph.add_conditional_edges("review_plan", lambda s: "planner" if s["plan_feedback"] else "supervisor", ["planner", "supervisor"])
+    graph.add_conditional_edges("review_plan", next_after_review_plan, ["planner", "supervisor"])
     graph.add_conditional_edges("supervisor", supervisor.next_step, ["supervisor_tools", "write_report"])
     graph.add_edge("supervisor_tools", "supervisor")
     graph.add_edge("write_report", "verify")
     graph.add_conditional_edges(
-        "verify", lambda s: "write_report" if (s["verification"] or {}).get("issues") else "evaluate", ["write_report", "evaluate"]
+        "verify", next_after_verify, ["write_report", "evaluate"]
     )
     graph.add_edge("evaluate", "review_report")
-    graph.add_conditional_edges("review_report", lambda s: "triage" if s["report_feedback"] else "publish", ["triage", "publish"])
-    graph.add_conditional_edges("triage", lambda s: "supervisor" if s["research_request"] else "write_report", ["supervisor", "write_report"])
+    graph.add_conditional_edges("review_report", next_after_review_report, ["triage", "publish"])
+    graph.add_conditional_edges("triage", next_after_triage, ["supervisor", "write_report"])
     graph.add_edge("publish", END)
     return graph.compile(checkpointer=checkpointer, name="deep_research")
