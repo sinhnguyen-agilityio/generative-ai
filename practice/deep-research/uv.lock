@@ -890,7 +890,7 @@ requires-dist = [
     { name = "langchain-groq", specifier = ">=0.2" },
     { name = "langchain-openai", specifier = ">=0.2" },
     { name = "langchain-text-splitters", specifier = ">=1.1" },
-    { name = "langfuse", specifier = ">=2" },
+    { name = "langfuse", specifier = ">=4.8.1" },
     { name = "langgraph", specifier = ">=0.2" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=2" },
     { name = "mcp", specifier = ">=1" },
