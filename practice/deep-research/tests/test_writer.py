@@ -1,11 +1,11 @@
 """One source numbering for the whole run: merging topic notes, and the writer's Sources section.
 Sources travel as data, so text quoted from the web cannot forge or drop them."""
 
-from deep_research.agents.researcher import failed_note, finalize, render_note
-from deep_research.agents.utils import merge_notes
 from deep_research.agents.writer import WriterAgent
-from deep_research.search import prepare_pages
-from deep_research.state import Answered, TopicReport
+from deep_research.schemas.answered import Answered
+from deep_research.schemas.topic_report import TopicReport
+from deep_research.utils.notes import failed_note, finalize, merge_notes, render_note
+from deep_research.utils.search import prepare_pages
 from tests.fakes import FakeTier, result
 
 

@@ -12,20 +12,20 @@ research tiers, so the models that write the report do not grade it."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from langchain_core.runnables import RunnableConfig
 
-from deep_research import tracing
-from deep_research.agents.utils import CITATION, passages_by_url, thread_id
-from deep_research.agents.writer import SOURCES_HEADING
-from deep_research.config import Settings
-from deep_research.state import ResearchState
+from deep_research.ragas_scorer import RagasScorer
+from deep_research.settings import Settings
+from deep_research.states.research_state import ResearchState
+from deep_research.utils import tracing
+from deep_research.utils.evaluation import contexts
+from deep_research.utils.report import SOURCES_HEADING
+from deep_research.utils.runtime import thread_id
+from deep_research.utils.text import CITATION
 
 logger = logging.getLogger(__name__)
-
-TIMEOUT_MS = 120_000
 
 
 class EvaluatorAgent:
@@ -58,127 +58,3 @@ class EvaluatorAgent:
         for name, value in scores.items():
             tracing.score(self.langfuse, thread_id(config), name, value)
         return {"evaluation": scores}
-
-
-def contexts(notes: list[dict]) -> list[str]:
-    """Collect each cited evidence passage once for report evaluation.
-
-    Args:
-        notes: Topic notes containing cited sources and the passages researchers read.
-
-    Returns:
-        Deduplicated context passages in first-seen order.
-    """
-    return list(dict.fromkeys(p for texts in passages_by_url(notes).values() for p in texts))
-
-
-class RagasScorer:
-    def __init__(self, model: str, embedding_model: str, embedding_provider: str):
-        """Configure the Gemini judge model and LangChain embedding client.
-
-        Args:
-            model: Gemini model used to judge the report.
-            embedding_model: Embedding model used for answer relevancy.
-            embedding_provider: Provider selecting the embedding client.
-        """
-        from deep_research.search import _embeddings
-
-        self.model = model
-        self.embeddings = _embeddings(embedding_model, embedding_provider)
-
-    def __call__(self, brief: str, report: str, contexts: list[str]) -> dict[str, float]:
-        """Run asynchronous report scoring through the synchronous scorer interface.
-
-        Args:
-            brief: Research question represented by the brief.
-            report: Report body stripped of generated source lists and citation markers.
-            contexts: Source evidence used to judge faithfulness.
-
-        Returns:
-            Faithfulness and answer_relevancy scores.
-        """
-        return asyncio.run(self._score(brief, report, contexts))
-
-    async def _score(self, brief: str, report: str, contexts: list[str]) -> dict[str, float]:
-        """Compute faithfulness and answer relevancy concurrently with a fresh async judge.
-
-        Args:
-            brief: Research brief supplied as user input to both metrics.
-            report: Report body being evaluated.
-            contexts: Retrieved evidence used for the faithfulness metric.
-
-        Returns:
-            Numeric faithfulness and answer_relevancy scores.
-        """
-        from ragas.metrics.collections import AnswerRelevancy, Faithfulness
-
-        # A new client per run: an async client cannot be reused across asyncio.run loops.
-        llm = _ragas_llm(self.model)
-        faithfulness, relevancy = await asyncio.gather(
-            Faithfulness(llm=llm).ascore(user_input=brief, response=report, retrieved_contexts=contexts),
-            AnswerRelevancy(llm=llm, embeddings=_ragas_embeddings(self.embeddings)).ascore(
-                user_input=brief, response=report
-            ),
-        )
-        return {"faithfulness": float(faithfulness.value), "answer_relevancy": float(relevancy.value)}
-
-
-def _ragas_llm(model: str):
-    """A Gemini judge on an async google-genai client (reads GOOGLE_API_KEY).
-
-    ragas 0.4.3's ``llm_factory`` wraps a google-genai client for sync calls only, and the metrics
-    call ``agenerate``, so the async Instructor client is built here. Instructor drops ragas'
-    1024-token output cap for Gemini, so a long claim list is not truncated.
-
-    Args:
-        model: Gemini judge model identifier.
-
-    Returns:
-        Async InstructorLLM using the google-genai client and GOOGLE_API_KEY.
-    """
-    import instructor
-    from google import genai
-    from google.genai import types
-    from ragas.llms.base import InstructorLLM
-
-    client = genai.Client(http_options=types.HttpOptions(timeout=TIMEOUT_MS))
-    return InstructorLLM(client=instructor.from_genai(client, use_async=True), model=model, provider="google")
-
-
-def _ragas_embeddings(embeddings):
-    """The project's LangChain embeddings behind the interface ragas' collection metrics expect.
-
-    Args:
-        embeddings: LangChain embedding client with synchronous and asynchronous query methods.
-
-    Returns:
-        Adapter implementing the RAGAS text-embedding interface.
-    """
-    from ragas.embeddings import BaseRagasEmbedding
-
-    class Embeddings(BaseRagasEmbedding):
-        def embed_text(self, text: str, **kwargs) -> list[float]:
-            """Embed one query through the wrapped LangChain client.
-
-            Args:
-                text: Text to embed.
-                kwargs: RAGAS interface options; not forwarded to the client.
-
-            Returns:
-                Embedding vector.
-            """
-            return embeddings.embed_query(text)
-
-        async def aembed_text(self, text: str, **kwargs) -> list[float]:
-            """Embed one query asynchronously through the wrapped LangChain client.
-
-            Args:
-                text: Text to embed.
-                kwargs: RAGAS interface options; not forwarded to the client.
-
-            Returns:
-                Embedding vector.
-            """
-            return await embeddings.aembed_query(text)
-
-    return Embeddings()

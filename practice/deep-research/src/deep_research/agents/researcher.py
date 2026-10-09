@@ -11,25 +11,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from typing import Annotated, Literal
-from urllib.parse import urlsplit
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolArg, StructuredTool
 from langgraph.graph import END, START, StateGraph
 
-from deep_research.agents.utils import CITATION, SENTENCE_END, thread_id, today
-from deep_research.config import Settings
 from deep_research.prompts import RESEARCHER_PROMPT, TOPIC_REPORT_PROMPT
-from deep_research.search import format_passages, prepare_pages
-from deep_research.state import MissingPart, ResearcherState, Think, TopicReport
+from deep_research.schemas.think import Think
+from deep_research.schemas.topic_report import TopicReport
+from deep_research.settings import Settings
+from deep_research.states.researcher_state import ResearcherState
+from deep_research.utils.notes import failed_note, finalize
+from deep_research.utils.runtime import thread_id
+from deep_research.utils.search import format_passages, prepare_pages
+from deep_research.utils.text import today
 
 logger = logging.getLogger(__name__)
 
+
 SMALL_RESULTS_CHARS = 8000  # results this short are shown whole, without retrieval
-_SOURCE_LINE = re.compile(r"^\[\d+\] .+: \S+$")
 
 
 class ResearcherAgent:
@@ -66,7 +68,6 @@ class ResearcherAgent:
         try:
             result = await self.graph.ainvoke(
                 {"topic": topic, "researcher_messages": [HumanMessage(topic)], "sources": {}},
-                {"recursion_limit": 50},
             )
             return result["notes"]
         except Exception as exc:
@@ -207,128 +208,3 @@ class ResearcherAgent:
         builder.add_edge("report", END)
         # Several researchers run inside one supervisor step, so they cannot share its checkpoints.
         return builder.compile(checkpointer=False, name="researcher")
-
-
-# ----- topic report -----
-
-
-def finalize(report: TopicReport, sources: dict[str, dict]) -> dict:
-    """Check the model's report against the sources; return the topic note
-    ``{"report": text, "sources": [{id, title, url, full_text, passages}]}`` with only the cited sources.
-
-    The sources travel as data, never as text to parse back: the report quotes web content, so
-    any source list written into it could be forged.
-
-    A sentence that cites only unknown source numbers is dropped, and unknown numbers are removed
-    from the others; an answer left without a valid citation becomes an essential missing part;
-    a missing part listed twice is kept once (essential if either copy is); coverage cannot be full
-    while an essential part is missing; the status is derived here, never taken from the model.
-
-    Args:
-        report: Structured topic findings, answered questions, missing parts, and coverage.
-        sources: Trusted URL-keyed registry with local IDs and evidence passages.
-
-    Returns:
-        Topic note with derived status, validated findings, and only the cited source records.
-    """
-    by_id = {s["id"]: (url, s) for url, s in sources.items()}
-    findings = _keep_cited(report.findings, by_id.keys())
-    answered, parts = [], list(report.missing_parts)
-    for item in report.answered:
-        ids = [n for n in dict.fromkeys(item.citations) if n in by_id]
-        if ids:
-            answered.append((item.question, ids))
-        else:
-            parts.append(MissingPart(question=item.question, essential=True, reason="no valid source"))
-    unique: dict[str, MissingPart] = {}
-    for part in parts:
-        key = " ".join(part.question.lower().split())
-        if key not in unique or (part.essential and not unique[key].essential):
-            unique[key] = part
-    missing = list(unique.values())
-    essential_missing = any(part.essential for part in missing)
-    coverage = report.coverage
-    if not answered:
-        coverage = "minimal"
-    elif coverage == "full" and essential_missing:
-        coverage = "partial"
-    cited = sorted({int(n) for n in CITATION.findall(findings)} | {n for _, ids in answered for n in ids})
-    if not cited:
-        status = "failed"
-    elif coverage == "full" and not essential_missing:
-        status = "complete"
-    else:
-        status = "partial"
-
-    lines = [f"## Status: {status}", f"## Coverage: {coverage}", "Answered:"]
-    lines += [f"- {q} {''.join(f'[{n}]' for n in ids)}" for q, ids in answered] or ["- None"]
-    lines.append("## Missing parts")
-    lines += [
-        f"- {p.question} ({'essential' if p.essential else 'not essential'}: {p.reason})" for p in missing
-    ] or ["- None"]
-    lines += ["## Findings", findings or "None."]
-    cited_sources = [
-        {"id": n, "url": by_id[n][0], **{k: by_id[n][1][k] for k in ("title", "full_text", "passages")}}
-        for n in cited
-    ]
-    return {"report": "\n".join(lines), "sources": cited_sources}
-
-
-def render_note(note: dict) -> str:
-    """Render a topic report and its trusted citation metadata for the supervisor.
-
-    Args:
-        note: Topic note containing report text and cited source records.
-
-    Returns:
-        Report plus citation count, domain count, snippet count, and numbered URLs when sources exist.
-    """
-    sources = note["sources"]
-    if not sources:
-        return note["report"]
-    domains = {urlsplit(s["url"]).netloc for s in sources}
-    snippets = sum(not s["full_text"] for s in sources)
-    lines = [note["report"], "## Citations", f"{len(sources)} sources, {len(domains)} domains, {snippets} snippet only"]
-    lines += [f"[{s['id']}] {s['title']}: {s['url']}" for s in sources]
-    return "\n".join(lines)
-
-
-def _keep_cited(findings: str, valid) -> str:
-    """Remove forged source headings and sentences citing only unknown sources.
-
-    Args:
-        findings: Model-written findings that may quote untrusted web content.
-        valid: Allowed source numbers from the topic registry.
-
-    Returns:
-        Findings with invalid citation numbers removed; uncited sentences are preserved.
-    """
-    lines = []
-    for line in findings.splitlines():
-        # Headings and source lines are written by code only; in findings they echo web content.
-        if line.lstrip().startswith("## ") or _SOURCE_LINE.match(line.strip()):
-            continue
-        kept = []
-        for sentence in SENTENCE_END.split(line):
-            ids = [int(n) for n in CITATION.findall(sentence)]
-            if ids and not any(n in valid for n in ids):
-                continue
-            kept.append(CITATION.sub(lambda m: m.group(0) if int(m.group(1)) in valid else "", sentence))
-        if kept or not line.strip():
-            lines.append(" ".join(kept))
-    return "\n".join(lines).strip()
-
-
-def failed_note(reason: str) -> dict:
-    """Build a failed topic note marking the whole task as an essential missing part.
-
-    Args:
-        reason: Failure description included in the missing-part explanation.
-
-    Returns:
-        Failed/minimal report with an empty source list.
-    """
-    report = "\n".join(
-        ["## Status: failed", "## Coverage: minimal", "## Missing parts", f"- The whole topic (essential: {reason})"]
-    )
-    return {"report": report, "sources": []}

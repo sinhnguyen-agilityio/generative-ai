@@ -8,8 +8,8 @@ from pathlib import Path
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 
-from deep_research.agents.utils import thread_id
-from deep_research.state import ResearchState
+from deep_research.states.research_state import ResearchState
+from deep_research.utils.runtime import thread_id
 
 
 class PublisherAgent:

@@ -1,0 +1,42 @@
+"""Validate user input before storing it or sending it to models."""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+
+from deep_research.guardrail_violation import GuardrailViolation
+
+MAX_INPUT_CHARS = 10_000
+
+
+_INVISIBLE = re.compile(r"[​-‍⁠﻿\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]")
+
+
+_CREDENTIAL = re.compile(
+    r"\b(?:api[_-]?key|secret|password|token|authorization)\s*[:=]\s*\S{8,}"
+    r"|\bbearer\s+[a-z0-9._-]{8,}|\b(?:sk|tvly|gsk|pk-lf|sk-lf)-[a-z0-9_-]{8,}|\bAIza[0-9a-z_-]{20,}",
+    re.I,
+)
+
+
+def check_input(text: str) -> str:
+    """Normalize user text and reject empty, oversized, or credential-bearing input.
+
+    Args:
+        text: Request, review feedback, topic, or criterion to validate.
+
+    Returns:
+        Stripped NFKC-normalized text with invisible/control characters removed.
+
+    Raises:
+        GuardrailViolation: Input is empty, exceeds MAX_INPUT_CHARS, or matches a credential pattern.
+    """
+    text = _INVISIBLE.sub("", unicodedata.normalize("NFKC", text or "")).strip()
+    if not text:
+        raise GuardrailViolation("The message is empty.")
+    if len(text) > MAX_INPUT_CHARS:
+        raise GuardrailViolation(f"The message is longer than {MAX_INPUT_CHARS:,} characters.")
+    if _CREDENTIAL.search(text):
+        raise GuardrailViolation("Remove the credential from your message; keys belong in .env.")
+    return text

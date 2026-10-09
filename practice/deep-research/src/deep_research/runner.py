@@ -4,28 +4,21 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
 
 import aiosqlite
-
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 
-from deep_research import tracing
-from deep_research.config import Settings
-from deep_research.agents.guardrail import check_input
 from deep_research.orchestrator import build_graph
-from deep_research.models import Tier
-from deep_research.search import PageStore, TavilySearch
-
-
-@dataclass
-class ThreadView:
-    values: dict
-    pending: dict | None  # the interrupt payload waiting for a human decision
-    unfinished: bool  # stopped mid-run (error or closed tab); can be continued
+from deep_research.page_store import PageStore
+from deep_research.settings import Settings
+from deep_research.tavily_search import TavilySearch
+from deep_research.thread_view import ThreadView
+from deep_research.tier import Tier
+from deep_research.utils import tracing
+from deep_research.utils.guardrail import check_input
 
 
 class DeepResearch:

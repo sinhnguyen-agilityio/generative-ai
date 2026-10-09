@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from deep_research.agents.utils import bullets, today
 from deep_research.prompts import PLAN_REVISION, PLANNER_PROMPT
-from deep_research.state import ResearchPlan, ResearchState
+from deep_research.schemas.research_plan import ResearchPlan
+from deep_research.states.research_state import ResearchState
+from deep_research.utils.text import bullets, today
 
 
 class PlannerAgent:

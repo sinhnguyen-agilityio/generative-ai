@@ -5,10 +5,13 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, get_buffer_string
 
-from deep_research.agents.utils import bullets, today
-from deep_research.agents.writer import SOURCES_HEADING
 from deep_research.prompts import BRIEF_PROMPT, CLARIFY_PROMPT, TRIAGE_PROMPT
-from deep_research.state import ClarifyWithUser, FollowUp, ResearchBrief, ResearchState
+from deep_research.schemas.clarify_with_user import ClarifyWithUser
+from deep_research.schemas.follow_up import FollowUp
+from deep_research.schemas.research_brief import ResearchBrief
+from deep_research.states.research_state import ResearchState
+from deep_research.utils.report import SOURCES_HEADING
+from deep_research.utils.text import bullets, today
 
 
 class ScopeAgent:

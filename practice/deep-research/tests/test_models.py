@@ -2,8 +2,8 @@
 
 from langchain_groq import ChatGroq
 
-from deep_research.models import _structured
-from deep_research.state import SafetyVerdict
+from deep_research.schemas.safety_verdict import SafetyVerdict
+from deep_research.utils.models import _structured
 
 
 def test_groq_structured_output_uses_a_strict_json_schema_not_a_tool():

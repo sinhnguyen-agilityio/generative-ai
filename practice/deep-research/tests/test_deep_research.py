@@ -6,13 +6,14 @@ from types import SimpleNamespace
 
 import aiosqlite
 import pytest
-
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from deep_research.agents.supervisor import SupervisorAgent
-from deep_research.config import ModelSpec, Settings
-from deep_research.agents.guardrail import GuardrailViolation, check_input
+from deep_research.guardrail_violation import GuardrailViolation
+from deep_research.model_spec import ModelSpec
+from deep_research.settings import Settings
+from deep_research.utils.guardrail import check_input
 from tests.fakes import FakeTier, call, make_app, supervisor
 
 

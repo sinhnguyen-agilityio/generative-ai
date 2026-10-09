@@ -5,6 +5,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from deep_research.ui import main  # noqa: E402
+from deep_research.ui import main
 
 main()

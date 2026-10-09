@@ -1,4 +1,4 @@
-"""Langfuse tracing: one trace per research thread, scores attached to it. Off unless enabled."""
+"""Tracing definitions."""
 
 from __future__ import annotations
 
