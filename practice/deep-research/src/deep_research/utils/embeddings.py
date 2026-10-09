@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-def _embeddings(model: str, provider: str):
+def embeddings(model: str, provider: str):
     """Initialize the embedding client for the configured provider.
 
     Args:

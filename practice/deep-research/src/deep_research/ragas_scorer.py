@@ -16,10 +16,10 @@ class RagasScorer:
             embedding_model: Embedding model used for answer relevancy.
             embedding_provider: Provider selecting the embedding client.
         """
-        from deep_research.utils.embeddings import _embeddings
+        from deep_research.utils.embeddings import embeddings
 
         self.model = model
-        self.embeddings = _embeddings(embedding_model, embedding_provider)
+        self.embeddings = embeddings(embedding_model, embedding_provider)
 
     def __call__(self, brief: str, report: str, contexts: list[str]) -> dict[str, float]:
         """Run asynchronous report scoring through the synchronous scorer interface.

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from deep_research.utils.embeddings import _embeddings
+from deep_research.utils.embeddings import embeddings
 
 MAX_CHUNKS_PER_URL = 2  # so one page cannot fill all retrieved passages
 
@@ -26,7 +26,7 @@ class PageStore:
         import chromadb
 
         Path(path).mkdir(parents=True, exist_ok=True)
-        self._embeddings = _embeddings(model, provider)
+        self._embeddings = embeddings(model, provider)
         # One collection per embedding model: vectors of different sizes cannot share one.
         name = f"pages_cos_{provider}_{model}".replace("/", "-")[:60]
         self._collection = chromadb.PersistentClient(path=path).get_or_create_collection(
