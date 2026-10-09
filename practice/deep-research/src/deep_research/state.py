@@ -142,12 +142,6 @@ class ResearchComplete(BaseModel):
     """Call when the collected findings are enough to write the report."""
 
 
-class WebSearch(BaseModel):
-    """Search the web. Returns the most relevant passages of the result pages, numbered by source."""
-
-    query: str
-
-
 class Think(BaseModel):
     """Pause to reflect on the latest results before the next step. Fetches nothing and changes
     nothing; the reflection only stays in the conversation to guide your next decision.

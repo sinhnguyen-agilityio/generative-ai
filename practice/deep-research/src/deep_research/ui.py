@@ -25,10 +25,24 @@ NODE_LABELS = {
 
 @st.cache_resource
 def get_app() -> DeepResearch:
+    """Create and cache the application runner for Streamlit sessions.
+
+    Returns:
+        DeepResearch runner configured from the environment.
+    """
     return DeepResearch(Settings.from_env())
 
 
 def _describe(node: str, update: dict) -> str:
+    """Describe a completed node or the topics delegated by the supervisor.
+
+    Args:
+        node: Graph node emitting the update.
+        update: Node state update, including supervisor tool calls when applicable.
+
+    Returns:
+        Human-readable progress message.
+    """
     if node == "supervisor":
         calls = update["supervisor_messages"][-1].tool_calls
         topics = [c["args"]["research_topic"] for c in calls if c["name"] == "ConductResearch"]
@@ -39,7 +53,11 @@ def _describe(node: str, update: dict) -> str:
 
 
 def run(start) -> None:
-    """``start`` returns the turn's stream; it raises right away when the guardrail rejects input."""
+    """Display graph progress and errors, then rerun the UI after a successful turn.
+
+    Args:
+        start: Callable returning a node-update iterator; input rejection is shown immediately.
+    """
     try:
         stream = start()
     except GuardrailViolation as exc:
@@ -60,6 +78,13 @@ def run(start) -> None:
 
 
 def review_plan(app: DeepResearch, thread_id: str, pending: dict) -> None:
+    """Render editable topics and criteria, then submit approval or revision feedback.
+
+    Args:
+        app: Runner used to resume the review interrupt.
+        thread_id: Thread waiting for plan review.
+        pending: Interrupt payload containing topics and acceptance criteria.
+    """
     st.subheader("Review the research plan")
     with st.form("plan"):
         topics = st.text_area("Topics, one per line (edit freely)", "\n".join(pending["topics"]), height=180)
@@ -81,6 +106,11 @@ def review_plan(app: DeepResearch, thread_id: str, pending: dict) -> None:
 
 
 def show_evaluation(evaluation: dict | None) -> None:
+    """Display evaluation metrics or a recorded evaluation error when present.
+
+    Args:
+        evaluation: Evaluation scores, error dictionary, or None.
+    """
     if not evaluation:
         return
     if "error" in evaluation:
@@ -92,6 +122,11 @@ def show_evaluation(evaluation: dict | None) -> None:
 
 
 def show_verification(verification: dict | None) -> None:
+    """Display citation support, removed sentences, and unmet criteria when present.
+
+    Args:
+        verification: Final verification summary, error dictionary, or None.
+    """
     if not verification:
         return
     if "error" in verification:
@@ -109,8 +144,13 @@ def show_verification(verification: dict | None) -> None:
 
 
 def answer(app: DeepResearch, thread_id: str, pending: dict) -> None:
-    """The verified report as the assistant's answer. Publishing it ends the research; a message
-    in the chat box asks for more research or changes instead."""
+    """Display the reviewed report and accept publication or follow-up requests.
+
+    Args:
+        app: Runner used to submit the review decision.
+        thread_id: Thread waiting for report review.
+        pending: Report interrupt payload with optional verification and evaluation.
+    """
     with st.chat_message("assistant"):
         st.markdown(pending["report"])
         show_verification(pending.get("verification"))
@@ -124,6 +164,7 @@ def answer(app: DeepResearch, thread_id: str, pending: dict) -> None:
 
 
 def main() -> None:
+    """Render the research UI and select the current chat, review, or recovery screen."""
     st.set_page_config(page_title="Deep Research", layout="wide")
     app = get_app()
     thread_id = st.session_state.setdefault("thread_id", str(uuid.uuid4()))

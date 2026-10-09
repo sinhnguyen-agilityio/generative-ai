@@ -12,18 +12,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import InjectedToolArg, StructuredTool
 from langgraph.graph import END, START, StateGraph
 
 from deep_research.agents.utils import CITATION, SENTENCE_END, thread_id, today
 from deep_research.config import Settings
 from deep_research.prompts import RESEARCHER_PROMPT, TOPIC_REPORT_PROMPT
 from deep_research.search import format_passages, prepare_pages
-from deep_research.state import MissingPart, ResearcherState, Think, TopicReport, WebSearch
+from deep_research.state import MissingPart, ResearcherState, Think, TopicReport
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,20 @@ _SOURCE_LINE = re.compile(r"^\[\d+\] .+: \S+$")
 
 class ResearcherAgent:
     def __init__(self, llm, search, store, settings: Settings):
-        self.llm = llm.tools([WebSearch, Think])
+        """Configure the executable search tool, topic reporter, and isolated research graph.
+
+        Args:
+            llm: Model tier for search decisions and structured topic reporting.
+            search: Asynchronous web search backend.
+            store: Synchronous page indexing and passage retrieval backend.
+            settings: Search-budget prompt guidance and passage retrieval count.
+        """
+        search_tool = StructuredTool.from_function(
+            coroutine=self._web_search, name="WebSearch",
+            description="Search the web and return relevant source passages, numbered for citations.",
+        )
+        self.search_tool = search_tool
+        self.llm = llm.tools([self.search_tool, Think])
         self.reporter = llm.structured(TopicReport)
         self.search = search
         self.store = store
@@ -83,21 +97,19 @@ class ResearcherAgent:
         """
         sources = dict(state["sources"])
         calls = state["researcher_messages"][-1].tool_calls
-        searches = [call for call in calls if call["name"] == "WebSearch"]
-        results = await asyncio.gather(*(
-            self._web_search(call["args"]["query"], state["topic"], thread_id(config), sources)
-            for call in searches
-        ))
-        contents = {call["id"]: result for call, result in zip(searches, results)}
+        inputs = [
+            {**call, "args": {**call["args"], "state": {**state, "sources": sources}}}
+            for call in calls if call["name"] == "WebSearch"
+        ]
+        results = await asyncio.gather(*(self.search_tool.ainvoke(call, config) for call in inputs))
+        by_id = {reply.tool_call_id: reply for reply in results}
         replies = []
         for call in calls:
             if call["name"] == "WebSearch":
-                content = contents[call["id"]]
-            elif call["name"] == "Think":
-                content = "Reflection recorded."
+                replies.append(by_id[call["id"]])
             else:
-                content = f"Unknown tool: {call['name']}"
-            replies.append(ToolMessage(content, tool_call_id=call["id"], name=call["name"]))
+                content = "Reflection recorded." if call["name"] == "Think" else f"Unknown tool: {call['name']}"
+                replies.append(ToolMessage(content, tool_call_id=call["id"], name=call["name"]))
         return {"researcher_messages": replies, "sources": sources}
 
     async def report(self, state: ResearcherState):
@@ -116,21 +128,21 @@ class ResearcherAgent:
             return {"notes": failed_note(f"Topic report failed: {exc}")}
         return {"notes": finalize(result, state["sources"])}
 
-    # ----- helpers -----
+    # ----- search tool and retrieval -----
 
-    async def _web_search(self, query: str, topic: str, run_id: str, sources: dict[str, dict]) -> str:
+    async def _web_search(self, query: str, state: Annotated[dict, InjectedToolArg], config: RunnableConfig) -> str:
         """Search, index the result pages, and return the passages most relevant to the query.
         New pages get the next source number in ``sources``; a page seen before keeps its number.
         Each source keeps the passages shown to the model: the evidence its citations rest on.
 
         Args:
             query: Model-generated web search query.
-            topic: Research task used as indexing metadata.
-            run_id: Thread identifier for evidence retrieval.
-            sources: Shared source registry updated with IDs and displayed passages.
+            state: Injected topic and source registry; hidden from the model.
+            config: Injected graph configuration identifying the research thread.
         Returns:
             Formatted source passages, or a search failure message.
         """
+        sources = state["sources"]
         try:
             pages = prepare_pages(await self.search.search(query))
         except Exception as exc:
@@ -140,7 +152,7 @@ class ResearcherAgent:
             sources.setdefault(
                 page["url"], {"id": len(sources) + 1, "title": page["title"], "full_text": page["full_text"], "passages": []}
             )
-        passages = await asyncio.to_thread(self._passages, query, pages, topic, run_id)
+        passages = await asyncio.to_thread(self._passages, query, pages, state["topic"], thread_id(config))
         for passage in passages:
             source = sources[passage["url"]]
             sources[passage["url"]] = {**source, "passages": [*source["passages"], passage["text"]]}
@@ -169,11 +181,22 @@ class ResearcherAgent:
         return [{"url": p["url"], "text": p["text"]} for p in pages]
 
     def _after_researcher(self, state: ResearcherState) -> Literal["researcher_tools", "report"]:
-        """Route tool calls to execution; a response without tools starts report writing."""
+        """Route model tool calls to execution or a final response to report writing.
+
+        Args:
+            state: Research conversation containing the latest model response.
+
+        Returns:
+            researcher_tools when tool calls exist; otherwise report.
+        """
         return "researcher_tools" if state["researcher_messages"][-1].tool_calls else "report"
 
     def _build(self):
-        """Return the researcher/tools/report graph without shared checkpoints."""
+        """Compile the researcher/tool/report loop without shared checkpoints.
+
+        Returns:
+            Researcher subgraph isolated from the parent supervisor checkpoint history.
+        """
         builder = StateGraph(ResearcherState)
         builder.add_node("researcher", self.researcher)
         builder.add_node("researcher_tools", self.researcher_tools)
@@ -199,7 +222,15 @@ def finalize(report: TopicReport, sources: dict[str, dict]) -> dict:
     A sentence that cites only unknown source numbers is dropped, and unknown numbers are removed
     from the others; an answer left without a valid citation becomes an essential missing part;
     a missing part listed twice is kept once (essential if either copy is); coverage cannot be full
-    while an essential part is missing; the status is derived here, never taken from the model."""
+    while an essential part is missing; the status is derived here, never taken from the model.
+
+    Args:
+        report: Structured topic findings, answered questions, missing parts, and coverage.
+        sources: Trusted URL-keyed registry with local IDs and evidence passages.
+
+    Returns:
+        Topic note with derived status, validated findings, and only the cited source records.
+    """
     by_id = {s["id"]: (url, s) for url, s in sources.items()}
     findings = _keep_cited(report.findings, by_id.keys())
     answered, parts = [], list(report.missing_parts)
@@ -244,7 +275,14 @@ def finalize(report: TopicReport, sources: dict[str, dict]) -> dict:
 
 
 def render_note(note: dict) -> str:
-    """The topic note as the supervisor reads it: the report plus its Citations section."""
+    """Render a topic report and its trusted citation metadata for the supervisor.
+
+    Args:
+        note: Topic note containing report text and cited source records.
+
+    Returns:
+        Report plus citation count, domain count, snippet count, and numbered URLs when sources exist.
+    """
     sources = note["sources"]
     if not sources:
         return note["report"]
@@ -256,6 +294,15 @@ def render_note(note: dict) -> str:
 
 
 def _keep_cited(findings: str, valid) -> str:
+    """Remove forged source headings and sentences citing only unknown sources.
+
+    Args:
+        findings: Model-written findings that may quote untrusted web content.
+        valid: Allowed source numbers from the topic registry.
+
+    Returns:
+        Findings with invalid citation numbers removed; uncited sentences are preserved.
+    """
     lines = []
     for line in findings.splitlines():
         # Headings and source lines are written by code only; in findings they echo web content.
@@ -273,6 +320,14 @@ def _keep_cited(findings: str, valid) -> str:
 
 
 def failed_note(reason: str) -> dict:
+    """Build a failed topic note marking the whole task as an essential missing part.
+
+    Args:
+        reason: Failure description included in the missing-part explanation.
+
+    Returns:
+        Failed/minimal report with an empty source list.
+    """
     report = "\n".join(
         ["## Status: failed", "## Coverage: minimal", "## Missing parts", f"- The whole topic (essential: {reason})"]
     )

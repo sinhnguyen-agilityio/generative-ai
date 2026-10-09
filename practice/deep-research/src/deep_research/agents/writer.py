@@ -18,9 +18,25 @@ _OWN_SOURCES = re.compile(r"\n#+ *Sources\s*\n")  # a list the model wrote despi
 
 class WriterAgent:
     def __init__(self, llm):
+        """Configure the report-writing model without tool binding.
+
+        Args:
+            llm: Model tier used for drafting and revising reports.
+        """
         self.llm = llm.plain()
 
     def write(self, state: ResearchState):
+        """Write or revise the report from globally numbered research notes.
+
+        Verification issues take precedence over reviewer feedback. Remove unknown citation
+        numbers and replace any model-written source list with one built from trusted metadata.
+
+        Args:
+            state: Brief, notes, optional criteria, previous report, and revision feedback.
+
+        Returns:
+            Report with cited sources, cleared reviewer feedback, and reset evaluation.
+        """
         notes, sources = merge_notes(state["notes"])
         previous = state.get("report", "").partition(SOURCES_HEADING)[0]
         issues = (state.get("verification") or {}).get("issues")
@@ -38,7 +54,15 @@ class WriterAgent:
 
 
 def with_sources(body: str, sources: dict[int, tuple[str, str]]) -> str:
-    """The report body plus a Sources section listing only the sources it cites."""
+    """Append a source list containing only citation numbers used in the report body.
+
+    Args:
+        body: Report body with valid numbered citations.
+        sources: Source-number mapping to (title, URL); every cited number must be present.
+
+    Returns:
+        Body with a Sources section, or the unchanged body when it has no citations.
+    """
     cited = sorted({int(n) for n in CITATION.findall(body)})
     if not cited:
         return body

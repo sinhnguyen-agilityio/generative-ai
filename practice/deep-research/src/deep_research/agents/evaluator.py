@@ -30,11 +30,25 @@ TIMEOUT_MS = 120_000
 
 class EvaluatorAgent:
     def __init__(self, settings: Settings, scorer=None):
-        """``scorer(brief, report, contexts) -> {name: score}``; RAGAS on ``evaluation_model`` by default."""
+        """Configure report scoring and optional metric tracing.
+
+        Args:
+            settings: Judge/embedding model settings and tracing flag.
+            scorer: Optional callable (brief, report, contexts) returning named scores; defaults to RAGAS.
+        """
         self.scorer = scorer or RagasScorer(settings.evaluation_model, settings.embedding_model, settings.embedding_provider)
         self.langfuse = settings.langfuse_enabled
 
     def evaluate(self, state: ResearchState, config: RunnableConfig):
+        """Score the report without its citation markers/source list and record evaluation errors.
+
+        Args:
+            state: Brief, report, and topic notes carrying source passages.
+            config: Graph configuration used to attach scores to the research thread.
+
+        Returns:
+            Evaluation scores or an error dictionary; evaluation does not change routing.
+        """
         report = CITATION.sub("", state["report"].partition(SOURCES_HEADING)[0]).strip()
         try:
             scores = self.scorer(state["brief"], report, contexts(state["notes"]))
@@ -47,21 +61,55 @@ class EvaluatorAgent:
 
 
 def contexts(notes: list[dict]) -> list[str]:
-    """The passages of every source the topic notes cite, each passage once."""
+    """Collect each cited evidence passage once for report evaluation.
+
+    Args:
+        notes: Topic notes containing cited sources and the passages researchers read.
+
+    Returns:
+        Deduplicated context passages in first-seen order.
+    """
     return list(dict.fromkeys(p for texts in passages_by_url(notes).values() for p in texts))
 
 
 class RagasScorer:
     def __init__(self, model: str, embedding_model: str, embedding_provider: str):
+        """Configure the Gemini judge model and LangChain embedding client.
+
+        Args:
+            model: Gemini model used to judge the report.
+            embedding_model: Embedding model used for answer relevancy.
+            embedding_provider: Provider selecting the embedding client.
+        """
         from deep_research.search import _embeddings
 
         self.model = model
         self.embeddings = _embeddings(embedding_model, embedding_provider)
 
     def __call__(self, brief: str, report: str, contexts: list[str]) -> dict[str, float]:
+        """Run asynchronous report scoring through the synchronous scorer interface.
+
+        Args:
+            brief: Research question represented by the brief.
+            report: Report body stripped of generated source lists and citation markers.
+            contexts: Source evidence used to judge faithfulness.
+
+        Returns:
+            Faithfulness and answer_relevancy scores.
+        """
         return asyncio.run(self._score(brief, report, contexts))
 
     async def _score(self, brief: str, report: str, contexts: list[str]) -> dict[str, float]:
+        """Compute faithfulness and answer relevancy concurrently with a fresh async judge.
+
+        Args:
+            brief: Research brief supplied as user input to both metrics.
+            report: Report body being evaluated.
+            contexts: Retrieved evidence used for the faithfulness metric.
+
+        Returns:
+            Numeric faithfulness and answer_relevancy scores.
+        """
         from ragas.metrics.collections import AnswerRelevancy, Faithfulness
 
         # A new client per run: an async client cannot be reused across asyncio.run loops.
@@ -80,7 +128,14 @@ def _ragas_llm(model: str):
 
     ragas 0.4.3's ``llm_factory`` wraps a google-genai client for sync calls only, and the metrics
     call ``agenerate``, so the async Instructor client is built here. Instructor drops ragas'
-    1024-token output cap for Gemini, so a long claim list is not truncated."""
+    1024-token output cap for Gemini, so a long claim list is not truncated.
+
+    Args:
+        model: Gemini judge model identifier.
+
+    Returns:
+        Async InstructorLLM using the google-genai client and GOOGLE_API_KEY.
+    """
     import instructor
     from google import genai
     from google.genai import types
@@ -91,14 +146,39 @@ def _ragas_llm(model: str):
 
 
 def _ragas_embeddings(embeddings):
-    """The project's LangChain embeddings behind the interface ragas' collection metrics expect."""
+    """The project's LangChain embeddings behind the interface ragas' collection metrics expect.
+
+    Args:
+        embeddings: LangChain embedding client with synchronous and asynchronous query methods.
+
+    Returns:
+        Adapter implementing the RAGAS text-embedding interface.
+    """
     from ragas.embeddings import BaseRagasEmbedding
 
     class Embeddings(BaseRagasEmbedding):
         def embed_text(self, text: str, **kwargs) -> list[float]:
+            """Embed one query through the wrapped LangChain client.
+
+            Args:
+                text: Text to embed.
+                kwargs: RAGAS interface options; not forwarded to the client.
+
+            Returns:
+                Embedding vector.
+            """
             return embeddings.embed_query(text)
 
         async def aembed_text(self, text: str, **kwargs) -> list[float]:
+            """Embed one query asynchronously through the wrapped LangChain client.
+
+            Args:
+                text: Text to embed.
+                kwargs: RAGAS interface options; not forwarded to the client.
+
+            Returns:
+                Embedding vector.
+            """
             return await embeddings.aembed_query(text)
 
     return Embeddings()

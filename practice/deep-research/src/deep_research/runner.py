@@ -30,12 +30,23 @@ class ThreadView:
 
 class DeepResearch:
     def __init__(self, settings: Settings, graph=None):
+        """Initialize a synchronous runner backed by a persistent async event loop.
+
+        Args:
+            settings: Runtime settings for services, checkpoints, and tracing.
+            graph: Optional compiled graph; omitted to build the production workflow.
+        """
         self.settings = settings
         self.loop = asyncio.Runner()
         if graph is None:
             Path(settings.checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
 
             async def connect():
+                """Open the SQLite checkpointer inside the runner event loop.
+
+                Returns:
+                    Async SQLite saver using the configured checkpoint path.
+                """
                 return AsyncSqliteSaver(await aiosqlite.connect(settings.checkpoint_path))
 
             checkpointer = self.loop.run(connect())
@@ -50,6 +61,14 @@ class DeepResearch:
         self.graph = graph
 
     def _config(self, thread_id: str) -> dict:
+        """Build execution configuration for a persistent research thread.
+
+        Args:
+            thread_id: Identifier shared by checkpoints and optional tracing.
+
+        Returns:
+            Thread configuration, recursion limit, and optional Langfuse callbacks.
+        """
         return {
             "configurable": {"thread_id": thread_id},
             "recursion_limit": 100,
@@ -57,7 +76,18 @@ class DeepResearch:
         }
 
     def _stream(self, thread_id: str, payload) -> Iterator[tuple[str, dict]]:
-        """Yields ``(node, state update)`` as each node finishes."""
+        """Stream completed graph nodes through the synchronous runner API.
+
+        Expose supervisor rounds while hiding researcher internals. Close the async stream
+        and flush enabled tracing when iteration finishes or fails.
+
+        Args:
+            thread_id: Research thread to start or resume.
+            payload: Initial state, resume command, or None to continue interrupted work.
+
+        Yields:
+            Pairs of node name and state update; human interrupts are read through view.
+        """
         try:
             stream = self.graph.astream(
                 payload, self._config(thread_id), stream_mode="updates", subgraphs=True
@@ -75,11 +105,33 @@ class DeepResearch:
             tracing.flush(self.settings.langfuse_enabled)
 
     def ask(self, thread_id: str, text: str):
-        """Raises ``GuardrailViolation`` before anything is stored when the text is rejected."""
+        """Validate a user message and prepare a new graph turn.
+
+        Args:
+            thread_id: Research thread receiving the message.
+            text: User request or answer to a clarification question.
+
+        Returns:
+            Iterator of node updates; graph execution starts when it is consumed.
+
+        Raises:
+            GuardrailViolation: The message is empty, oversized, or contains a detected credential.
+        """
         return self._stream(thread_id, {"messages": [HumanMessage(check_input(text))]})
 
     def resume(self, thread_id: str, decision: dict):
-        """Raises ``GuardrailViolation`` when the reviewer's feedback, topics or criteria are rejected."""
+        """Validate a human review decision and prepare to resume the waiting graph.
+
+        Args:
+            thread_id: Research thread waiting at a review interrupt.
+            decision: Approval, feedback, and optional edited topics or criteria.
+
+        Returns:
+            Iterator of node updates after the review decision.
+
+        Raises:
+            GuardrailViolation: Feedback, topics, or criteria fail input validation.
+        """
         decision = dict(decision)
         if decision.get("feedback"):
             decision["feedback"] = check_input(decision["feedback"])
@@ -89,9 +141,25 @@ class DeepResearch:
         return self._stream(thread_id, Command(resume=decision))
 
     def continue_run(self, thread_id: str):
+        """Continue checkpointed work after a run stopped before completion.
+
+        Args:
+            thread_id: Research thread whose pending graph work should continue.
+
+        Returns:
+            Iterator of node updates from the saved execution point.
+        """
         return self._stream(thread_id, None)
 
     def view(self, thread_id: str) -> ThreadView:
+        """Read saved thread state and distinguish human review from unfinished work.
+
+        Args:
+            thread_id: Research thread to inspect.
+
+        Returns:
+            Thread values, first pending review payload, and unfinished-run flag.
+        """
         snapshot = self.loop.run(self.graph.aget_state({"configurable": {"thread_id": thread_id}}))
         pending = snapshot.interrupts[0].value if snapshot.interrupts else None
         return ThreadView(snapshot.values, pending, unfinished=bool(snapshot.next) and pending is None)

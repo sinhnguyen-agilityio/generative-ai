@@ -10,10 +10,28 @@ from dotenv import load_dotenv
 
 
 def _env(name: str, default: str = "") -> str:
+    """Read an environment value and strip surrounding whitespace.
+
+    Args:
+        name: Environment variable name.
+        default: Value used when the variable is absent.
+
+    Returns:
+        Stripped environment value or default.
+    """
     return os.getenv(name, default).strip()
 
 
 def _flag(name: str, default: bool = False) -> bool:
+    """Read a boolean environment flag using the supported truthy values.
+
+    Args:
+        name: Environment variable name.
+        default: Boolean used when the variable is absent.
+
+    Returns:
+        True for 1, true, yes, or on, ignoring case; otherwise False.
+    """
     return _env(name, str(default)).lower() in {"1", "true", "yes", "on"}
 
 
@@ -30,6 +48,19 @@ class ModelSpec:
 
     @classmethod
     def from_env(cls, tier: str, timeout: float) -> ModelSpec:
+        """Load the primary and fallback configuration for a model tier.
+
+        Args:
+            tier: Tier suffix such as REASONING or STANDARD.
+            timeout: Default request timeout in seconds.
+
+        Returns:
+            Model specification from INTELLIGENCE_<tier>_* variables.
+
+        Raises:
+            ValueError: The required model is missing or a numeric setting is invalid.
+            json.JSONDecodeError: Model keyword arguments are not valid JSON.
+        """
         prefix = f"INTELLIGENCE_{tier}_"
         model = _env(prefix + "MODEL")
         if not model:
@@ -66,6 +97,11 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        """Load application settings without overriding existing environment variables.
+
+        Returns:
+            Settings for model tiers, search, storage, limits, and tracing.
+        """
         load_dotenv(override=False)
         return cls(
             reasoning=ModelSpec.from_env("REASONING", timeout=120),

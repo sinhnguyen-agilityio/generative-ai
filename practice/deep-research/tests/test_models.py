@@ -7,6 +7,7 @@ from deep_research.state import SafetyVerdict
 
 
 def test_groq_structured_output_uses_a_strict_json_schema_not_a_tool():
+    """Verify Groq schema output uses strict JSON configuration rather than a forced tool call."""
     runnable = _structured(ChatGroq(model="openai/gpt-oss-20b", api_key="test-key"), SafetyVerdict)
     bound = runnable.first.kwargs  # nothing is sent
     assert "tools" not in bound

@@ -13,24 +13,51 @@ from deep_research.state import ClarifyWithUser, FollowUp, ResearchBrief, Resear
 
 class ScopeAgent:
     def __init__(self, llm):
+        """Configure structured models for clarification, brief writing, and follow-up triage.
+
+        Args:
+            llm: Model tier used for research scoping.
+        """
         self.clarifier = llm.structured(ClarifyWithUser)
         self.brief_writer = llm.structured(ResearchBrief)
         self.triager = llm.structured(FollowUp)
 
     def clarify(self, state: ResearchState):
+        """Decide whether the conversation needs clarification before research begins.
+
+        Args:
+            state: Conversation messages containing the request and any prior clarification.
+
+        Returns:
+            Clarification flag and an assistant question or confirmation message.
+        """
         prompt = CLARIFY_PROMPT.format(date=today(), messages=get_buffer_string(state["messages"]))
         result = self.clarifier.invoke(prompt)
         reply = result.question if result.need_clarification else result.verification
         return {"needs_clarification": result.need_clarification, "messages": [AIMessage(reply)]}
 
     def write_brief(self, state: ResearchState):
+        """Convert the conversation into a research brief and acceptance criteria.
+
+        Args:
+            state: Conversation defining the research request.
+
+        Returns:
+            Brief text and nonempty, stripped acceptance criteria.
+        """
         prompt = BRIEF_PROMPT.format(date=today(), messages=get_buffer_string(state["messages"]))
         result = self.brief_writer.invoke(prompt)
         return {"brief": result.brief, "criteria": [c.strip() for c in result.criteria if c.strip()]}
 
     def triage(self, state: ResearchState):
-        """A follow-up that only changes the presentation goes to the writer; one that needs facts
-        the report does not have goes to the supervisor first."""
+        """Classify report feedback as new research or a rewrite using existing evidence.
+
+        Args:
+            state: Brief, approved plan, current report, and reviewer feedback.
+
+        Returns:
+            Research request and reset supervisor counter when facts are needed; otherwise an empty request.
+        """
         prompt = TRIAGE_PROMPT.format(
             brief=state["brief"],
             plan=bullets(state["plan"]),

@@ -32,12 +32,30 @@ CHECK = ReportCheck(
 
 
 def state(fix_rounds):
+    """Build report verification state at the requested correction round.
+
+    Args:
+        fix_rounds: Number of writer corrections already attempted.
+
+    Returns:
+        Brief, criteria, report, source notes, and fix counter.
+    """
     report = with_sources("# Costs\nGemini is $0.30 [1]. It is cheap [2].", SOURCES)
     return {"brief": "Compare costs.", "criteria": ["Price?", "Speed?"], "report": report, "notes": NOTES, "fix_rounds": fix_rounds}
 
 
 def verifier(check, prompts=None):
+    """Build a verifier with a scripted judge and optional prompt recording.
+
+    Args:
+        check: Structured verdict or exception to return from the judge.
+        prompts: Optional list receiving judge prompts.
+
+    Returns:
+        VerifierAgent backed by a fake model tier.
+    """
     def judge(prompt):
+        """Capture the verification prompt and return or raise the configured verdict."""
         if prompts is not None:
             prompts.append(prompt)
         if isinstance(check, Exception):
@@ -48,6 +66,7 @@ def verifier(check, prompts=None):
 
 
 def test_parse_and_remove_keep_markup_and_drop_emptied_sections():
+    """Verify that parse and remove keep markup and drop emptied sections."""
     body = "\n".join(
         [
             "# Title", "## Costs", "- Gemini is $0.30 [1]. It is cheap [2].", "| A | B |", "|---|---|",
@@ -69,6 +88,7 @@ def test_parse_and_remove_keep_markup_and_drop_emptied_sections():
 
 
 def test_problems_go_back_to_the_writer_with_the_evidence_of_the_cited_sources_only():
+    """Verify that problems go back to the writer with the evidence of the cited sources only."""
     prompts = []
     result = verifier(CHECK, prompts).verify(state(fix_rounds=0), CONFIG)
     assert result == {
@@ -84,6 +104,7 @@ def test_problems_go_back_to_the_writer_with_the_evidence_of_the_cited_sources_o
 
 
 def test_after_two_fix_rounds_unsupported_sentences_are_deleted_and_sources_rebuilt():
+    """Verify that after two fix rounds unsupported sentences are deleted and sources rebuilt."""
     result = verifier(CHECK).verify(state(fix_rounds=2), CONFIG)
     assert result == {
         "report": "# Costs\nGemini is $0.30 [1].\n\n## Sources\n[1] Gemini pricing: https://a",
@@ -92,19 +113,23 @@ def test_after_two_fix_rounds_unsupported_sentences_are_deleted_and_sources_rebu
 
 
 def test_a_passing_report_is_kept_as_it_is():
+    """Verify that a passing report is kept as it is."""
     passed = ReportCheck(sentences=[SentenceVerdict(sentence=1, verdict="no_claim", problem="")], criteria=[])
     result = verifier(passed).verify(state(fix_rounds=0), CONFIG)
     assert result == {"report": state(0)["report"], "verification": {"support": 1.0, "rounds": 0, "removed": [], "unmet": []}}
 
 
 def test_a_failed_check_is_recorded_not_raised():
+    """Verify that a failed check is recorded not raised."""
     assert verifier(RuntimeError("judge down")).verify(state(0), CONFIG) == {"verification": {"error": "RuntimeError: judge down"}}
 
 
 def test_the_graph_fixes_twice_then_hands_the_report_to_review(tmp_path):
+    """Verify that the graph fixes twice then hands the report to review."""
     prompts, reports = [], count(1)
 
     def writer(prompt):
+        """Record writer prompts and return a newly numbered report draft."""
         prompts.append(prompt)
         return f"# Report v{next(reports)}"
 

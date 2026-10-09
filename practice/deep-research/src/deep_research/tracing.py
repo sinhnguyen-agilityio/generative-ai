@@ -8,14 +8,29 @@ logger = logging.getLogger(__name__)
 
 
 def _trace_id(thread_id: str) -> str:
+    """Derive a stable Langfuse trace identifier from a research thread.
+
+    Args:
+        thread_id: Research thread identifier.
+
+    Returns:
+        Deterministic trace ID shared by all turns of the thread.
+    """
     from langfuse import Langfuse
 
     return Langfuse.create_trace_id(seed=thread_id)
 
 
 def langfuse_config(enabled: bool, thread_id: str) -> dict:
-    """Callbacks and metadata to merge into the graph config. Every turn of the thread (start,
-    resume after review) lands in the same trace and session."""
+    """Build Langfuse callbacks and metadata for a shared thread trace.
+
+    Args:
+        enabled: Whether tracing is enabled.
+        thread_id: Thread identifier used as trace seed and session ID.
+
+    Returns:
+        Callbacks and metadata, or an empty dictionary when disabled.
+    """
     if not enabled:
         return {}
     from langfuse import get_client
@@ -27,6 +42,15 @@ def langfuse_config(enabled: bool, thread_id: str) -> dict:
 
 
 def score(enabled: bool, thread_id: str, name: str, value: float, comment: str = "") -> None:
+    """Record a named score on the thread trace without failing research on score errors.
+
+    Args:
+        enabled: Whether tracing is enabled.
+        thread_id: Research thread receiving the score.
+        name: Metric name.
+        value: Numeric metric value.
+        comment: Optional explanation attached to the score.
+    """
     if not enabled:
         return
     try:
@@ -40,6 +64,11 @@ def score(enabled: bool, thread_id: str, name: str, value: float, comment: str =
 
 
 def flush(enabled: bool) -> None:
+    """Flush queued Langfuse events when tracing is enabled.
+
+    Args:
+        enabled: Whether to flush the Langfuse client.
+    """
     if enabled:
         from langfuse import get_client
 

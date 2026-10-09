@@ -28,6 +28,17 @@ class TavilySearch:
     """Calls the ``tavily_search`` tool of Tavily's streamable-HTTP MCP server."""
 
     def __init__(self, url: str, api_key: str, max_results: int = 5, timeout: float = 30.0):
+        """Configure the Tavily MCP endpoint and search request limits.
+
+        Args:
+            url: Base streamable-HTTP MCP URL.
+            api_key: Tavily credential added to the endpoint URL.
+            max_results: Maximum requested results per query.
+            timeout: Tool read timeout in seconds.
+
+        Raises:
+            ValueError: The API key is empty.
+        """
         if not api_key:
             raise ValueError("TAVILY_API_KEY is required")
         self._url = f"{url.rstrip('/')}/?{urlencode({'tavilyApiKey': api_key})}"
@@ -35,6 +46,14 @@ class TavilySearch:
         self.timeout = timeout
 
     async def _call(self, query: str):
+        """Open an MCP session and execute one Tavily search request.
+
+        Args:
+            query: Web search query.
+
+        Returns:
+            MCP tool result containing structured data or text content.
+        """
         async with streamable_http_client(self._url) as (read, write, *_):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -46,7 +65,21 @@ class TavilySearch:
                 )
 
     async def search(self, query: str) -> list[dict]:
-        """Results as ``{url, title, content, raw_content, score}`` dicts."""
+        """Search Tavily and normalize usable result records.
+
+        Transport errors are replaced with a clean message so the credential-bearing
+        endpoint URL is not exposed through the original exception.
+
+        Args:
+            query: Web search query.
+
+        Returns:
+            Result dictionaries with url, title, content, raw_content, and score.
+
+        Raises:
+            RuntimeError: The MCP request fails.
+            json.JSONDecodeError: Text-only tool content is not valid JSON.
+        """
         try:
             result = await self._call(query)
         except Exception as exc:
@@ -75,7 +108,14 @@ class TavilySearch:
 
 
 def normalize_url(url: str) -> str:
-    """One key per page: no fragment, no utm_* parameters, no trailing slash, lower-case host."""
+    """Normalize page identity by removing fragments, tracking parameters, and trailing slashes.
+
+    Args:
+        url: Page URL, possibly with whitespace or tracking parameters.
+
+    Returns:
+        URL with lowercase scheme/host and non-utm query parameters preserved.
+    """
     parts = urlsplit(url.strip())
     params = [(k, v) for k, v in parse_qsl(
         parts.query, keep_blank_values=True) if not k.lower().startswith("utm_")]
@@ -83,7 +123,14 @@ def normalize_url(url: str) -> str:
 
 
 def clean(text: str) -> str:
-    """Drop page noise: blank and repeated lines, link-only lines, short menu items, cookie banners."""
+    """Remove repeated lines and common navigation, link, and banner noise.
+
+    Args:
+        text: Raw page text to clean.
+
+    Returns:
+        Remaining content joined with newlines in its original order.
+    """
     seen, kept = set(), []
     for line in text.splitlines():
         s = line.strip()
@@ -99,9 +146,14 @@ def clean(text: str) -> str:
 
 
 def prepare_pages(results: list[dict]) -> list[dict]:
-    """Search results as pages ``{url, title, text, snippet, full_text, score}``. A page whose
-    cleaned text is too short falls back to Tavily's snippet; a result with too little text is dropped,
-    and so is a result whose normalized URL an earlier result already has."""
+    """Prepare unique usable pages, falling back to snippets when cleaned text is too short.
+
+    Args:
+        results: Normalized search results with raw_content, content, URL, title, and score.
+
+    Returns:
+        Pages with url, title, text, snippet, full_text, and score; short results are dropped.
+    """
     pages = {}
     for result in results:
         url = normalize_url(result["url"])
@@ -119,7 +171,18 @@ def prepare_pages(results: list[dict]) -> list[dict]:
 
 
 def format_passages(passages: list[dict], sources: dict[str, dict]) -> str:
-    """Passages grouped by page, each page headed by its source number."""
+    """Group passages by URL and label each page with its source number.
+
+    Separate passages of one page with ellipses and pages with a Markdown rule.
+    The full-text label describes the source metadata, not the length of the displayed excerpt.
+
+    Args:
+        passages: URL/text passages in the order they should be displayed.
+        sources: Registry keyed by URL with id, title, and full_text metadata for each passage.
+
+    Returns:
+        Citation-numbered evidence text, or "No results." when there are no passages.
+    """
     grouped: dict[str, list[str]] = {}
     for passage in passages:
         grouped.setdefault(passage["url"], []).append(passage["text"])
@@ -133,6 +196,15 @@ def format_passages(passages: list[dict], sources: dict[str, dict]) -> str:
 
 
 def _embeddings(model: str, provider: str):
+    """Initialize the embedding client for the configured provider.
+
+    Args:
+        model: Embedding model identifier.
+        provider: openai selects OpenAI; other values select Google GenAI.
+
+    Returns:
+        LangChain embedding client.
+    """
     if provider == "openai":
         from langchain_openai import OpenAIEmbeddings
 
@@ -146,6 +218,13 @@ class PageStore:
     """Result pages in a local Chroma collection, chunked and embedded, searchable per run."""
 
     def __init__(self, path: str, model: str, provider: str):
+        """Open a persistent Chroma collection and configure embeddings and page chunking.
+
+        Args:
+            path: Directory for the local Chroma database.
+            model: Embedding model determining the collection and vector dimensions.
+            provider: Embedding provider used to create the client and collection name.
+        """
         import chromadb
 
         Path(path).mkdir(parents=True, exist_ok=True)
@@ -159,6 +238,16 @@ class PageStore:
             chunk_size=1000, chunk_overlap=100)
 
     def add(self, pages: list[dict], *, run_id: str, topic: str) -> None:
+        """Chunk and embed pages, then upsert them into the current run.
+
+        Chunk IDs depend on run, URL, and chunk index, so repeated pages replace existing
+        chunks with matching IDs even when another topic discovers them.
+
+        Args:
+            pages: Prepared pages including text and source metadata.
+            run_id: Research thread used to isolate indexed evidence.
+            topic: Delegated topic recorded in chunk metadata.
+        """
         ids, texts, metadatas = [], [], []
         for page in pages:
             for i, chunk in enumerate(self._splitter.split_text(page["text"])):
@@ -176,7 +265,17 @@ class PageStore:
                 ids=ids, embeddings=vectors, documents=texts, metadatas=metadatas)
 
     def query(self, text: str, *, run_id: str, urls: list[str], k: int) -> list[dict]:
-        """The ``k`` chunks of these pages most similar to ``text``, as ``{url, text}``."""
+        """Retrieve similar passages from the requested pages of one run.
+
+        Args:
+            text: Query embedded for similarity search.
+            run_id: Thread identifier restricting the collection search.
+            urls: Page URLs eligible for retrieval.
+            k: Maximum returned passages, also subject to the per-URL chunk cap.
+
+        Returns:
+            Up to k URL/text passages in retrieval order.
+        """
         result = self._collection.query(
             query_embeddings=[self._embeddings.embed_query(text)],
             n_results=k * MAX_CHUNKS_PER_URL,

@@ -33,12 +33,28 @@ _LIST_MARK = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)])\s+|>\s*)?")
 
 class VerifierAgent:
     def __init__(self, llm, settings: Settings):
+        """Configure the structured report judge and optional tracing.
+
+        Args:
+            llm: Model tier producing sentence and criterion verdicts.
+            settings: Runtime settings controlling Langfuse tracing.
+        """
         self.judge = llm.structured(ReportCheck)
         self.langfuse = settings.langfuse_enabled
 
     def verify(self, state: ResearchState, config: RunnableConfig):
-        """``verification`` is ``{"issues": [...]}`` when the report goes back to the writer, else
-        ``{"support", "rounds", "removed", "unmet"}``, or ``{"error": ...}`` when the check failed."""
+        """Check cited claims and acceptance criteria, requesting up to two writer corrections.
+
+        After the fix budget is exhausted, remove sentences judged unsupported and rebuild
+        the source list. Judge failures are recorded in state rather than raised.
+
+        Args:
+            state: Brief, report, source notes, acceptance criteria, and current fix count.
+            config: Graph configuration used to attach verification metrics to the thread.
+
+        Returns:
+            Verification issues and incremented fix count, a final report/verification summary, or a recorded error.
+        """
         lines = parse(state["report"].partition(SOURCES_HEADING)[0])
         units = [(i, j, s) for i, (_, sentences) in enumerate(lines) if sentences for j, s in enumerate(sentences)]
         criteria = state.get("criteria") or []
@@ -79,9 +95,17 @@ class VerifierAgent:
 
 
 def parse(body: str) -> list[tuple[str, list[str] | None]]:
-    """Each line as ``(text, sentences)``. Lines that state nothing to check (headings, blank lines,
-    table rules, code blocks) keep their text and have no sentences; for the others the text is the
-    list marker and the sentences follow it. A table row is one sentence."""
+    """Split a Markdown body into verifiable sentences while preserving structural lines.
+
+    Headings, blank lines, table rules, and fenced code have no sentences. Other lines
+    keep their list marker separately; a table row is treated as one sentence.
+
+    Args:
+        body: Report body without its generated Sources section.
+
+    Returns:
+        Pairs of preserved text/list marker and a sentence list, or None for structural lines.
+    """
     lines, fenced = [], False
     for line in body.splitlines():
         stripped = line.strip()
@@ -98,8 +122,15 @@ def parse(body: str) -> list[tuple[str, list[str] | None]]:
 
 
 def remove(lines: list[tuple[str, list[str] | None]], drop: set[tuple[int, int]]) -> str:
-    """The body without the ``(line, sentence)`` pairs in ``drop``; a line left empty goes, and so
-    does a section left without content."""
+    """Remove selected sentences, empty content lines, and sections left without content.
+
+    Args:
+        lines: Parsed report lines from parse.
+        drop: Zero-based (line index, sentence index) pairs to remove.
+
+    Returns:
+        Rebuilt Markdown body with redundant blank lines collapsed.
+    """
     kept = []
     for i, (text, sentences) in enumerate(lines):
         if sentences is None:
@@ -118,7 +149,16 @@ def remove(lines: list[tuple[str, list[str] | None]], drop: set[tuple[int, int]]
 
 
 def evidence(units, sources: dict[int, tuple[str, str]], passages: dict[str, list[str]]) -> str:
-    """The passages of every source the sentences cite, under its number."""
+    """Format evidence for the known sources cited by the report sentences.
+
+    Args:
+        units: Indexed sentence tuples (line index, sentence index, text).
+        sources: Global source numbers mapped to (title, URL).
+        passages: Read source passages grouped by URL.
+
+    Returns:
+        Source-numbered passages with placeholders for unread sources, or "None.".
+    """
     cited = sorted({int(n) for _, _, s in units for n in CITATION.findall(s)} & sources.keys())
     blocks = []
     for n in cited:

@@ -9,9 +9,22 @@ from deep_research.state import ResearchPlan, ResearchState
 
 class PlannerAgent:
     def __init__(self, llm):
+        """Configure the structured model for producing research topics.
+
+        Args:
+            llm: Model tier used to create and revise research plans.
+        """
         self.llm = llm.structured(ResearchPlan)
 
     def plan(self, state: ResearchState):
+        """Create a research plan or revise the current topics using reviewer feedback.
+
+        Args:
+            state: Research brief and optional existing plan with revision feedback.
+
+        Returns:
+            Topic list and cleared plan feedback.
+        """
         revision = ""
         if state.get("plan_feedback"):
             revision = PLAN_REVISION.format(plan=bullets(state["plan"]), feedback=state["plan_feedback"])

@@ -31,7 +31,17 @@ class GuardrailViolation(ValueError):
 
 
 def check_input(text: str) -> str:
-    """Return the normalized text, or raise ``GuardrailViolation``."""
+    """Normalize user text and reject empty, oversized, or credential-bearing input.
+
+    Args:
+        text: Request, review feedback, topic, or criterion to validate.
+
+    Returns:
+        Stripped NFKC-normalized text with invisible/control characters removed.
+
+    Raises:
+        GuardrailViolation: Input is empty, exceeds MAX_INPUT_CHARS, or matches a credential pattern.
+    """
     text = _INVISIBLE.sub("", unicodedata.normalize("NFKC", text or "")).strip()
     if not text:
         raise GuardrailViolation("The message is empty.")
@@ -44,9 +54,22 @@ def check_input(text: str) -> str:
 
 class GuardrailAgent:
     def __init__(self, llm):
+        """Configure the structured safety classifier.
+
+        Args:
+            llm: Model tier producing a SafetyVerdict.
+        """
         self.llm = llm.structured(SafetyVerdict)
 
     def check(self, state: ResearchState):
+        """Classify the latest request and remove it from the thread when blocked.
+
+        Args:
+            state: Conversation containing the latest user message.
+
+        Returns:
+            Blocked flag and, for rejected requests, message removal plus an assistant notice.
+        """
         message = state["messages"][-1]
         verdict = self.llm.invoke(GUARDRAIL_PROMPT.format(message=message.text))
         if verdict.allowed:

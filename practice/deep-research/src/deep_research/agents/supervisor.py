@@ -22,6 +22,13 @@ from deep_research.state import ConductResearch, ResearchComplete, SupervisorInp
 
 class SupervisorAgent:
     def __init__(self, llm, researcher: ResearcherAgent, settings: Settings):
+        """Bind supervisor tools, retain research limits, and compile the supervision subgraph.
+
+        Args:
+            llm: Model tier for delegation, reflection, and completion decisions.
+            researcher: Agent executing each delegated topic independently.
+            settings: Prompt concurrency guidance and enforced supervisor model-turn limit.
+        """
         self.llm = llm.tools([ConductResearch, ResearchComplete, Think])
         self.researcher = researcher
         self.max_topics_per_round = settings.max_concurrent_researchers
@@ -97,7 +104,11 @@ class SupervisorAgent:
         return {"supervisor_messages": replies, "notes": list(notes.values())}
 
     def _build(self):
-        """Return the supervisor/tools subgraph with parent checkpoint inheritance."""
+        """Compile the supervisor/tool loop with parent checkpoint inheritance.
+
+        Returns:
+            Supervisor subgraph accepting shared inputs and returning new notes and conversation state.
+        """
         builder = StateGraph(SupervisorState, input_schema=SupervisorInput, output_schema=SupervisorOutput)
         builder.add_node("supervisor", self.supervisor)
         builder.add_node("supervisor_tools", self.supervisor_tools)

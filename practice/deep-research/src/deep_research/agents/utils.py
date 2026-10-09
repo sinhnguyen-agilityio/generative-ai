@@ -12,23 +12,50 @@ SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
 def today() -> str:
+    """Return the local date in the format used by research prompts.
+
+    Returns:
+        Date formatted as abbreviated weekday, month, day, and year.
+    """
     return datetime.now().strftime("%a %b %d, %Y")
 
 
 def bullets(items: list[str]) -> str:
+    """Format strings as Markdown bullet lines.
+
+    Args:
+        items: Items to render without altering their contents.
+
+    Returns:
+        Bullet list, or an empty string for no items.
+    """
     return "\n".join(f"- {item}" for item in items)
 
 
 def thread_id(config: RunnableConfig) -> str:
+    """Read the research thread identifier from graph configuration.
+
+    Args:
+        config: Runnable configuration containing configurable.thread_id.
+
+    Returns:
+        Thread identifier used for storage and tracing.
+    """
     return config["configurable"]["thread_id"]
 
 
 def merge_notes(notes: list[dict]) -> tuple[str, dict[int, tuple[str, str]]]:
-    """Join the topic notes with one numbering for the whole run.
+    """Join topic notes and assign one citation number per URL across the run.
 
-    Every topic note numbers its sources from [1]; here each URL gets one run-wide number and the
-    note's citations are rewritten to it. The numbers come from each note's ``sources`` data, never
-    from its text. Returns the joined reports and ``{number: (title, url)}``."""
+    Rewrite local citations from source metadata rather than parsing source lists from
+    report text. Unknown local citation numbers are removed.
+
+    Args:
+        notes: Topic notes with report text and local source registries.
+
+    Returns:
+        Joined reports and a mapping from global source number to (title, URL).
+    """
     numbers: dict[str, int] = {}
     sources: dict[int, tuple[str, str]] = {}
     merged = []
@@ -42,7 +69,14 @@ def merge_notes(notes: list[dict]) -> tuple[str, dict[int, tuple[str, str]]]:
 
 
 def passages_by_url(notes: list[dict]) -> dict[str, list[str]]:
-    """The passages the researchers were shown, per cited URL, each passage once."""
+    """Collect unique source passages from topic notes, grouped by URL.
+
+    Args:
+        notes: Topic notes carrying cited source metadata and passages.
+
+    Returns:
+        URL-to-passages mapping preserving first-seen order.
+    """
     passages: dict[str, dict[str, None]] = {}
     for note in notes:
         for source in note["sources"]:

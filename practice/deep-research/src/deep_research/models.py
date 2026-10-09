@@ -9,6 +9,17 @@ from deep_research.config import ModelSpec
 
 
 def _create(model: str, provider: str | None, timeout: float, kwargs: dict):
+    """Initialize a chat model with provider options and compatible reasoning/tool support.
+
+    Args:
+        model: Chat model identifier.
+        provider: Optional LangChain provider name.
+        timeout: Request timeout in seconds.
+        kwargs: Additional provider-specific model options.
+
+    Returns:
+        Configured chat model; reasoning-enabled OpenAI models may use the Responses API.
+    """
     args = {"timeout": timeout, **kwargs}
     if provider:
         args["model_provider"] = provider
@@ -22,6 +33,15 @@ def _create(model: str, provider: str | None, timeout: float, kwargs: dict):
 def _structured(llm, schema):
     # gpt-oss on Groq may rename the tool it must call ("safetyVerdict"), and Groq rejects the
     # call; Groq's structured outputs constrain the JSON to the schema instead (strict for gpt-oss).
+    """Configure schema-constrained output, using strict JSON schema for Groq.
+
+    Args:
+        llm: Chat model to configure.
+        schema: Output schema accepted by the model integration.
+
+    Returns:
+        Runnable producing structured results.
+    """
     if llm._llm_type == "groq-chat":
         return llm.with_structured_output(schema, method="json_schema", strict=True)
     return llm.with_structured_output(schema)
@@ -31,6 +51,11 @@ class Tier:
     """A primary chat model plus an optional fallback, tried in that order."""
 
     def __init__(self, spec: ModelSpec):
+        """Initialize the primary model and optional fallback for a tier.
+
+        Args:
+            spec: Model identifiers, providers, options, and timeout.
+        """
         self.primary = _create(spec.model, spec.provider, spec.timeout, spec.kwargs)
         self.fallback = (
             _create(spec.fallback_model, spec.fallback_provider, spec.timeout, {})
@@ -39,14 +64,43 @@ class Tier:
         )
 
     def _wrap(self, build):
+        """Apply the same runnable configuration to primary and fallback models.
+
+        Args:
+            build: Callable configuring a runnable from a chat model.
+
+        Returns:
+            Configured primary runnable with its fallback when available.
+        """
         runnable = build(self.primary)
         return runnable.with_fallbacks([build(self.fallback)]) if self.fallback else runnable
 
     def structured(self, schema):
+        """Configure structured output for both models in the tier.
+
+        Args:
+            schema: Schema for the model response.
+
+        Returns:
+            Structured-output runnable with optional fallback.
+        """
         return self._wrap(lambda llm: _structured(llm, schema))
 
     def tools(self, tools):
+        """Expose tool schemas to both models in the tier.
+
+        Args:
+            tools: Tool objects or schemas to bind; binding does not execute them.
+
+        Returns:
+            Tool-calling runnable with optional fallback.
+        """
         return self._wrap(lambda llm: llm.bind_tools(tools))
 
     def plain(self):
+        """Return the tier without tool or structured-output configuration.
+
+        Returns:
+            Chat model runnable with optional fallback.
+        """
         return self._wrap(lambda llm: llm)

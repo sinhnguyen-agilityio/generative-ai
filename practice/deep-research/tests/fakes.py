@@ -24,12 +24,35 @@ class FakeTier:
     ``plain`` answer from the messages."""
 
     def __init__(self, structured: dict, tools=None, plain=None):
+        """Store scripted structured, tool-calling, and plain responses.
+
+        Args:
+            structured: Schema-name mapping to values, exceptions, or response callables.
+            tools: Optional callable generating tool-calling messages.
+            plain: Optional callable generating plain response text.
+        """
         self._structured = structured
         self._tools = tools
         self._plain = plain
 
     def structured(self, schema):
+        """Build a runnable returning the configured result for the requested schema.
+
+        Args:
+            schema: Output schema selecting a scripted response by class name.
+
+        Returns:
+            Runnable evaluating the response callable or raising the configured exception.
+        """
         def answer(prompt):
+            """Resolve the scripted schema response for this prompt.
+
+            Args:
+                prompt: Input passed to an optional response callable.
+
+            Returns:
+                Configured value or callable result.
+            """
             value = self._structured[schema.__name__]
             if isinstance(value, Exception):
                 raise value
@@ -38,13 +61,36 @@ class FakeTier:
         return RunnableLambda(answer)
 
     def tools(self, _tools):
+        """Return the scripted tool-calling model without binding real tool schemas.
+
+        Args:
+            _tools: Production tool definitions accepted for API compatibility.
+
+        Returns:
+            Runnable using the configured tool-response callable.
+        """
         return RunnableLambda(self._tools)
 
     def plain(self):
+        """Wrap scripted plain text as an assistant message.
+
+        Returns:
+            Runnable returning an AIMessage from the configured text callable.
+        """
         return RunnableLambda(lambda prompt: AIMessage(self._plain(prompt)))
 
 
 def call(name: str, args: dict, call_id: str) -> dict:
+    """Build a LangChain tool-call record for a scripted model.
+
+    Args:
+        name: Tool name.
+        args: Tool argument dictionary.
+        call_id: Identifier linking the call to its reply.
+
+    Returns:
+        Tool-call dictionary with name, args, id, and type.
+    """
     return {"name": name, "args": args, "id": call_id, "type": "tool_call"}
 
 
@@ -60,6 +106,14 @@ def supervisor(messages):
 
 
 def researcher(messages):
+    """Request one web search, then finish after receiving its tool reply.
+
+    Args:
+        messages: Researcher conversation used to determine whether search has completed.
+
+    Returns:
+        Scripted WebSearch call or a final assistant message.
+    """
     if isinstance(messages[-1], ToolMessage):
         return AIMessage("enough")
     return AIMessage("", tool_calls=[call("WebSearch", {"query": "q"}, "s1")])
@@ -71,15 +125,39 @@ SNIPPET = "Gemini Flash input costs $0.30 per million tokens and output costs $2
 
 
 def result(url="https://example.com/a", raw_content=PAGE, content=SNIPPET):
+    """Build a normalized search result with configurable page text and snippet.
+
+    Args:
+        url: Result page URL.
+        raw_content: Full page content supplied by the fake search.
+        content: Fallback search snippet.
+
+    Returns:
+        Search result dictionary matching the TavilySearch contract.
+    """
     return {"url": url, "title": f"Page {url[-1]}", "content": content, "raw_content": raw_content, "score": 0.9}
 
 
 class FakeSearch:
     def __init__(self, results=None, error=None):
+        """Configure deterministic search results or a simulated failure.
+
+        Args:
+            results: Result records; None selects the default example page.
+            error: Optional exception raised by search.
+        """
         self.results = [result()] if results is None else results
         self.error = error
 
     async def search(self, query):
+        """Return configured results or raise the simulated search error.
+
+        Args:
+            query: Search query accepted for backend compatibility.
+
+        Returns:
+            Configured result list.
+        """
         if self.error:
             raise self.error
         return self.results
@@ -89,15 +167,38 @@ class FakeStore:
     """Keeps added page texts; ``query`` returns the first characters of each requested page."""
 
     def __init__(self, fail=False):
+        """Initialize recorded indexing/query calls and optional indexing failure.
+
+        Args:
+            fail: Whether add should simulate a store failure.
+        """
         self.added, self.queries, self.pages, self.fail = [], [], {}, fail
 
     def add(self, pages, *, run_id, topic):
+        """Record indexing metadata and retain page text by run and URL.
+
+        Args:
+            pages: Prepared result pages.
+            run_id: Thread identifier isolating stored pages.
+            topic: Delegated topic recorded with the indexing call.
+        """
         if self.fail:
             raise RuntimeError("chroma down")
         self.added.append((run_id, topic))
         self.pages.update({(run_id, p["url"]): p["text"] for p in pages})
 
     def query(self, text, *, run_id, urls, k):
+        """Record retrieval and return the first 1,000 characters of each selected page.
+
+        Args:
+            text: Query recorded for assertions.
+            run_id: Thread identifying the stored pages.
+            urls: Requested page URLs in return order.
+            k: Maximum passages to return.
+
+        Returns:
+            URL/text passages from the fake store.
+        """
         self.queries.append(text)
         return [{"url": url, "text": self.pages[(run_id, url)][:1000]} for url in urls][:k]
 
@@ -113,6 +214,16 @@ TOPIC_REPORT = TopicReport(
 def fake_scorer(scores):
     """Stands in for the RAGAS scorer: returns ``scores``, or raises it when it is an exception."""
     def score(brief, report, contexts):
+        """Return fixed evaluation scores or raise the configured exception.
+
+        Args:
+            brief: Brief accepted for scorer compatibility.
+            report: Report accepted for scorer compatibility.
+            contexts: Evidence accepted for scorer compatibility.
+
+        Returns:
+            Configured metric dictionary.
+        """
         if isinstance(scores, Exception):
             raise scores
         return scores
