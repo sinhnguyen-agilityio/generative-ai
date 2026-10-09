@@ -1,11 +1,19 @@
 """Offline end-to-end tests of the research graph with scripted models, search and store."""
 
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
+import aiosqlite
 import pytest
 
+from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+from deep_research.agents.supervisor import SupervisorAgent
+from deep_research.config import ModelSpec, Settings
 from deep_research.agents.guardrail import GuardrailViolation, check_input
-from tests.fakes import make_app
+from tests.fakes import FakeTier, call, make_app, supervisor
 
 
 def drain(stream):
@@ -40,7 +48,7 @@ def test_full_run_with_plan_and_report_review(tmp_path):
     assert Path(view.values["published_path"]).read_text(encoding="utf-8") == "# Report v2"
 
 
-def test_the_approved_plan_is_researched_as_it_is_before_the_supervisor_model_runs(tmp_path):
+def test_supervisor_model_receives_and_delegates_the_approved_plan(tmp_path):
     topics = [f"topic {c}" for c in "ABCDE"]
     app, store = make_app(tmp_path, topics=topics)
     drain(app.ask("t6", "Research X"))
@@ -50,9 +58,9 @@ def test_the_approved_plan_is_researched_as_it_is_before_the_supervisor_model_ru
     values = app.view("t6").values
     first, plan_round, *reports, review = values["supervisor_messages"]
     assert [c["args"]["research_topic"] for c in plan_round.tool_calls] == edited  # all five, unchanged
-    assert [m.type for m in reports] == ["tool"] * 5  # every topic reported before the model's turn
+    assert [m.type for m in reports] == ["tool"] * 5  # every topic reported before the review turn
     assert review.tool_calls[0]["name"] == "ResearchComplete"
-    assert values["supervisor_iterations"] == 1  # the plan round is not a model turn
+    assert values["supervisor_iterations"] == 2  # initial delegation and review are both model turns
     assert len(values["notes"]) == 5 and len(store.added) == 5
 
 
@@ -126,3 +134,109 @@ def test_rejected_input_is_never_stored(tmp_path):
     with pytest.raises(GuardrailViolation):
         app.resume("t5", {"approved": False, "feedback": "use token=abcdefgh12345"})
     assert app.view("t5").pending["type"] == "plan"
+
+
+def test_supervisor_resumes_failed_review_without_repeating_research(tmp_path):
+    calls = 0
+
+    def fail_once(messages):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("Supervisor temporarily unavailable")
+        return supervisor(messages)
+
+    app, store = make_app(tmp_path, supervisor_model=fail_once)
+    drain(app.ask("resume-supervisor", "Research X"))
+    with pytest.raises(RuntimeError, match="temporarily unavailable"):
+        drain(app.resume("resume-supervisor", {"approved": True}))
+    assert app.view("resume-supervisor").unfinished
+    assert len(store.added) == 2
+
+    drain(app.continue_run("resume-supervisor"))
+    view = app.view("resume-supervisor")
+    assert view.pending["type"] == "report"
+    assert len(store.added) == len(view.values["notes"]) == 2
+    assert calls == 3
+
+
+def test_supervisor_stops_at_the_iteration_limit(tmp_path):
+    turns = 0
+
+    def review(messages):
+        nonlocal turns
+        turns += 1
+        return AIMessage("", tool_calls=[call("Think", {"reflection": "Reviewing evidence"}, f"think-{turns}")])
+
+    app, _ = make_app(tmp_path, supervisor_model=review)
+    drain(app.ask("agent-stop", "Research X"))
+    drain(app.resume("agent-stop", {"approved": True}))
+    assert turns == 6
+    assert app.view("agent-stop").pending["type"] == "report"
+
+
+def test_async_sqlite_checkpoint_preserves_follow_up_notes(tmp_path):
+    app, store = make_app(tmp_path)
+    async def checkpoint():
+        return AsyncSqliteSaver(await aiosqlite.connect(str(tmp_path / "checkpoints.sqlite3")))
+
+    app.graph.checkpointer = app.loop.run(checkpoint())
+    try:
+        drain(app.ask("sqlite", "Research X"))
+        drain(app.resume("sqlite", {"approved": True}))
+        drain(app.resume("sqlite", {"approved": False, "feedback": "Research pricing too"}))
+        assert len(app.view("sqlite").values["notes"]) == len(store.added) == 3
+    finally:
+        app.loop.run(app.graph.checkpointer.conn.close())
+        app.loop.close()
+
+
+def test_supervisor_runs_all_delegated_topics_concurrently():
+    active = peak = 0
+
+    async def research(topic):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return {"report": topic, "sources": []}
+
+    settings = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"))
+    agent = SupervisorAgent(FakeTier({}, tools=supervisor), SimpleNamespace(research=research), settings)
+    topics = [f"topic-{i}" for i in range(5)]
+    message = AIMessage("", tool_calls=[call("ConductResearch", {"research_topic": t}, t) for t in topics])
+    result = asyncio.run(agent.supervisor_tools({"supervisor_messages": [message]}))
+    assert peak == 5
+    assert [note["report"] for note in result["notes"]] == topics
+    assert [m.tool_call_id for m in result["supervisor_messages"]] == topics
+
+
+def test_supervisor_without_initial_plan_thinks_before_delegating():
+    seen = []
+
+    def model(messages):
+        seen.append(messages)
+        if not isinstance(messages[-1], ToolMessage):
+            return AIMessage("", tool_calls=[call("Think", {"reflection": "Research the main question"}, "plan")])
+        if messages[-1].name == "Think":
+            return AIMessage("", tool_calls=[call("ConductResearch", {"research_topic": "Research X"}, "research")])
+        return AIMessage("", tool_calls=[call("ResearchComplete", {}, "done")])
+
+    async def research(topic):
+        return {"report": topic, "sources": []}
+
+    settings = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"))
+    agent = SupervisorAgent(FakeTier({}, tools=model), SimpleNamespace(research=research), settings)
+    result = asyncio.run(agent.graph.ainvoke({"brief": "Research X"}))
+    assert "<Initial plan>\nNone." in seen[0][-1].text
+    assert "first use Think" in seen[0][0].text
+    assert result["notes"] == [{"report": "Research X", "sources": []}]
+    assert result["supervisor_iterations"] == 3
+
+
+@pytest.mark.parametrize("calls", [[], [call("ResearchComplete", {}, "done")]])
+def test_supervisor_ends_on_model_completion(calls):
+    settings = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"))
+    agent = SupervisorAgent(FakeTier({}, tools=supervisor), None, settings)
+    assert agent.next_step({"supervisor_messages": [AIMessage("", tool_calls=calls)]}) == "__end__"

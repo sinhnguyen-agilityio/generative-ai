@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import sqlite3
+import asyncio
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import aiosqlite
+
 from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 
 from deep_research import tracing
@@ -29,9 +31,14 @@ class ThreadView:
 class DeepResearch:
     def __init__(self, settings: Settings, graph=None):
         self.settings = settings
+        self.loop = asyncio.Runner()
         if graph is None:
             Path(settings.checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
-            checkpointer = SqliteSaver(sqlite3.connect(settings.checkpoint_path, check_same_thread=False))
+
+            async def connect():
+                return AsyncSqliteSaver(await aiosqlite.connect(settings.checkpoint_path))
+
+            checkpointer = self.loop.run(connect())
             graph = build_graph(
                 settings,
                 reasoning=Tier(settings.reasoning),
@@ -52,11 +59,19 @@ class DeepResearch:
     def _stream(self, thread_id: str, payload) -> Iterator[tuple[str, dict]]:
         """Yields ``(node, state update)`` as each node finishes."""
         try:
-            for chunk in self.graph.stream(payload, self._config(thread_id), stream_mode="updates"):
+            stream = self.graph.astream(
+                payload, self._config(thread_id), stream_mode="updates", subgraphs=True
+            )
+            while (item := self.loop.run(anext(stream, None))) is not None:
+                namespace, chunk = item
+                # Expose supervisor rounds for progress, but keep researcher internals private.
+                if namespace and (len(namespace) != 1 or not namespace[0].startswith("supervisor:")):
+                    continue
                 for node, update in chunk.items():
-                    if node != "__interrupt__":
+                    if node != "__interrupt__" and (namespace or node != "supervisor"):
                         yield node, update or {}
         finally:
+            self.loop.run(stream.aclose())
             tracing.flush(self.settings.langfuse_enabled)
 
     def ask(self, thread_id: str, text: str):
@@ -77,6 +92,6 @@ class DeepResearch:
         return self._stream(thread_id, None)
 
     def view(self, thread_id: str) -> ThreadView:
-        snapshot = self.graph.get_state({"configurable": {"thread_id": thread_id}})
+        snapshot = self.loop.run(self.graph.aget_state({"configurable": {"thread_id": thread_id}}))
         pending = snapshot.interrupts[0].value if snapshot.interrupts else None
         return ThreadView(snapshot.values, pending, unfinished=bool(snapshot.next) and pending is None)

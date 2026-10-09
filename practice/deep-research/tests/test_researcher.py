@@ -1,5 +1,7 @@
 """The researcher: search → index → retrieve inside WebSearch, and the topic report checked in code."""
 
+import asyncio
+
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
 
@@ -24,7 +26,7 @@ def run(search=None, store=None, report=TOPIC_REPORT, tools=researcher):
     store = store or FakeStore()
     settings = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"))
     agent = ResearcherAgent(FakeTier({"TopicReport": reporter}, tools=tools), search or FakeSearch(), store, settings)
-    note = RunnableLambda(agent.research).invoke("topic A", {"configurable": {"thread_id": "t"}})
+    note = asyncio.run(RunnableLambda(agent.research).ainvoke("topic A", {"configurable": {"thread_id": "t"}}))
     return render_note(note), seen, store
 
 
@@ -41,7 +43,7 @@ def test_report_has_the_four_criteria_and_code_built_citations():
 def test_cited_sources_carry_the_passages_the_model_saw():
     settings = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"))
     agent = ResearcherAgent(FakeTier({"TopicReport": TOPIC_REPORT}, tools=researcher), FakeSearch(), FakeStore(), settings)
-    note = RunnableLambda(agent.research).invoke("topic A", {"configurable": {"thread_id": "t"}})
+    note = asyncio.run(RunnableLambda(agent.research).ainvoke("topic A", {"configurable": {"thread_id": "t"}}))
     [source] = note["sources"]
     assert source["url"] == "https://example.com/a"
     assert source["passages"] == [PAGE[:1000]]  # the retrieved passage shown to the model
@@ -139,3 +141,39 @@ def test_clean_drops_page_noise_and_keeps_content():
         "Gemini Flash is the fastest model in the family.",
     ])
     assert clean(page) == "## Pricing\nInput price: $0.30 per 1M tokens\nGemini Flash is the fastest model in the family."
+
+
+def test_searches_in_one_turn_run_concurrently():
+    class ParallelSearch(FakeSearch):
+        def __init__(self):
+            super().__init__()
+            self.active = self.peak = 0
+
+        async def search(self, query):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            await asyncio.sleep(0)
+            self.active -= 1
+            return self.results
+
+    def tools(messages):
+        if isinstance(messages[-1], ToolMessage):
+            return AIMessage("enough")
+        return AIMessage("", tool_calls=[call("WebSearch", {"query": q}, q) for q in ("q1", "q2")])
+
+    search = ParallelSearch()
+    notes, seen, _ = run(search=search, tools=tools)
+    assert search.peak == 2
+    assert len(seen) == 2
+    assert "## Status: complete" in notes
+
+
+def test_researcher_decides_when_to_stop_beyond_prompt_budget():
+    def tools(messages):
+        searches = sum(isinstance(m, ToolMessage) and m.name == "WebSearch" for m in messages)
+        if searches == 6:
+            return AIMessage("enough")
+        return AIMessage("", tool_calls=[call("WebSearch", {"query": f"q{searches}"}, f"s{searches}")])
+
+    _, seen, _ = run(tools=tools)
+    assert len(seen) == 6

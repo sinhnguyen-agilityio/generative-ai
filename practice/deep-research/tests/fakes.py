@@ -49,8 +49,11 @@ def call(name: str, args: dict, call_id: str) -> dict:
 
 
 def supervisor(messages):
-    """After the plan round the reports are enough; a reviewer's research request (the last
-    message) gets one follow-up topic."""
+    """Delegate the initial plan, finish after results, and research one follow-up topic."""
+    if isinstance(messages[-1], HumanMessage) and "<Initial plan>" in messages[-1].text:
+        plan = messages[-1].text.split("<Initial plan>")[1].split("</Initial plan>")[0]
+        topics = [line[2:] for line in plan.strip().splitlines() if line.startswith("- ")]
+        return AIMessage("", tool_calls=[call("ConductResearch", {"research_topic": t}, f"plan-{i}") for i, t in enumerate(topics, 1)])
     if isinstance(messages[-1], HumanMessage):
         return AIMessage("", tool_calls=[call("ConductResearch", {"research_topic": "follow-up"}, "more")])
     return AIMessage("", tool_calls=[call("ResearchComplete", {}, "done")])
@@ -76,7 +79,7 @@ class FakeSearch:
         self.results = [result()] if results is None else results
         self.error = error
 
-    def search(self, query):
+    async def search(self, query):
         if self.error:
             raise self.error
         return self.results
@@ -127,7 +130,7 @@ def triage(prompt):
 
 
 def make_app(
-    output_dir: Path, clarify=False, evaluation=None, safe=True, topics=("topic A", "topic B"), check=PASSED, writer=None
+    output_dir: Path, clarify=False, evaluation=None, safe=True, topics=("topic A", "topic B"), check=PASSED, writer=None, supervisor_model=None
 ):
     """A ``DeepResearch`` app on scripted models; returns ``(app, store)``. Reports are
     "# Report v1", "# Report v2", ... in the order they are written, unless ``writer(prompt)``
@@ -141,7 +144,7 @@ def make_app(
             "ReportCheck": check,
             "FollowUp": triage,
         },
-        tools=supervisor,
+        tools=supervisor_model or supervisor,
     )
     reports = count(1)
     verdict = SafetyVerdict(allowed=safe, reason="" if safe else "Asks for weapon instructions.")

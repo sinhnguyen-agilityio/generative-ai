@@ -9,6 +9,7 @@ relevant to its query, numbered by source. The report's status and citations are
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Literal
@@ -40,11 +41,17 @@ class ResearcherAgent:
         self.retrieval_k = settings.retrieval_k
         self.graph = self._build()
 
-    def research(self, topic: str) -> dict:
-        """The topic note (see ``finalize``); a failure is reported as a failed note, not raised."""
+    async def research(self, topic: str) -> dict:
+        """Run an isolated research loop for one delegated topic.
+
+        Args:
+            topic: Standalone research task supplied by the supervisor.
+        Returns:
+            A topic note with findings and sources, or a failed note on error.
+        """
         try:
-            result = self.graph.invoke(
-                {"topic": topic, "researcher_messages": [HumanMessage(topic)], "searches": 0, "sources": {}},
+            result = await self.graph.ainvoke(
+                {"topic": topic, "researcher_messages": [HumanMessage(topic)], "sources": {}},
                 {"recursion_limit": 50},
             )
             return result["notes"]
@@ -54,29 +61,56 @@ class ResearcherAgent:
 
     # ----- graph nodes -----
 
-    def researcher(self, state: ResearcherState):
+    async def researcher(self, state: ResearcherState):
+        """Ask the model to search, reflect, or finish gathering evidence.
+
+        Args:
+            state: Topic and the search/reflection conversation so far.
+        Returns:
+            The model response appended to researcher messages.
+        """
         system = SystemMessage(RESEARCHER_PROMPT.format(date=today(), max_searches=self.max_searches))
-        return {"researcher_messages": [self.llm.invoke([system, *state["researcher_messages"]])]}
+        return {"researcher_messages": [await self.llm.ainvoke([system, *state["researcher_messages"]])]}
 
-    def researcher_tools(self, state: ResearcherState, config: RunnableConfig):
-        searches, sources, replies = state["searches"], dict(state["sources"]), []
-        for call in state["researcher_messages"][-1].tool_calls:
-            if call["name"] == "Think":
+    async def researcher_tools(self, state: ResearcherState, config: RunnableConfig):
+        """Run searches from one model turn concurrently and acknowledge Think.
+
+        Args:
+            state: Latest tool calls and the topic's source registry.
+            config: Graph configuration identifying the research thread.
+        Returns:
+            Tool replies and sources with the passages shown to the researcher.
+        """
+        sources = dict(state["sources"])
+        calls = state["researcher_messages"][-1].tool_calls
+        searches = [call for call in calls if call["name"] == "WebSearch"]
+        results = await asyncio.gather(*(
+            self._web_search(call["args"]["query"], state["topic"], thread_id(config), sources)
+            for call in searches
+        ))
+        contents = {call["id"]: result for call, result in zip(searches, results)}
+        replies = []
+        for call in calls:
+            if call["name"] == "WebSearch":
+                content = contents[call["id"]]
+            elif call["name"] == "Think":
                 content = "Reflection recorded."
-            elif call["name"] != "WebSearch":
-                content = f"Unknown tool: {call['name']}"
-            elif searches >= self.max_searches:
-                content = "Search limit reached. Stop searching."
             else:
-                searches += 1
-                content = self._web_search(call["args"]["query"], state["topic"], thread_id(config), sources)
+                content = f"Unknown tool: {call['name']}"
             replies.append(ToolMessage(content, tool_call_id=call["id"], name=call["name"]))
-        return {"researcher_messages": replies, "searches": searches, "sources": sources}
+        return {"researcher_messages": replies, "sources": sources}
 
-    def report(self, state: ResearcherState):
+    async def report(self, state: ResearcherState):
+        """Turn collected evidence into a structured, citation-checked topic report.
+
+        Args:
+            state: Research conversation, topic, and source registry.
+        Returns:
+            A finalized topic note, or a failed note if report generation fails.
+        """
         prompt = HumanMessage(TOPIC_REPORT_PROMPT.format(topic=state["topic"]))
         try:
-            result = self.reporter.invoke([*state["researcher_messages"], prompt])
+            result = await self.reporter.ainvoke([*state["researcher_messages"], prompt])
         except Exception as exc:
             logger.exception("Topic report failed on %r", state["topic"])
             return {"notes": failed_note(f"Topic report failed: {exc}")}
@@ -84,12 +118,21 @@ class ResearcherAgent:
 
     # ----- helpers -----
 
-    def _web_search(self, query: str, topic: str, run_id: str, sources: dict[str, dict]) -> str:
+    async def _web_search(self, query: str, topic: str, run_id: str, sources: dict[str, dict]) -> str:
         """Search, index the result pages, and return the passages most relevant to the query.
         New pages get the next source number in ``sources``; a page seen before keeps its number.
-        Each source keeps the passages shown to the model: the evidence its citations rest on."""
+        Each source keeps the passages shown to the model: the evidence its citations rest on.
+
+        Args:
+            query: Model-generated web search query.
+            topic: Research task used as indexing metadata.
+            run_id: Thread identifier for evidence retrieval.
+            sources: Shared source registry updated with IDs and displayed passages.
+        Returns:
+            Formatted source passages, or a search failure message.
+        """
         try:
-            pages = prepare_pages(self.search.search(query))
+            pages = prepare_pages(await self.search.search(query))
         except Exception as exc:
             logger.exception("Search failed")
             return f"Search failed: {exc}"
@@ -97,13 +140,23 @@ class ResearcherAgent:
             sources.setdefault(
                 page["url"], {"id": len(sources) + 1, "title": page["title"], "full_text": page["full_text"], "passages": []}
             )
-        passages = self._passages(query, pages, topic, run_id)
+        passages = await asyncio.to_thread(self._passages, query, pages, topic, run_id)
         for passage in passages:
             source = sources[passage["url"]]
             sources[passage["url"]] = {**source, "passages": [*source["passages"], passage["text"]]}
         return format_passages(passages, sources)
 
     def _passages(self, query: str, pages: list[dict], topic: str, run_id: str) -> list[dict]:
+        """Index pages and select evidence, falling back to snippets on retrieval errors.
+
+        Args:
+            query: Search query used to rank passages.
+            pages: Prepared search results with page text and snippets.
+            topic: Delegated task recorded in store metadata.
+            run_id: Thread identifier used to isolate indexed evidence.
+        Returns:
+            URL/text passages to show to the researcher.
+        """
         small = sum(len(p["text"]) for p in pages) < SMALL_RESULTS_CHARS
         try:
             self.store.add(pages, run_id=run_id, topic=topic)
@@ -116,19 +169,18 @@ class ResearcherAgent:
         return [{"url": p["url"], "text": p["text"]} for p in pages]
 
     def _after_researcher(self, state: ResearcherState) -> Literal["researcher_tools", "report"]:
+        """Route tool calls to execution; a response without tools starts report writing."""
         return "researcher_tools" if state["researcher_messages"][-1].tool_calls else "report"
 
-    def _after_tools(self, state: ResearcherState) -> Literal["researcher", "report"]:
-        return "report" if state["searches"] >= self.max_searches else "researcher"
-
     def _build(self):
+        """Return the researcher/tools/report graph without shared checkpoints."""
         builder = StateGraph(ResearcherState)
         builder.add_node("researcher", self.researcher)
         builder.add_node("researcher_tools", self.researcher_tools)
         builder.add_node("report", self.report)
         builder.add_edge(START, "researcher")
         builder.add_conditional_edges("researcher", self._after_researcher)
-        builder.add_conditional_edges("researcher_tools", self._after_tools)
+        builder.add_edge("researcher_tools", "researcher")
         builder.add_edge("report", END)
         # Several researchers run inside one supervisor step, so they cannot share its checkpoints.
         return builder.compile(checkpointer=False, name="researcher")

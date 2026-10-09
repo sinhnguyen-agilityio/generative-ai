@@ -31,7 +31,7 @@ Ask only if the request is genuinely ambiguous (unknown acronym, unclear scope, 
 constraint) and you have not asked already. Otherwise, do not ask: write a short verification
 note that restates what you will research."""
 
-BRIEF_PROMPT = """You will be given a set of messages that have been exchanged so far between yourself and the user. 
+BRIEF_PROMPT = """You will be given a set of messages that have been exchanged so far between yourself and the user.
 Your job is to translate these messages into a more detailed and concrete research question that will be used to guide the research.
 
 The messages that have been exchanged so far between yourself and the user are:
@@ -134,8 +134,17 @@ User feedback: {feedback}"""
 # ----- Supervisor -----
 
 SUPERVISOR_PROMPT = """You are a research supervisor. Today's date is {date}.
-The approved plan topics have already been researched: their topic reports are the tool results
-above. Your job is to review them against the brief and decide whether follow-up research is needed.
+Use the brief and any initial plan to delegate research and review the resulting topic reports.
+
+Starting research:
+- If an initial plan is provided, it has already been approved. Begin with ConductResearch for its
+  topics directly, without an initial Think call. Cover every approved topic, using multiple rounds
+  if needed; do not replace the plan with a new scope.
+- If no initial plan is provided, first use Think to outline the brief into standalone sub-topics.
+  Then delegate them with ConductResearch, preferring one researcher for simple questions and
+  independent, non-overlapping topics for comparisons.
+- You have at most {max_iterations} model turns, including Think and delegation turns. Complete
+  research before that limit when possible. Call ResearchComplete on its own when finished.
 
 Each topic report has Status, Coverage, Missing parts, Findings and Citations. Use Think to review
 all reports together before deciding: a part one report misses may be answered by another.
@@ -146,7 +155,8 @@ Rules:
   aimed at exactly that gap, unless it was already followed up. Ignore parts that are not essential.
 - A follow-up asks for what the brief needs, never for more exactness than it needs (exact
   signatures, line numbers, verbatim quotes, exact prices).
-- Delegate all follow-ups of a round in one turn; they run in parallel.
+- Delegate independent follow-ups in one turn; they run in parallel.
+- Prefer at most {max_parallel} research tasks per follow-up round.
 - Each researcher only sees its topic, so write each one as a complete, standalone instruction.
 - Stop when you can answer the brief confidently; do not keep delegating for perfection. Call
   ResearchComplete when no essential gap is left, or when follow-ups bring nothing new."""
@@ -163,9 +173,9 @@ SUPERVISOR_START = """<Brief>
 {brief}
 </Brief>
 
-<Approved plan>
+<Initial plan>
 {plan}
-</Approved plan>"""
+</Initial plan>"""
 
 # ----- Researcher -----
 
@@ -190,7 +200,7 @@ series or in parallel.
 </Instructions>
 
 <Limits>
-- Simple topics: 2-3 searches. Complex topics: up to {max_searches} searches, never more.
+- Simple topics: 2-3 searches. Complex topics: aim for at most {max_searches} searches.
 - Stop as soon as every part of the topic is answered, you have 3+ relevant sources, or your
   last 2 searches brought nothing new.
 </Limits>

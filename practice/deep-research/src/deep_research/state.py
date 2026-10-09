@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal, NotRequired, TypedDict
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph import MessagesState
@@ -33,10 +33,28 @@ class ResearchState(MessagesState):
     published_path: str
 
 
+class SupervisorInput(TypedDict):
+    brief: str
+    plan: NotRequired[list[str]]
+    research_request: str
+    supervisor_messages: Annotated[list[AnyMessage], add_messages]
+    supervisor_iterations: int
+
+
+class SupervisorOutput(TypedDict):
+    research_request: str
+    supervisor_messages: Annotated[list[AnyMessage], add_messages]
+    supervisor_iterations: int
+    notes: Annotated[list[dict], operator.add]
+
+
+class SupervisorState(SupervisorInput, SupervisorOutput):
+    """Notes accumulate only within this invocation; input excludes the parent's old notes."""
+
+
 class ResearcherState(TypedDict):
     topic: str
     researcher_messages: Annotated[list[AnyMessage], add_messages]
-    searches: int
     sources: dict[str, dict]  # url -> {id, title, full_text, passages shown}: the numbers the report cites
     notes: dict  # the topic note: {"report": text, "sources": [{id, title, url, full_text, passages}]}
 
@@ -134,7 +152,8 @@ class Think(BaseModel):
     """Pause to reflect on the latest results before the next step. Fetches nothing and changes
     nothing; the reflection only stays in the conversation to guide your next decision.
 
-    When: after each round of results arrives, in a turn of its own, and before deciding to stop.
+    When: before delegation if no initial plan exists, after each round of results arrives,
+    and before deciding to stop. Use a turn of its own.
 
     Cover, briefly:
     1. Established: what the results answer, and from which sources.

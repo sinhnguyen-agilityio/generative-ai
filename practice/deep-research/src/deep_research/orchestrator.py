@@ -1,6 +1,6 @@
 """Orchestrator: creates the agents and wires them into the research graph.
 
-    guardrail → clarify → write_brief → planner → review_plan ⏸ → supervisor ⇄ supervisor_tools
+    guardrail → clarify → write_brief → planner → review_plan ⏸ → supervisor (subgraph)
               → write_report ⇄ verify → evaluate → review_report ⏸ → publish
 
 ⏸ = waits for the user (LangGraph interrupt). Revising the plan loops back to the planner. The
@@ -83,8 +83,7 @@ def build_graph(settings: Settings, reasoning, standard, search, store, checkpoi
     graph.add_node("write_brief", scope.write_brief)
     graph.add_node("planner", planner.plan)
     graph.add_node("review_plan", human.review_plan)
-    graph.add_node("supervisor", supervisor.supervisor)
-    graph.add_node("supervisor_tools", supervisor.supervisor_tools)
+    graph.add_node("supervisor", supervisor.graph)
     graph.add_node("write_report", writer.write)
     graph.add_node("verify", verifier.verify)
     graph.add_node("evaluate", evaluator.evaluate)
@@ -98,8 +97,7 @@ def build_graph(settings: Settings, reasoning, standard, search, store, checkpoi
     graph.add_edge("write_brief", "planner")
     graph.add_edge("planner", "review_plan")
     graph.add_conditional_edges("review_plan", next_after_review_plan, ["planner", "supervisor"])
-    graph.add_conditional_edges("supervisor", supervisor.next_step, ["supervisor_tools", "write_report"])
-    graph.add_edge("supervisor_tools", "supervisor")
+    graph.add_edge("supervisor", "write_report")
     graph.add_edge("write_report", "verify")
     graph.add_conditional_edges(
         "verify", next_after_verify, ["write_report", "evaluate"]

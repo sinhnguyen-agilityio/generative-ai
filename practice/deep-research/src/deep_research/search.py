@@ -9,7 +9,6 @@ import re
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-import anyio
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -46,10 +45,10 @@ class TavilySearch:
                     read_timeout_seconds=self.timeout,
                 )
 
-    def search(self, query: str) -> list[dict]:
+    async def search(self, query: str) -> list[dict]:
         """Results as ``{url, title, content, raw_content, score}`` dicts."""
         try:
-            result = anyio.run(self._call, query)
+            result = await self._call(query)
         except Exception as exc:
             # The URL carries the API key and transport errors quote it: raise a clean error,
             # without the original as context, so it never reaches the model, logs or traces.
