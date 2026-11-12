@@ -273,3 +273,13 @@ def test_supervisor_ends_on_model_completion(calls):
     settings = Settings(reasoning=ModelSpec("fake"), standard=ModelSpec("fake"))
     agent = SupervisorAgent(FakeTier({}, tools=supervisor), None, settings)
     assert agent.next_step({"supervisor_messages": [AIMessage("", tool_calls=calls)]}) == "__end__"
+
+
+def test_clarification_stops_after_three_questions(tmp_path):
+    """Verify that a model that keeps asking is cut off after the third question."""
+    app, _ = make_app(tmp_path, clarify=True)
+    for turn in range(3):
+        drain(app.ask("t9", f"answer {turn}"))
+        assert app.view("t9").values["messages"][-1].text == "Which year?"
+    drain(app.ask("t9", "answer 3"))
+    assert app.view("t9").pending["type"] == "plan"

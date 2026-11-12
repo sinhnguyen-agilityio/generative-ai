@@ -1,4 +1,4 @@
-"""Scope agent: asks one clarifying question when needed, then writes the research brief and its
+"""Scope agent: asks up to three clarifying questions when needed, then writes the research brief and its
 acceptance criteria. After a report, it decides what the user's follow-up message needs."""
 
 from __future__ import annotations
@@ -12,6 +12,9 @@ from deep_research.schemas.research_brief import ResearchBrief
 from deep_research.states.research_state import ResearchState
 from deep_research.utils.report import SOURCES_HEADING
 from deep_research.utils.text import bullets, today
+
+
+MAX_CLARIFY_QUESTIONS = 3
 
 
 class ScopeAgent:
@@ -34,10 +37,19 @@ class ScopeAgent:
         Returns:
             Clarification flag and an assistant question or confirmation message.
         """
-        prompt = CLARIFY_PROMPT.format(date=today(), messages=get_buffer_string(state["messages"]))
+        messages = state["messages"]
+        prompt = CLARIFY_PROMPT.format(
+            date=today(), messages=get_buffer_string(messages), max_questions=MAX_CLARIFY_QUESTIONS
+        )
         result = self.clarifier.invoke(prompt)
-        reply = result.question if result.need_clarification else result.verification
-        return {"needs_clarification": result.need_clarification, "messages": [AIMessage(reply)]}
+        asked = sum(isinstance(m, AIMessage) for m in messages)
+        ask = result.need_clarification and asked < MAX_CLARIFY_QUESTIONS
+        reply = (
+            result.question
+            if ask
+            else result.verification or "I have enough information. Starting the research."
+        )
+        return {"needs_clarification": ask, "messages": [AIMessage(reply)]}
 
     def write_brief(self, state: ResearchState):
         """Convert the conversation into a research brief and acceptance criteria.
@@ -50,7 +62,10 @@ class ScopeAgent:
         """
         prompt = BRIEF_PROMPT.format(date=today(), messages=get_buffer_string(state["messages"]))
         result = self.brief_writer.invoke(prompt)
-        return {"brief": result.brief, "criteria": [c.strip() for c in result.criteria if c.strip()]}
+        return {
+            "brief": result.brief,
+            "criteria": [c.strip() for c in result.criteria if c.strip()],
+        }
 
     def triage(self, state: ResearchState):
         """Classify report feedback as new research or a rewrite using existing evidence.
