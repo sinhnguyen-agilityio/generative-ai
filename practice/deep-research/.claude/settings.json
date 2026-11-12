@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Write|Grep",
+        "hooks": [{ "type": "command", "command": "uv run --no-project python .claude/hooks/block_secrets.py" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [{ "type": "command", "command": "uv run --no-project python .claude/hooks/format_on_edit.py" }]
+      }
+    ]
+  }
+}
