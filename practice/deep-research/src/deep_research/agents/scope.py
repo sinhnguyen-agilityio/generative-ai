@@ -37,19 +37,21 @@ class ScopeAgent:
         Returns:
             Clarification flag and an assistant question or confirmation message.
         """
-        messages = state["messages"]
+        asked = state.get("clarify_rounds", 0)
         prompt = CLARIFY_PROMPT.format(
-            date=today(), messages=get_buffer_string(messages), max_questions=MAX_CLARIFY_QUESTIONS
+            date=today(),
+            messages=get_buffer_string(state["messages"]),
+            asked=asked,
+            max_questions=MAX_CLARIFY_QUESTIONS,
         )
         result = self.clarifier.invoke(prompt)
-        asked = sum(isinstance(m, AIMessage) for m in messages)
         ask = result.need_clarification and asked < MAX_CLARIFY_QUESTIONS
         reply = (
             result.question
             if ask
             else result.verification or "I have enough information. Starting the research."
         )
-        return {"needs_clarification": ask, "messages": [AIMessage(reply)]}
+        return {"needs_clarification": ask, "clarify_rounds": asked + int(ask), "messages": [AIMessage(reply)]}
 
     def write_brief(self, state: ResearchState):
         """Convert the conversation into a research brief and acceptance criteria.
@@ -58,13 +60,15 @@ class ScopeAgent:
             state: Conversation defining the research request.
 
         Returns:
-            Brief text and nonempty, stripped acceptance criteria.
+            Brief text, nonempty stripped acceptance criteria, and a reset clarification budget for
+            the next research request in this thread.
         """
         prompt = BRIEF_PROMPT.format(date=today(), messages=get_buffer_string(state["messages"]))
         result = self.brief_writer.invoke(prompt)
         return {
             "brief": result.brief,
             "criteria": [c.strip() for c in result.criteria if c.strip()],
+            "clarify_rounds": 0,
         }
 
     def triage(self, state: ResearchState):

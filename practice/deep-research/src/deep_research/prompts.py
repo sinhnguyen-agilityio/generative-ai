@@ -29,7 +29,7 @@ CLARIFY_PROMPT = """Below is the transcript of the conversation so far: the user
 Today's date is {date}.
 
 Assess whether you need to ask a clarifying question, or if the user has already provided enough information for you to start research.
-IMPORTANT: You may ask at most {max_questions} clarifying questions in total. Count the clarifying questions you already asked in the transcript; once you reached {max_questions}, you must not ask another one. Before that, only ask another question if ABSOLUTELY NECESSARY.
+IMPORTANT: You have asked {asked} of at most {max_questions} clarifying questions. Once you reach {max_questions}, you must not ask another one: set need_clarification to false and write the verification message. Before that, only ask another question if ABSOLUTELY NECESSARY.
 
 Ask a question only when:
 - the scope is unclear (the topic is too broad, or its time frame, region or audience would change the research);

@@ -13,6 +13,7 @@ from langgraph.graph.message import add_messages
 class ResearchState(MessagesState):
     blocked: bool  # guardrail rejected the last message
     needs_clarification: bool  # scope asked the user a question
+    clarify_rounds: int  # clarifying questions asked so far; scope stops at MAX_CLARIFY_QUESTIONS
     brief: str
     criteria: list[str]  # acceptance criteria: what a complete report must answer (see verifier)
     plan: list[str]

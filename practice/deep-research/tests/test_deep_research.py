@@ -6,11 +6,15 @@ from types import SimpleNamespace
 
 import aiosqlite
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.runnables import RunnableLambda
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+from deep_research.agents.scope import ScopeAgent
 from deep_research.agents.supervisor import SupervisorAgent
 from deep_research.guardrail_violation import GuardrailViolation
+from deep_research.schemas.clarify_with_user import ClarifyWithUser
+from deep_research.schemas.research_brief import ResearchBrief
 from models.model_spec import ModelSpec
 from config.settings import Settings
 from deep_research.utils.guardrail import check_input
@@ -282,4 +286,46 @@ def test_clarification_stops_after_three_questions(tmp_path):
         drain(app.ask("t9", f"answer {turn}"))
         assert app.view("t9").values["messages"][-1].text == "Which year?"
     drain(app.ask("t9", "answer 3"))
+    assert app.view("t9").values["messages"][-1].text == "Starting."
     assert app.view("t9").pending["type"] == "plan"
+
+
+class StubLLM:
+    """A scope model that always asks and records the prompt."""
+
+    def __init__(self):
+        self.prompts = []
+
+    def structured(self, schema):
+        return RunnableLambda(self._answer if schema is ClarifyWithUser else lambda _: ResearchBrief(brief="B", criteria=[]))
+
+    def _answer(self, prompt):
+        self.prompts.append(prompt)
+        return ClarifyWithUser(need_clarification=True, question="Which year?", verification="")
+
+
+def test_only_clarifying_questions_count_toward_the_limit():
+    """Verify that earlier assistant notices do not use up the question budget."""
+    llm = StubLLM()
+    state = {"messages": [AIMessage("I can't research that: unsafe."), HumanMessage("Research X")]}
+    update = ScopeAgent(llm).clarify(state)
+    assert update["needs_clarification"] and update["clarify_rounds"] == 1
+    assert "asked 0 of at most 3" in llm.prompts[0]
+
+
+def test_at_the_limit_the_model_is_told_not_to_ask_and_a_fallback_confirms():
+    """Verify that a model still asking at the limit is overruled with a confirmation."""
+    llm = StubLLM()
+    update = ScopeAgent(llm).clarify({"messages": [HumanMessage("Research X")], "clarify_rounds": 3})
+    assert not update["needs_clarification"] and update["clarify_rounds"] == 3
+    assert "asked 3 of at most 3" in llm.prompts[0]
+    assert "Starting the research" in update["messages"][0].text
+
+
+def test_a_new_request_after_the_brief_gets_a_fresh_question_budget():
+    """Verify that writing the brief resets the budget, so a later request can be clarified again."""
+    scope = ScopeAgent(StubLLM())
+    state = {"messages": [HumanMessage("Research X")], "clarify_rounds": 3}
+    state.update(scope.write_brief(state))
+    assert state["clarify_rounds"] == 0
+    assert scope.clarify(state)["needs_clarification"]
